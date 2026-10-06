@@ -1,6 +1,6 @@
 # Introducing Svalboard-QMK and Keybard
 
-Svalboard-QMK is the new firmware for Svalboard, paired with [Keybard](https://keybard.svalboard.com/), its browser-based configuration tool. This first formal release brings more space for programmable behaviors, settings that survive compatible firmware updates, more pointing controls, and a protocol that lets desktop tools follow your actual layout and layers.
+Svalboard-QMK is the new firmware for [Svalboard](https://www.svalboard.com), paired with [Keybard](https://keybard.svalboard.com/), its browser-based configuration tool. This first formal release brings more space for programmable behaviors, settings that survive compatible firmware updates, more pointing controls, and a protocol that lets desktop tools follow your actual layout and layers.
 
 Your keyboard still runs its saved layout itself. Keybard is for configuration; you can close it and keep typing. The optional Keybard Host companion adds a desktop learning overlay.
 
