@@ -219,7 +219,7 @@ void keyboard_post_init_core(void) {
 
 // Get feature flags based on what's enabled
 uint8_t sval_get_feature_flags(void) {
-    uint8_t flags = sval_flag_default_layer_state;
+    uint8_t flags = 0;
 #ifdef CAPS_WORD_ENABLE
     flags |= sval_flag_caps_word;
 #endif
@@ -737,23 +737,12 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
 
         case sval_cmd_layer_state_get: {
             // Request: [0xDF] [0x16]
-            // Response: [0xDF] [0x16] [active u32 LE] [default u32 LE]
-            // GET_INFO flag bit 6 advertises the appended default mask. Keep the
-            // active mask at its legacy offset for existing Keybard clients.
-            if (length < 10) {
-                data[1] = sval_cmd_error;
-                return false;
-            }
-            const uint32_t state    = layer_state;
-            const uint32_t defaults = default_layer_state;
-            data[2]                 = state & 0xFF;
-            data[3]                 = (state >> 8) & 0xFF;
-            data[4]                 = (state >> 16) & 0xFF;
-            data[5]                 = (state >> 24) & 0xFF;
-            data[6]                 = defaults & 0xFF;
-            data[7]                 = (defaults >> 8) & 0xFF;
-            data[8]                 = (defaults >> 16) & 0xFF;
-            data[9]                 = (defaults >> 24) & 0xFF;
+            // Response: [0xDF] [0x16] [state0] [state1] [state2] [state3]
+            uint32_t state = layer_state;
+            data[2]        = state & 0xFF;
+            data[3]        = (state >> 8) & 0xFF;
+            data[4]        = (state >> 16) & 0xFF;
+            data[5]        = (state >> 24) & 0xFF;
             break;
         }
 

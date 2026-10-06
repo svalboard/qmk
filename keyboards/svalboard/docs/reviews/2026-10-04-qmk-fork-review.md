@@ -245,8 +245,6 @@ QMK therefore uses its compile-time paths. The actual `svalboard/left:sval` ELF 
 
 There are additional stored-only fields: one-shot timeout/tap toggle, Chordal Hold, Flow Tap, grave-escape override, auto-shift enable flags, tap-code/caps/tapping-toggle delays, and mouse-key move delta/wheel delay/wheel interval. Auto-shift timeout is applied only when Auto Shift is compiled in, although it is always advertised. The release catalog already caveats some of these; the firmware's settings-query response still exposes them.
 
-Follow-up hardware verification on an instrumented PMW3389-left `scanlab` image now confirms three of these behavior failures. A runtime tapping term of 600 ms survived reboot, but a 300 ms mod-tap press still selected Control at 201 ms. A tap dance configured for 500 ms selected its hold action at 204 ms, and a combo configured for 200 ms failed with 100 ms between its keys. Short/long tap-hold controls, ordinary tap dances, and a 5 ms combo all passed. The [11-case hardware trace](../keytest-feature-results.json) identifies the diagnostic firmware revision; all changed resources were restored and verified after reboot. These are observations on that instrumented image, not claims that every release target was exercised on hardware.
-
 Enable and verify the appropriate QMK gates for implemented controls. Advertise only working settings until the other fields have runtime consumers. Add end-to-end behavioral tests: changing a value must change tapping/combo/hold decisions, not just EEPROM readback. Recheck migrated timing behavior, since copying those values alone is insufficient.
 
 <a id="r16"></a>
@@ -354,4 +352,4 @@ Historical `pimoroni` and `default` targets are outside the maintained release m
 7. Measure idle/wake timing, USB suspend/resume, both choices of USB-connected half, split reconnects, and mixed sensor setups through configured clock states.
 8. Build the exact release artifacts in the intended container, run the tests in CI, and verify Keybard protocol/capability behavior against those artifacts. The separate editor was not fully reviewed in this firmware-fork audit.
 
-The original review used source inspection, host characterization, and compilation without flashing a board. Subsequent keytest work installed an instrumented image on a separate test board and confirmed the three R15 timing failures described above. Other findings remain source/host evidence unless explicitly marked as hardware-confirmed.
+No physical board was flashed, reset, or power-cycled as part of this review. No defect in this report is presented as hardware-confirmed unless explicitly stated; the evidence is source inspection, host characterization, or compilation.

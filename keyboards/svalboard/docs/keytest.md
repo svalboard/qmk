@@ -29,21 +29,6 @@ python keyboards/svalboard/tools/keytest.py --serial YOUR_SERIAL info
 
 The host needs access to the device's Raw HID interface, usage page `0xFF61`, usage `0x62`. On Linux this may require the usual HID udev permissions. Close Keybard and other configuration clients while testing; this runner serializes commands and does not coordinate concurrent writers. Selection is automatic only when exactly one matching device is present. `--serial` makes selection and post-reboot reconnection explicit.
 
-### Windows USB devices from WSL
-
-An empty Linux `/dev/hidraw*` listing does not mean the board is unreachable. When Windows owns USB, run the same host script with Windows Python and its installed `hidapi` package:
-
-```sh
-keytest_ps=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
-keytest_python_win=$("$keytest_ps" -NoProfile -Command '(Get-Command python.exe).Source' | tr -d '\r')
-"$(wslpath -u "$keytest_python_win")" \
-  "$(wslpath -w "$PWD/keyboards/svalboard/tools/keytest.py")" list
-```
-
-Use that interpreter/script pair for the other commands too. Convert Linux output, backup, and scenario paths with `wslpath -w` before passing them to Windows Python. If WSL interop reports `UtilBindVsockAnyPort: socket failed`, the Linux execution sandbox may be blocking interop; retry through the environment's approved Windows-interoperability execution path instead of treating it as a missing device.
-
-For the first instrumented installation, an existing Scan Lab image can enter its bootloader using its established channel `0x53` ARM/GO exchange. The existing `tools/flash.sh` already supports copying via Windows PowerShell. Select the target by exact serial, verify the bootloader volume is unambiguous, and use the matching keyboard/side image. Subsequent instrumented builds can use `keytest.py bootloader` directly.
-
 ## Verify application and persistence in one loop
 
 This example tests matrix position `(0, 0)` on layer 0 with basic HID usage `0x04` (A):
@@ -161,46 +146,3 @@ python3 -m unittest discover -s tests/sval_keytest -v
 ```
 
 These tests compile the complete instrumentation C file against a fake clock, driver, and action executor, checking timing, bounds, isolation, overflow, and cleanup. Python tests check decoding, behavioral assertions, and persistence-failure rollback. They validate the test instrument; actual QMK feature behavior must be exercised on an instrumented board. No hardware result should be inferred from the native mocks.
-
-## Hardware verification, 2026-10-04
-
-The harness was installed and exercised on a USB-connected PMW3389-left test board through Windows HID, without physical keypresses. [Captured evidence](keytest-hardware-result.json) records the firmware revision, image hash, input timestamps, and actual NKRO reports at the host-driver boundary.
-
-- Replaced an F13 binding with A through VIA; observed A-down and all-up reports.
-- Rebooted and reconnected; confirmed the saved binding and the same A-down/all-up behavior.
-- Restored F13 and rebooted; a separate control sequence produced F13-down/all-up reports.
-- Compared pre-flash and post-test snapshots: all 1,920 keymap bytes, four populated feature entries, 48 queried board-setting responses, and identity metadata matched.
-- The board was left running the instrumented image with capture inactive and its original binding restored.
-
-This validates the real injection/capture and reboot-persistence loop. It does not extend the result to every configurable feature or to interrupted flash writes.
-
-### Extended feature characterization
-
-The reusable `tools/keytest_features.py` runner snapshots every resource it changes: four bindings, one tap-dance entry, one combo entry, two timing settings, and three macro bytes. It writes a recovery journal before testing and restores all of them, then reboots and checks the restored values. Use it only on an instrumented test board; it deliberately exercises stored configuration changes.
-
-```sh
-python keyboards/svalboard/tools/keytest_features.py --serial YOUR_SERIAL \
-  --backup /tmp/keytest-feature-original.json --output /tmp/keytest-feature-results.json
-```
-
-If interrupted, restore from the same journal:
-
-```sh
-python keyboards/svalboard/tools/keytest_features.py --serial YOUR_SERIAL \
-  --backup /tmp/keytest-feature-original.json --restore
-```
-
-The [hardware run](keytest-feature-results.json) completed **11 behavioral cases: eight passed, three failed**, with restoration verified after reboot. Exit status 1 correctly represents the three firmware behavior failures; the instrument did not turn accepted writes into false passes.
-
-| Case | Hardware result |
-| --- | --- |
-| Momentary layer lookup | Passed: held layer key selects F14, then returns to the base layer. |
-| Mod-tap short/long controls | Both passed: a 30 ms press taps A; a 350 ms press holds Left Control. |
-| Macro playback | Passed: macro 0 emits a then b and releases both. |
-| Tap-dance single/double/hold | All three passed: F14, F16, and F15 respectively. |
-| Close-timed combo | Passed: F13 + F14 at 5 ms spacing produces F15. |
-| Runtime tapping term, 600 ms | **Failed:** 600 read back after reboot, but a 300 ms press became Left Control at 201 ms instead of tapping A. |
-| Per-dance tapping term, 500 ms | **Failed:** a 300 ms press became the hold action at 204 ms instead of the tap action. |
-| Per-combo term, 200 ms | **Failed:** a 100 ms gap emitted the two input keys rather than their combo; the first escaped at 53 ms. |
-
-The failures match [review finding R15](reviews/2026-10-04-qmk-fork-review.md#r15): runtime timing callbacks are present but their compile-time gates are absent. This characterization commit supplies the repeatable hardware tests and evidence; it does not change those gates or mask the failures as expected passes.

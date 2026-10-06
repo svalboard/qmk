@@ -67,8 +67,6 @@ On Svalboard, [`migrate_vial.c`](../../../keyboards/svalboard/migrate_vial.c) im
 
 Firmware advertises the `sval:` USB serial prefix and dedicated HID usage. The matching host bootstraps a client ID through wrapper prefix `0xDD`, then sends Sval commands under `0xDF` or wrapped VIA commands under `0xFE`. Unwrapped Sval commands are ignored. See [Client ID protocol](docs/CLIENT_ID_PROTOCOL.md).
 
-The read-only layer query also advertises active/default-mask reporting through feature bit 6; see [layer-state wire compatibility](docs/LAYER_STATE_PROTOCOL.md). Older hosts retain the same active-mask offset.
-
 Current Sval protocol version **3** includes 16-bit table indices, sparse table/label reads, and 32-bit macro-buffer offsets. The full macro capacity requires a compatible Sval client. Legacy VIA macro commands retain their 16-bit addressing limit.
 
 The maintained module name is `svalboard/core`, the regular keymap is `sval`, and definitions use `sval.json`. Earlier names in historical files or internal client identifiers are not an alternative supported mixed firmware/client pair. A generic Vial GUI is not the recommended client for this protocol.
