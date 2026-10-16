@@ -49,7 +49,8 @@ void mouse_mode(bool);
 #define SCROLL_MULTIPLIER 1
 bool mouse_mode_enabled = false;
 
-// Automouse threshold accumulator (normalized to 800 DPI)
+// Automouse threshold accumulator (normalized to 800 DPI, fixed point: AUTOMOUSE_FP_SCALE units per count)
+#define AUTOMOUSE_FP_SCALE 16
 static int32_t automouse_accumulator = 0;
 static uint16_t automouse_accumulator_timer = 0;
 
@@ -283,10 +284,12 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     // Per-pointer gate: a side with auto mouse disabled never activates (or refreshes) the layer.
     if (!global_saved_values.left_automouse) left_movement = 0;
     if (!global_saved_values.right_automouse) right_movement = 0;
-    int32_t left_normalized = (left_movement > 0) ? (left_movement * 800) / get_left_dpi() : 0;
-    int32_t right_normalized = (right_movement > 0) ? (right_movement * 800) / get_right_dpi() : 0;
+    // Normalize in fixed point so sub-reference-unit motion (common at DPI > 800) isn't truncated to 0.
+    int32_t left_normalized = (left_movement > 0) ? (left_movement * 800 * AUTOMOUSE_FP_SCALE) / get_left_dpi() : 0;
+    int32_t right_normalized = (right_movement > 0) ? (right_movement * 800 * AUTOMOUSE_FP_SCALE) / get_right_dpi() : 0;
     int32_t normalized_movement = (left_normalized > right_normalized) ? left_normalized : right_normalized;
-    if (normalized_movement > 0) {
+    // Gate on raw movement: normalized_movement can still be 0 for tiny reports at very high DPI.
+    if (left_movement > 0 || right_movement > 0) {
         uint16_t decay_ms = global_saved_values.automouse_decay * 10;
         if (decay_ms > 0 && timer_elapsed(automouse_accumulator_timer) > decay_ms) {
             automouse_accumulator = 0;
@@ -295,7 +298,7 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
         automouse_accumulator += normalized_movement;
 
         if (global_saved_values.automouse_threshold == 0 ||
-            automouse_accumulator >= global_saved_values.automouse_threshold) {
+            automouse_accumulator >= (int32_t)global_saved_values.automouse_threshold * AUTOMOUSE_FP_SCALE) {
             mouse_mode(true);
         }
     }
