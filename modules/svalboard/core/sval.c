@@ -186,6 +186,9 @@ uint8_t sval_get_feature_flags2(void) {
 #ifdef SVAL_NATIVE_PTP
     flags |= sval_flag2_pointing_contacts;
 #endif
+#ifdef SVAL_EITHER_HAND
+    flags |= sval_flag2_side;
+#endif
     return flags;
 }
 
@@ -782,6 +785,15 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
             }
             break;
         }
+
+#ifdef SVAL_EITHER_HAND
+        case sval_cmd_side: {
+            // Request:  [0xDF] [0x33] [op] ...
+            // Response: [0xDF] [0x33] [op] [status] ... (keyboards/svalboard/docs/protocol.md, "Side")
+            if (length > 2) sval_side_command(&data[2], length - 2);
+            break;
+        }
+#endif
 
         case sval_cmd_pointing_contacts: {
             // Request:  [0xDF] [0x2F]

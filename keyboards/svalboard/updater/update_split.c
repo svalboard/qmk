@@ -449,7 +449,9 @@ static void slave_commit(uint32_t mseq) {
     // The M1 commit, unchanged: step 0 checks the manifest against this build
     // and the slot's SHA-512 and CRC again. It returns only when it refused
     // before touching the firmware.
+    updater_port_commit_mark(true); // the next boot shows the rainbow until the halves match (D24)
     update_status_t st = update_commit_run(SL_MANIFEST, hk.crc);
+    updater_port_commit_mark(false);
     if (!post_begin(mseq, UPDATE_STATE_COMMITTING)) return;
     slave_fail(st != UPDATE_OK ? st : UPDATE_FLASH_ERR);
     update_split_port_unlock();
@@ -558,6 +560,7 @@ static struct {
     bool            saw_committing; // the last probe found the other half COMMITTING
     bool            unconfirmed;    // DONE without an answer after COMMIT (the probe went unanswered)
     uint32_t        page_off; // the slot page in page[], or UINT32_MAX
+    bool            from_self; // the boot relay (update_pair.c): this half's own image, not the slot
     uint8_t         page[UPDATE_FLASH_PAGE] __attribute__((aligned(4)));
 } rl;
 
@@ -783,7 +786,8 @@ static bool relay_step(void) {
                 }
                 uint32_t base = rl.off - rl.off % UPDATE_FLASH_PAGE;
                 if (rl.page_off != base) {
-                    if (!update_split_port_slot_read(base, rl.page, UPDATE_FLASH_PAGE)) {
+                    bool read = rl.from_self ? update_split_port_self_read(base, rl.page, UPDATE_FLASH_PAGE) : update_split_port_slot_read(base, rl.page, UPDATE_FLASH_PAGE);
+                    if (!read) {
                         relay_fail(UPDATE_FLASH_ERR);
                         return false;
                     }
@@ -909,7 +913,7 @@ static bool relay_step(void) {
     return false;
 }
 
-bool update_relay_start(const uint8_t *manifest, uint32_t image_len, uint32_t crc_body) {
+static bool relay_start(const uint8_t *manifest, uint32_t image_len, uint32_t crc_body, bool from_self) {
     if (update_relay_busy()) return false;
     relay_resume();
     memset(&rl, 0, sizeof(rl));
@@ -917,12 +921,21 @@ bool update_relay_start(const uint8_t *manifest, uint32_t image_len, uint32_t cr
     rl.image_len = image_len;
     rl.crc_body  = crc_body;
     rl.page_off  = UINT32_MAX;
+    rl.from_self = from_self;
     rl.start_ms = rl.last_ok_ms = update_split_port_now_ms();
     // Paused from the start: the other half's manifest check and erase come
     // straight after the manifest.
     if (!relay_pause()) return false;
     rl.phase = RELAY_START;
     return true;
+}
+
+bool update_relay_start(const uint8_t *manifest, uint32_t image_len, uint32_t crc_body) {
+    return relay_start(manifest, image_len, crc_body, false);
+}
+
+bool update_relay_start_self(const uint8_t *manifest, uint32_t image_len, uint32_t crc_body) {
+    return relay_start(manifest, image_len, crc_body, true);
 }
 
 void update_relay_task(void) {
@@ -1152,6 +1165,15 @@ bool update_split_port_pause(bool on) {
 
 bool update_split_port_slot_read(uint32_t off, uint8_t *dst, uint32_t n) {
     return slot_copy(off, dst, n);
+}
+
+// This half's own image, uncached, a word at a time: only inside the
+// firmware area [0, SVAL_UPDATE_MAX_IMAGE).
+bool update_split_port_self_read(uint32_t off, uint8_t *dst, uint32_t n) {
+    if (off % 4 || n % 4 || off > SVAL_UPDATE_MAX_IMAGE || n > SVAL_UPDATE_MAX_IMAGE - off) return false;
+    const volatile uint32_t *p = (const volatile uint32_t *)(XIP_NOCACHE_NOALLOC_BASE + off);
+    for (uint32_t i = 0; i < n / 4; i++) ((uint32_t *)dst)[i] = p[i];
+    return true;
 }
 
 // SETTINGS_RESET on the half without USB (D42), in the SlaveThread: the same

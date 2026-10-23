@@ -92,6 +92,7 @@ enum sval_command_id {
     sval_cmd_pointing_hardware    = 0x2C, // advertised by sval_flag2_pointing_hardware
     sval_cmd_pointing_motion      = 0x2D, // advertised by sval_flag2_pointing_motion
     sval_cmd_pointing_contacts    = 0x2F, // advertised by sval_flag2_pointing_contacts
+    sval_cmd_side                 = 0x33, // advertised by sval_flag2_side (either-hand builds)
     sval_cmd_error                = 0xFF,
 };
 
@@ -115,6 +116,7 @@ enum sval_feature_flags2 {
     sval_flag2_pointing_motion   = (1 << 3), // 0x2D reports pointing motion since the last read
     // Bit 4 is allocated by the per-reader motion branch (0x2D reader ids).
     sval_flag2_pointing_contacts = (1 << 5), // 0x2F reports each touch contact on its pad
+    sval_flag2_side              = (1 << 6), // 0x33 reads and sets which half is which (either-hand builds)
 };
 
 // Status byte after the modifiers in the 0x16 reply (sval_flag2_modifier_state).
@@ -381,6 +383,10 @@ void sval_pointing_motion_kb(uint8_t *out, uint8_t length);
 // with the touch contacts down now. Weak no-op in the module; out[0] = 0 means
 // no data.
 void sval_pointing_contacts_kb(uint8_t *out, uint8_t length);
+
+// SIDE (0x33, SVAL_EITHER_HAND builds only): the keyboard handles data after
+// [0xDF] [0x33] in place: [op] [status] [...].
+void sval_side_command(uint8_t *data, uint8_t length);
 
 void sval_keycode_down(uint16_t keycode);
 void sval_keycode_up(uint16_t keycode);

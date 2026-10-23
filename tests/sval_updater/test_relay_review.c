@@ -5,13 +5,13 @@
 // the slave's timeout race, the RPC lengths from the wire, a busy DMA channel
 // at a page program, the other half with its interrupts off while it erases
 // and commits (RPCs fail then), ABORT while it erases, a probe that finds it
-// still COMMITTING, a lost COMMIT answer, and the red LED after a relay until
+// still COMMITTING, a lost COMMIT answer, and INFO flags bit5 after a relay until
 // presence matches. Included by test_relay.c, before test_relay().
 
 // The SlaveThread preempts housekeeping between its clock read and its lock:
 // a request lands 1 ms later and sets rx_ms. The session must not be dropped
 // as a 5 s timeout (now - rx_ms wrapping).
-static int race_rpcs;
+static int  race_rpcs;
 static void rpc_before_lock(void) {
     if (race_rpcs++) return;
     sim_us += 1000;
@@ -49,9 +49,10 @@ static void test_relay_rpc_lengths(void) {
         memset(&o, 0xA5, sizeof(o));
         sim_slave = true;
         update_split_slave_rpc(in, k == 0 ? 255 : len, (uint8_t *)&o, 255);
-        sim_slave = false;
+        sim_slave     = false;
         bool guard_ok = true;
-        for (size_t i = 0; i < sizeof(o.guard); i++) guard_ok &= o.guard[i] == 0xA5;
+        for (size_t i = 0; i < sizeof(o.guard); i++)
+            guard_ok &= o.guard[i] == 0xA5;
         CHECK(guard_ok);
     }
 }
@@ -65,7 +66,8 @@ static void test_relay_dma_busy(void) {
     slave_ticks(10);
     CHECK_EQ(update_split_slave_state(), UPDATE_STATE_RECEIVING);
     int programs = program_ops;
-    for (uint32_t off = 0; off < 216; off += 24) CHECK_EQ(m_page(off, 24), UPDATE_OK);
+    for (uint32_t off = 0; off < 216; off += 24)
+        CHECK_EQ(m_page(off, 24), UPDATE_OK);
     CHECK_EQ(m_page(216, 24), UPDATE_OK);
     CHECK_EQ(get24le(mrs.payload), 240);
     dma_busy_pct = 100;
@@ -90,7 +92,8 @@ static void test_relay_dma_busy(void) {
     CHECK_EQ(sequence_errors, 0);
     dma_busy_pct = 0;
     update_relay_abort();
-    for (int i = 0; i < 10; i++) pass();
+    for (int i = 0; i < 10; i++)
+        pass();
     CHECK(!update_relay_busy());
 }
 
@@ -118,10 +121,9 @@ static void test_relay_busy_slave(void) {
         CHECK_EQ(erase_unpaused, 0);
         CHECK_EQ(pause_violations, 0);
         CHECK(slot_is_img(img_len));
-        printf("busy other half, 0x%x: %u sectors erased, %u RPCs failed while it was busy, %llu ms to verified\n", (unsigned)img_len, (unsigned)ri.slave_to_erase, (unsigned)slave_busy_rpcs,
-               (unsigned long long)((sim_us - t0) / 1000));
+        printf("busy other half, 0x%x: %u sectors erased, %u RPCs failed while it was busy, %llu ms to verified\n", (unsigned)img_len, (unsigned)ri.slave_to_erase, (unsigned)slave_busy_rpcs, (unsigned long long)((sim_us - t0) / 1000));
         // and its commit, interrupts off for 1.5 s: the hold covers it
-        slave_commit_resets    = true;
+        slave_commit_resets = true;
         CHECK(update_relay_commit());
         uint64_t unpaused_busy = 0;
         for (int i = 0; i < 20000; i++) {
@@ -167,7 +169,8 @@ static void test_relay_busy_slave(void) {
     CHECK(sim_us - a0 < 300000); // the ABORT lands between two sectors
     CHECK_EQ(update_split_slave_state(), UPDATE_STATE_IDLE);
     CHECK(erase_ops <= erases + 1); // at most the sector under way
-    for (int i = 0; i < 3000; i++) pass();
+    for (int i = 0; i < 3000; i++)
+        pass();
     CHECK(erase_ops <= erases + 1);
     CHECK_EQ(erase_unpaused, 0);
     CHECK(only_slot_changed());
@@ -230,13 +233,14 @@ static void test_relay_probe_committing(void) {
 // Every answer to COMMIT is lost, the other half takes it and commits with
 // its interrupts off: no failure, no resume in the middle of its commit; the
 // link timeout leads to the hold, and the probe finds it rebooted (DONE).
-// Then the red LED until presence shows MATCH, even through NONE (V).
+// Then INFO flags bit5 until presence shows MATCH, even through NONE (V).
 static void test_relay_commit_answer_lost(void) {
     relay_fresh(0x2000);
     slave_irq_sim = true;
     CHECK(update_relay_start(blob, img_len, body_crc()));
     CHECK_EQ(relay_until(RELAY_VERIFIED, 60000), RELAY_VERIFIED);
-    for (int i = 0; i < 900; i++) pass(); // most of a keepalive interval: COMMIT still gets the whole link timeout
+    for (int i = 0; i < 900; i++)
+        pass(); // most of a keepalive interval: COMMIT still gets the whole link timeout
     slave_commit_resets = true;
     drop_rsp_op         = USPLIT_OP_COMMIT;
     CHECK(update_relay_commit());
@@ -255,7 +259,7 @@ static void test_relay_commit_answer_lost(void) {
     CHECK_EQ(unpaused_busy, 0);
     CHECK(resumed_at - c0 >= (uint64_t)(SVAL_UPDATE_SPLIT_COMMIT_MS + SVAL_UPDATE_SPLIT_REBOOT_MS) * 1000);
     drop_rsp_op = -1;
-    // the red LED until presence matches (V), even with presence NONE
+    // INFO flags bit5 until presence matches (V), even with presence NONE
     CHECK(update_split_awaiting_match());
     CHECK(update_split_mismatch());
     presence_ping(); // the other half is on fw 2002, this one on 2001

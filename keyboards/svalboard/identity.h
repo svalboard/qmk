@@ -48,3 +48,10 @@ void identity_task(void); // from housekeeping: carries out a requested reboot
 // BUILD_RESET_SECTOR, erasing it first. False if the region is missing or the
 // bytes did not read back.
 bool identity_build_record_write(const void *data, uint32_t len);
+
+#ifdef SVAL_EITHER_HAND
+// The side record (side.c): writes len bytes at the start of one of the two
+// side sectors, erasing it first. False for any other sector, if the region is
+// missing, or if the bytes did not read back.
+bool identity_side_record_write(uint32_t sector, const void *data, uint32_t len);
+#endif

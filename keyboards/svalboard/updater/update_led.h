@@ -7,14 +7,16 @@
 // While any of them is shown, rgblight's own output is held off (D20, see
 // update_led.c); UPDATE_LED_NONE hands the LEDs back.
 
+// One meaning per color, and red only for a failure: nothing a person should
+// simply wait through is ever red.
 typedef enum {
-    UPDATE_LED_NONE = 0, // rgblight as usual
-    UPDATE_LED_CONFIRM,  // blue blink: make the chord
-    UPDATE_LED_CHORD,    // bright white double flash: chord recognized
-    UPDATE_LED_APPROVED, // solid blue: approved, waiting for the host to begin
-    UPDATE_LED_PROGRESS, // rainbow: verifying, erasing, receiving
-    UPDATE_LED_WRITING,  // solid magenta: committing
-    UPDATE_LED_ERROR,    // red, 1 Hz, 50/50
+    UPDATE_LED_NONE = 0, // rgblight as usual: nothing for you to do
+    UPDATE_LED_CONFIRM,  // blue blink: your turn, make the chord
+    UPDATE_LED_CHORD,    // bright white double flash: got it, chord recognized
+    UPDATE_LED_PROGRESS, // rainbow: updating, keep plugged in (both halves, until they match)
+    UPDATE_LED_WRITING,  // solid magenta: this half's commit, which holds a fixed color
+    UPDATE_LED_DONE,     // green double flash: done, the halves match
+    UPDATE_LED_ERROR,    // red, 1 Hz, 50/50: it failed, open Keybard (stops after 30 s)
 } update_led_mode_t;
 
 // Called on every updater_task() pass with the mode for the current state.

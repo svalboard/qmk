@@ -114,6 +114,27 @@ update_status_t update_commit_run(const sval_update_manifest_t *m, uint32_t crc_
 }
 #endif
 
+// The commit marker (updater_port.h): each half's own, which survives the
+// simulated resets as watchdog scratch 0 does.
+static bool master_marked, slave_marked;
+static int  mark_sets;
+void        updater_port_commit_mark(bool on) {
+    if (on) mark_sets++;
+    // A mock commit that "reset" returns, which the real one never does.
+    if (!on && (sim_slave ? slave_reset_pending : master_reset_pending)) return;
+    if (sim_slave) {
+        slave_marked = on;
+    } else {
+        master_marked = on;
+    }
+}
+bool updater_port_commit_mark_take(void) {
+    bool *m   = sim_slave ? &slave_marked : &master_marked;
+    bool  was = *m;
+    *m        = false;
+    return was;
+}
+
 // ---- the split link (M2): update_split.c's port and a simulated other half ----------------
 //
 // Both halves' code runs in this process. The other half's KEYBOARD_UPDATE
@@ -194,6 +215,18 @@ bool update_split_port_pause(bool on) {
     } else {
         link_paused = false;
     }
+    return true;
+}
+// This half's own image (the boot relay's source): its own copy, apart from
+// the die, which the simulation shares with the other half.
+static uint8_t master_self[SVAL_UPDATE_MAX_IMAGE];
+static bool    port_master = true; // this half has USB
+bool           updater_port_is_master(void) {
+    return !sim_slave && port_master;
+}
+bool update_split_port_self_read(uint32_t off, uint8_t *dst, uint32_t n) {
+    if (off % 4 || n % 4 || off > SVAL_UPDATE_MAX_IMAGE || n > SVAL_UPDATE_MAX_IMAGE - off) return false;
+    memcpy(dst, master_self + off, n);
     return true;
 }
 bool update_split_port_slot_read(uint32_t off, uint8_t *dst, uint32_t n) {
@@ -625,6 +658,8 @@ static void fresh(uint32_t len) {
     master_reset_mode = slave_reset_mode = -1;
     slave_pre_blank                      = false;
     commit_avail                         = false;
+    master_marked                        = false;
+    slave_marked                         = false;
     commit_runs                          = 0;
     commit_result                        = UPDATE_UNSUPPORTED;
     req_hand                             = UPDATE_HAND_RIGHT;
@@ -785,7 +820,7 @@ static void test_session_happy_path(void) {
     CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
     CHECK_EQ(rsp[21] & 0x03, 0x03);
     wait_ms(400);
-    CHECK_EQ(led_now, UPDATE_LED_APPROVED);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS); // approved: updating from here on (no solid blue)
     CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_BEGIN, session_nonce), UPDATE_ACCEPTED);
     NOTE();
     // CHUNK and END wait for the erase
@@ -873,13 +908,21 @@ static void test_session_happy_path(void) {
     CHECK_EQ(nseen, (int)(sizeof(want) / sizeof(want[0])));
     for (int i = 0; i < nseen && i < (int)(sizeof(want) / sizeof(want[0])); i++)
         CHECK_EQ(seen[i], want[i]);
-    CHECK_EQ(led_shown, (1 << UPDATE_LED_CONFIRM) | (1 << UPDATE_LED_CHORD) | (1 << UPDATE_LED_APPROVED) | (1 << UPDATE_LED_PROGRESS) | (1 << UPDATE_LED_WRITING) | (1 << UPDATE_LED_ERROR));
+    CHECK_EQ(led_shown, (1 << UPDATE_LED_CONFIRM) | (1 << UPDATE_LED_CHORD) | (1 << UPDATE_LED_PROGRESS) | (1 << UPDATE_LED_WRITING) | (1 << UPDATE_LED_ERROR));
 
     // the 50 ms budget, in simulated flash time
     printf("longest op %llu us, longest pass %llu us\n", (unsigned long long)max_op_us, (unsigned long long)max_pass_us);
     CHECK(max_op_us + max_pass_us <= 50000);
     CHECK(max_op_us <= SIM_PAGE_PROGRAM_US); // at most one page per CHUNK
 
+    // the commit refused and returned: no commit marker is left for the next boot
+    CHECK(!master_marked);
+    // the red stops after SVAL_UPDATE_RED_MS; the error stays for STATUS and ABORT
+    wait_ms(SVAL_UPDATE_RED_MS - 200);
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    wait_ms(400);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
     // ABORT from anyone clears the error, and the LEDs go back
     CHECK_EQ(send_nonce(CLIENT_C, UPDATE_OP_ABORT, 0), UPDATE_OK);
     CHECK_EQ(updater_state(), UPDATE_STATE_IDLE);
@@ -1490,8 +1533,9 @@ static void test_session_refusals(void) {
     CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_BEGIN, first), UPDATE_INVALID); // once
 }
 
-// The other half's version by split presence (M2, V): INFO flags bit5,
-// STATUS byte 22, and the red error LED while the updater is idle.
+// The other half's version by split presence (M2, V): INFO flags bit5 and
+// STATUS byte 22. With no update just finished there is no light for it
+// (D24): red only after an update, when the halves still differ.
 static void test_session_presence(void) {
     static const struct {
         uint8_t presence;
@@ -1507,7 +1551,9 @@ static void test_session_presence(void) {
         CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
         CHECK_EQ(rsp[22], cases[i].presence);
         pass();
-        CHECK_EQ(led_now, cases[i].mismatch ? UPDATE_LED_ERROR : UPDATE_LED_NONE);
+        CHECK_EQ(led_now, UPDATE_LED_NONE);
+        wait_ms(SVAL_UPDATE_AFTER_WAIT_MS + 1000);
+        CHECK_EQ(led_now, UPDATE_LED_NONE);
         CHECK_EQ(updater_state(), UPDATE_STATE_IDLE); // a mismatch is not an updater error: nothing latched
         // a session shows its own LEDs over it
         CHECK(to_confirm_wait(CLIENT_A));
@@ -1515,12 +1561,175 @@ static void test_session_presence(void) {
         CHECK_EQ(led_now, UPDATE_LED_CONFIRM);
         CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
         pass();
-        CHECK_EQ(led_now, cases[i].mismatch ? UPDATE_LED_ERROR : UPDATE_LED_NONE);
-        // fixed: back to normal
+        CHECK_EQ(led_now, UPDATE_LED_NONE);
+        // fixed: still nothing to show
         port_split_presence = UPDATE_PRESENCE_MATCH;
         pass();
         CHECK_EQ(led_now, UPDATE_LED_NONE);
     }
+}
+
+// The first boot after this half's own commit (the commit marker, D24): the
+// rainbow until presence reads MATCH, then the green flash and nothing. Halves
+// that still differ: the rainbow while idle for SVAL_UPDATE_AFTER_WAIT_MS,
+// then red for SVAL_UPDATE_RED_MS, then nothing (INFO flags bit5 stays). A
+// half whose other half never answers shows nothing after the wait.
+static void after_commit_boot(uint8_t presence) {
+    fresh(0x3000);
+    master_marked = true; // "the reset came from the commit"
+    updater_host_reset();
+    port_split_presence = UPDATE_PRESENCE_NONE;
+    led_seen            = 0;
+    pass();
+    CHECK(!master_marked); // taken by the first pass
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_UPDATING);
+    wait_ms(800);
+    port_split_presence = presence;
+    pass();
+}
+
+static void test_session_after_commit(void) {
+    // the halves match: green, then nothing; the ping carries DONE a while
+    after_commit_boot(UPDATE_PRESENCE_MATCH);
+    CHECK_EQ(led_now, UPDATE_LED_DONE);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_DONE);
+    wait_ms(700);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_DONE);
+    wait_ms(1500);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_NONE);
+    wait_ms(SVAL_UPDATE_AFTER_WAIT_MS + SVAL_UPDATE_RED_MS);
+    CHECK_EQ(led_seen & (1 << UPDATE_LED_ERROR), 0);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+
+    // they still differ: rainbow, then red, then nothing
+    after_commit_boot(UPDATE_PRESENCE_VERSION);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    wait_ms(SVAL_UPDATE_AFTER_WAIT_MS - 2000);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    CHECK_EQ(led_seen & (1 << UPDATE_LED_ERROR), 0); // never red while it may still come right
+    wait_ms(2000);
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_FAILED);
+    wait_ms(SVAL_UPDATE_RED_MS - 1500); // the red began up to 800 ms before the check above
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    wait_ms(2000);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    CHECK_EQ(send(0, UPDATE_OP_INFO, NULL, 0), UPDATE_OK);
+    CHECK(rsp[21] & 0x20); // the host still sees it
+    // a match after that shows nothing more (a new update opens a new window)
+    port_split_presence = UPDATE_PRESENCE_MATCH;
+    pass();
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+
+    // a session in the window: its own lights, and the wait starts again after it
+    after_commit_boot(UPDATE_PRESENCE_VERSION);
+    wait_ms(SVAL_UPDATE_AFTER_WAIT_MS - 5000);
+    CHECK(to_confirm_wait(CLIENT_A));
+    pass();
+    CHECK_EQ(led_now, UPDATE_LED_CONFIRM);
+    wait_ms(10000);
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
+    pass();
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    wait_ms(SVAL_UPDATE_AFTER_WAIT_MS - 2000);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    wait_ms(2500);
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+
+    // no other half at all: nothing after the wait, never red
+    after_commit_boot(UPDATE_PRESENCE_NONE);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    wait_ms(SVAL_UPDATE_AFTER_WAIT_MS + 1000);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    CHECK_EQ(led_seen & (1 << UPDATE_LED_ERROR), 0);
+
+    // an ordinary boot: no marker, no light
+    fresh(0x3000);
+    port_split_presence = UPDATE_PRESENCE_MATCH;
+    led_seen            = 0;
+    wait_ms(2000);
+    CHECK_EQ(led_seen, 1 << UPDATE_LED_NONE);
+}
+
+// The half without USB (D24): it cannot see presence, so it follows the
+// master's light from the presence ping (updater_split_light_seen).
+static void slave_boot(bool marked) {
+    fresh(0x3000);
+    port_master   = false;
+    master_marked = marked; // this half's own marker: updater.c runs as this half here
+    updater_host_reset();
+    led_seen = 0;
+    pass();
+}
+
+static void ping_light(uint8_t light, bool has) {
+    updater_split_light_seen(has, light);
+    pass();
+}
+
+static void test_session_slave_lights(void) {
+    // after its own commit: rainbow before the first ping, then as the master says
+    slave_boot(true);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    wait_ms(1500);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    for (int i = 0; i < 20; i++) {
+        ping_light(UPDATE_LIGHT_UPDATING, true);
+        CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+        wait_ms(500);
+    }
+    ping_light(UPDATE_LIGHT_DONE, true);
+    CHECK_EQ(led_now, UPDATE_LED_DONE);
+    wait_ms(499);
+    ping_light(UPDATE_LIGHT_DONE, true); // DONE stays on a few pings: one flash
+    wait_ms(700);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    ping_light(UPDATE_LIGHT_DONE, true);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    ping_light(UPDATE_LIGHT_NONE, true);
+    wait_ms(SVAL_UPDATE_AFTER_WAIT_MS + 1000);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    CHECK_EQ(led_seen & (1 << UPDATE_LED_ERROR), 0);
+
+    // a master that sends no light (a release from before it): nothing to show
+    slave_boot(true);
+    ping_light(0, false);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    wait_ms(SVAL_UPDATE_AFTER_WAIT_MS + 1000);
+    CHECK_EQ(led_seen & (1 << UPDATE_LED_ERROR), 0);
+
+    // no ping at all for a whole wait after its commit: red, then nothing
+    slave_boot(true);
+    wait_ms(SVAL_UPDATE_AFTER_WAIT_MS - 1000);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    wait_ms(1500);
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    wait_ms(SVAL_UPDATE_RED_MS);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+
+    // an ordinary boot: the master's own update shows here too; red as the master's
+    slave_boot(false);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    ping_light(UPDATE_LIGHT_NONE, true);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    ping_light(UPDATE_LIGHT_UPDATING, true);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    ping_light(UPDATE_LIGHT_FAILED, true);
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    ping_light(UPDATE_LIGHT_NONE, true);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    ping_light(UPDATE_LIGHT_FAILED, true);
+    wait_ms(SVAL_UPDATE_RED_MS + 500);
+    CHECK_EQ(led_now, UPDATE_LED_NONE); // red stops after SVAL_UPDATE_RED_MS whatever the pings say
+    ping_light(UPDATE_LIGHT_FAILED, true);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    // the master's DONE after its own install: the flash here too
+    ping_light(UPDATE_LIGHT_UPDATING, true);
+    ping_light(UPDATE_LIGHT_DONE, true);
+    CHECK_EQ(led_now, UPDATE_LED_DONE);
+    port_master = true;
 }
 
 // Protocol 3's pieces at their bounds: the largest CHUNK and MANIFEST piece the
@@ -1618,5 +1827,7 @@ static void test_session(void) {
     test_session_refusals();
     test_session_mismatch_accepted();
     test_session_presence();
+    test_session_after_commit();
+    test_session_slave_lights();
     printf("session tests: %s\n", failures == before_failures ? "pass" : "FAIL");
 }

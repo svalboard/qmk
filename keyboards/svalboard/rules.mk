@@ -105,6 +105,8 @@ ifeq ($(strip $(SVAL_UPDATER)), yes)
   SRC += updater/update_flash.c updater/update_image.c updater/update_build_info.c
   # M2: the split pause (D15, a matrix_scan() override) and the split relay.
   SRC += split_pause.c updater/update_split.c updater/update_split_wire.c
+  # The boot relay of a pair UF2 (docs/pair-uf2.md).
+  SRC += updater/update_pair.c
   SRC += updater/vendor/sha512.c
   EXTRAINCDIRS += keyboards/svalboard/updater/vendor
   # The commit's RAM code must not branch into flash (R2): no jump tables, no

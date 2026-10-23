@@ -310,7 +310,14 @@ inline bool serial_transport_receive_blocking(uint8_t* destination, const size_t
 
 static inline void pio_tx_init(pin_t tx_pin) {
     uint pio_idx = pio_get_index(pio);
+#if defined(SERIAL_USART_PINS_RUNTIME)
+    // Loaded once: serial_transport_repin() configures the machine again.
+    static int tx_offset = -1;
+    if (tx_offset < 0) tx_offset = pio_add_program(pio, &uart_tx_program);
+    uint offset = tx_offset;
+#else
     uint offset  = pio_add_program(pio, &uart_tx_program);
+#endif
 
 #if defined(SERIAL_USART_FULL_DUPLEX)
     // clang-format off
@@ -362,7 +369,13 @@ static inline void pio_tx_init(pin_t tx_pin) {
 }
 
 static inline void pio_rx_init(pin_t rx_pin) {
+#if defined(SERIAL_USART_PINS_RUNTIME)
+    static int rx_offset = -1;
+    if (rx_offset < 0) rx_offset = pio_add_program(pio, &uart_rx_program);
+    uint offset = rx_offset;
+#else
     uint offset = pio_add_program(pio, &uart_rx_program);
+#endif
 
 #if defined(SERIAL_USART_FULL_DUPLEX)
     uint pio_idx = pio_get_index(pio);
@@ -427,11 +440,42 @@ static inline void pio_init(pin_t tx_pin, pin_t rx_pin) {
     enter_rx_state();
 }
 
+#if defined(SERIAL_USART_PINS_RUNTIME)
+#    if !defined(SERIAL_USART_FULL_DUPLEX)
+#        error "SERIAL_USART_PINS_RUNTIME needs SERIAL_USART_FULL_DUPLEX"
+#    endif
+// The keyboard picks the TX and RX pins at run time (for example from a side
+// it learns at boot), once for each role, before the PIO takes them.
+void serial_usart_pins_kb(bool master, pin_t *tx_pin, pin_t *rx_pin);
+void serial_transport_repin(pin_t tx_pin, pin_t rx_pin);
+#endif
+
+#if defined(SERIAL_USART_PINS_RUNTIME)
+/**
+ * @brief Moves a running link to other pins (the master's search for a half
+ * that transmits on the line this one does). Call between transactions.
+ */
+void serial_transport_repin(pin_t tx_pin, pin_t rx_pin) {
+    pio_sm_set_enabled(pio, tx_state_machine, false);
+    pio_sm_set_enabled(pio, rx_state_machine, false);
+    pio_sm_clear_fifos(pio, tx_state_machine);
+    pio_sm_clear_fifos(pio, rx_state_machine);
+    // The pins it leaves: back to plain inputs with pull-ups (the PIO no longer drives them).
+    palSetLineMode(rx_pin, PAL_MODE_INPUT_PULLUP);
+    palSetLineMode(tx_pin, PAL_MODE_INPUT_PULLUP);
+    pio_tx_init(tx_pin);
+    pio_rx_init(rx_pin);
+}
+#endif
+
 /**
  * @brief PIO driver specific initialization function for the master side.
  */
 void serial_transport_driver_master_init(void) {
-#if defined(SERIAL_USART_FULL_DUPLEX)
+#if defined(SERIAL_USART_PINS_RUNTIME)
+    pin_t tx_pin, rx_pin;
+    serial_usart_pins_kb(true, &tx_pin, &rx_pin);
+#elif defined(SERIAL_USART_FULL_DUPLEX)
     pin_t tx_pin = SERIAL_USART_TX_PIN;
     pin_t rx_pin = SERIAL_USART_RX_PIN;
 #else
@@ -450,7 +494,10 @@ void serial_transport_driver_master_init(void) {
  * @brief PIO driver specific initialization function for the slave side.
  */
 void serial_transport_driver_slave_init(void) {
-#if defined(SERIAL_USART_FULL_DUPLEX)
+#if defined(SERIAL_USART_PINS_RUNTIME)
+    pin_t tx_pin, rx_pin;
+    serial_usart_pins_kb(false, &tx_pin, &rx_pin);
+#elif defined(SERIAL_USART_FULL_DUPLEX)
     pin_t tx_pin = SERIAL_USART_TX_PIN;
     pin_t rx_pin = SERIAL_USART_RX_PIN;
 #else

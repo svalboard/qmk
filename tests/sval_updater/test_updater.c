@@ -22,6 +22,7 @@
 // update_flash.c is built into this file so the tests can reset its state and
 // reach its RAM routine directly.
 #include "update_flash.c"
+#include "update_pair.h"
 
 static int checks, failures;
 
@@ -455,9 +456,21 @@ static void mock_exit_xip(void) {
 static void mock_flush(void) {
     if (xip_on) sequence_errors++;
 }
+// The boot relay of a pair UF2 (test_pair_uf2.c) may also erase the record
+// sector and program its state page, and nothing else; off everywhere else,
+// so any session that touched that sector counts in outside_ops.
+static bool allow_pair_sector;
+static int  pair_sector_ops;
 static bool slot_only(uint32_t addr, size_t count) {
     // Invariant (a): during staging, only [SLOT_BASE, SLOT_BASE + SIZE) changes;
     // (b) during the commit, only [0, round_up(image_len, 64 KiB)).
+    bool pair = addr < UPDATE_PAIR_RECORD_OFFSET + UPDATE_PAIR_SECTOR_BYTES && addr + count > UPDATE_PAIR_RECORD_OFFSET;
+    if (pair) pair_sector_ops++;
+    if (pair && allow_pair_sector) {
+        bool ok = (addr == UPDATE_PAIR_RECORD_OFFSET + UPDATE_PAIR_STATE_OFFSET && count == 256) || (addr == UPDATE_PAIR_RECORD_OFFSET && count == UPDATE_PAIR_SECTOR_BYTES);
+        if (!ok) outside_ops++;
+        return ok;
+    }
     bool inside = addr >= allow_lo && addr <= allow_hi && count <= allow_hi - addr;
     if (!inside) outside_ops++;
     return inside;
@@ -559,6 +572,8 @@ static void die_reset(void) {
     allow_lo                                                                                           = SVAL_UPDATE_BASE;
     allow_hi                                                                                           = SVAL_UPDATE_BASE + SVAL_UPDATE_SIZE;
     multi_page                                                                                         = false;
+    allow_pair_sector                                                                                  = false;
+    pair_sector_ops                                                                                    = 0;
     flash_ops = cut_at = noplog = 0;
     cut_tear                    = false;
     bad_at                      = 0xFFFFFFFFu;
@@ -740,6 +755,9 @@ static void test_flash(void) {
 // Protocol 4 (D41-D43): one approval for both halves, SETTINGS_RESET.
 #include "test_pair.c"
 
+// The pair UF2's boot relay (update_pair.c, docs/pair-uf2.md).
+#include "test_pair_uf2.c"
+
 #ifdef SVAL_UPDATER_HOST_LIB
 // Entry points for tests/sval_updater/test_sval_update_tool.py (ctypes).
 void host_lib_reset(int commit_available) {
@@ -853,6 +871,7 @@ int main(int argc, char **argv) {
     test_session();
     test_relay();
     test_pair();
+    test_pair_uf2(argc > 1 ? argv[1] : NULL);
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

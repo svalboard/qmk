@@ -18,6 +18,9 @@
 #include "identity.h"
 #include "build_reset.h"
 #include "nvm_via.h"
+#ifdef SVAL_EITHER_HAND
+#    include "side.h"
+#endif
 #ifdef SVAL_AZOTEQ_MULTITOUCH
 #    include "azoteq/multitouch.h"
 #endif
@@ -34,6 +37,7 @@
 #    include "split_common/transport.h"
 _Static_assert(sizeof(((presence_rsp_t *)0)->update) == UPDATE_PRESENCE_BYTES, "presence reply: update_presence_t");
 _Static_assert(sizeof(presence_rsp_t) <= RPC_S2M_BUFFER_SIZE, "presence reply fits the split RPC buffer");
+_Static_assert(sizeof(presence_rpc_t) <= RPC_M2S_BUFFER_SIZE, "presence ping fits the split RPC buffer");
 #endif
 
 // USB remote wakeup status bit (from USB spec, not exported by QMK headers)
@@ -62,6 +66,68 @@ uint8_t       sval_hw_rev(void) {
 
 bool sval_hw_rev_is_flipfet(void) {
     return sval_hw_rev() == SVAL_HW_REV_FLIPFET;
+}
+
+// Thumb handedness strap. A left thumb (TCL Gen 2) with R7 fitted has 10k
+// from LED_DIN to GND; a right thumb (TCR) with its R7 fitted has 10k from
+// LED_DIN to the thumb row. LED_DIN is the WS2812 data pin. Read once at
+// boot, before the LED driver, the matrix and split init touch the pins.
+//
+// The thumb row is switched on for the read, so a right thumb's pull-up has a
+// row to pull to. GPIO8 drives a P-channel FET's gate directly on every main
+// board (V3.2, CV3.3, Mini1.0): low is on. On V3.2 the FET is reversed and its
+// body diode keeps the row near 2.6 V even when off; on CV3.3 and Mini1.0 the
+// row floats when off. The row-off pull-down read is kept for diagnosis only.
+static uint8_t thumb_hand_class = SVAL_THUMB_HAND_NOT_PROBED;
+static uint8_t thumb_hand_raw   = 0;
+
+static void sval_thumb_hand_probe(void) {
+#if defined(POINTING_DEVICE_IS_PIMORONI)
+    // GP19 is I2C1 SCL on the Pimoroni build: no probe.
+    thumb_hand_class = SVAL_THUMB_HAND_SKIPPED;
+#else
+    const pin_t row = SVAL_THUMB_ROW_PIN;
+    gpio_set_pin_output(row);
+    gpio_write_pin_high(row); // thumb row off
+    gpio_set_pin_input_low(SVAL_THUMB_HAND_PIN);
+    wait_us(200);
+    const uint8_t down_off = gpio_read_pin(SVAL_THUMB_HAND_PIN) ? 1 : 0;
+
+    gpio_write_pin_low(row); // thumb row on
+    wait_us(200);
+    const uint8_t down = gpio_read_pin(SVAL_THUMB_HAND_PIN) ? 1 : 0;
+
+    gpio_set_pin_input_high(SVAL_THUMB_HAND_PIN);
+    wait_us(200);
+    uint8_t ones = 0;
+    for (uint8_t i = 0; i < 8; i++) {
+        if (i) wait_us(10);
+        ones += gpio_read_pin(SVAL_THUMB_HAND_PIN) ? 1 : 0;
+    }
+    const uint8_t up = ones >= 5 ? 1 : 0; // majority of 8 (4/8 counts as low)
+
+    gpio_set_pin_input(SVAL_THUMB_HAND_PIN); // plain input, no pull
+    gpio_write_pin_high(row);                // thumb row off; matrix_init() takes the pin over
+
+    if (!up && !down) {
+        thumb_hand_class = SVAL_THUMB_HAND_LEFT;
+    } else if (up && down) {
+        thumb_hand_class = SVAL_THUMB_HAND_RIGHT;
+    } else if (up && !down) {
+        thumb_hand_class = SVAL_THUMB_HAND_DEFAULT; // no strap: never means right
+    } else {
+        thumb_hand_class = SVAL_THUMB_HAND_ANOMALY;
+    }
+    thumb_hand_raw = (uint8_t)(down | (up << 1) | (down_off << 2) | (ones << 4));
+#endif
+}
+
+uint8_t sval_thumb_hand(void) {
+    return thumb_hand_class;
+}
+
+uint8_t sval_thumb_hand_raw(void) {
+    return thumb_hand_raw;
 }
 
 // Store svalboard data in VIA custom config at offset 0
@@ -195,6 +261,10 @@ void sval_storage_reset_clear_kb(void) {
 // stored settings.
 void keyboard_pre_init_kb(void) {
     identity_init();
+    sval_thumb_hand_probe(); // before ws2812/rgblight and split init use GP19
+#ifdef SVAL_EITHER_HAND
+    sval_side_init(); // the side, before split_pre_init() asks and before the build reset formats the settings
+#endif
     build_reset_pre_init(); // a different firmware build: reset stored settings
     keyboard_pre_init_user();
 }
@@ -445,6 +515,9 @@ static void sval_local_pointer_identity(sval_pointer_identity_t *id) {
         id->inverse_product_id = found->id1;
     }
     id->flags |= SVAL_POINTER_REPORTED | (is_keyboard_left() ? SVAL_POINTER_LEFT : 0);
+#ifdef SVAL_EITHER_HAND
+    if (!sval_side_known()) id->flags = (id->flags & ~SVAL_POINTER_LEFT) | SVAL_POINTER_SIDE_UNKNOWN;
+#endif
 }
 
 void sval_idle_status(sval_idle_status_t *st) {
@@ -491,6 +564,11 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
         sval_pointer_rest_apply();
     }
     global_saved_values.scan_deep_clock_idx = in->scan_deep_clock_idx;
+#ifdef SVAL_UPDATER
+    // The master's updater light (D24), when its ping carries it.
+    bool has_light = in_buflen >= sizeof(presence_rpc_t);
+    updater_split_light_seen(has_light, has_light ? in->update_light : 0);
+#endif
     // Tell the master this half's side and sensor (Sval 0x2C). Older masters ignore it.
     if (out_data && out_buflen >= sizeof(presence_rsp_t)) {
         presence_rsp_t *out = (presence_rsp_t *)out_data;
@@ -513,6 +591,9 @@ static void scanlab_rpc_listener(uint8_t in_buflen, const void *in_data, uint8_t
 #endif
 #ifdef SVAL_PERF_STATS
     if (sval_perf_split_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return;
+#endif
+#ifdef SVAL_EITHER_HAND
+    if (sval_side_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return; // Sval 0x33 for this half
 #endif
     uint8_t req[SCANLAB_REQ_LEN] = {0};
     uint8_t rsp[SCANLAB_RSP_LEN] = {0};
@@ -645,6 +726,11 @@ report_mouse_t pointing_device_task_combined_kb(report_mouse_t left_report, repo
     if (sval_mt_suppress_hand(0)) left_report = (report_mouse_t){0};
     if (sval_mt_suppress_hand(1)) right_report = (report_mouse_t){0};
 #endif
+#ifdef SVAL_EITHER_HAND
+    // As keys (side.c): nothing from a hand whose side is not sound.
+    if (!sval_side_row_allowed(0)) left_report = (report_mouse_t){0};
+    if (!sval_side_row_allowed(MATRIX_ROWS / 2)) right_report = (report_mouse_t){0};
+#endif
     return pointing_device_task_combined_user(left_report, right_report);
 }
 
@@ -742,6 +828,9 @@ void housekeeping_task_kb(void) {
 #    endif
 #endif
     sval_pointer_probe_task();
+#ifdef SVAL_EITHER_HAND
+    sval_side_task();
+#endif
     sval_usb_wake_handler();
     scanlab_housekeeping();
 #ifdef SVAL_KEYTEST
@@ -772,6 +861,9 @@ void housekeeping_task_kb(void) {
         if (timer_elapsed(last_ping) > 500) {
 #endif
             presence_rpc_t rpcout = {global_saved_values.turbo_scan, global_saved_values.scan_prewait_us, global_saved_values.scan_postwait_us, global_saved_values.scan_period_us, global_saved_values.scan_idle_period_ms, global_saved_values.scan_idle_after_ms, global_saved_values.scan_deep_after_s, global_saved_values.scan_deep_period_ms, global_saved_values.idle_flags, global_saved_values.scan_deep_clock_idx};
+#ifdef SVAL_UPDATER
+            rpcout.update_light = updater_split_light();
+#endif
             presence_rsp_t rpcin  = {0};
             if (transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin)) {
                 if (rpcin.magic[0] == SVAL_PRESENCE_RSP_MAGIC0 && rpcin.magic[1] == SVAL_PRESENCE_RSP_MAGIC1 && (rpcin.pointer.flags & SVAL_POINTER_REPORTED)) {
@@ -779,6 +871,12 @@ void housekeeping_task_kb(void) {
                 } else {
                     memset(&other_pointer, 0, sizeof(other_pointer));
                 }
+#ifdef SVAL_EITHER_HAND
+                {
+                    const uint8_t f = other_pointer.flags;
+                    sval_side_other_set(true, (f & SVAL_POINTER_REPORTED) != 0, (f & SVAL_POINTER_SIDE_UNKNOWN) ? SVAL_SIDE_UNKNOWN : (f & SVAL_POINTER_LEFT) ? SVAL_SIDE_LEFT : SVAL_SIDE_RIGHT);
+                }
+#endif
 #ifdef SVAL_UPDATER
                 // The other half's update_presence_t, after the pointer block.
                 update_split_presence_result(true, rpcin.update, sizeof(rpcin.update));
@@ -796,6 +894,9 @@ void housekeeping_task_kb(void) {
             } else {
 #ifdef SVAL_UPDATER
                 update_split_presence_result(false, NULL, 0);
+#endif
+#ifdef SVAL_EITHER_HAND
+                sval_side_other_set(false, false, SVAL_SIDE_UNKNOWN);
 #endif
                 is_connected = false;
             }
@@ -862,11 +963,12 @@ enum sval_via_value_id {
     id_idle_low_clock      = 28, // toggle: 48 MHz system clock in deep idle
     id_idle_long_nap       = 29, // toggle: long naps in deep idle
     id_scan_deep_clock_idx = 30, // u8 dropdown: deep-idle clock 0 = 48 MHz, 1 = 24 MHz, 2 = 12 MHz
+    id_thumb_hand          = 31, // read-only: [0] class (enum sval_thumb_hand), [1] raw bits (sval_thumb_hand_raw)
     id_tapping_term        = 16,
     id_permissive_hold     = 17,
     id_hold_on_other_key   = 18,
     id_retro_tapping       = 19,
-    // 25-31 reserved
+    // 31: id_thumb_hand (above)
     id_layer0_color = 32,
     // 32-47 are layer colors (id_layer0_color + layer)
 };
@@ -1068,6 +1170,10 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     break;
                 case id_hw_revision:
                     value_data[0] = sval_hw_rev();
+                    break;
+                case id_thumb_hand:
+                    value_data[0] = sval_thumb_hand();
+                    value_data[1] = sval_thumb_hand_raw();
                     break;
                 case id_scan_period_us:
                     value_data[0] = global_saved_values.scan_period_us & 0xFF;

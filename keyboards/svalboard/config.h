@@ -96,6 +96,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define SVAL_UPDATE_CONFIRM_WINDOW_MS 30000 // from ARM; NOT_CONFIRMED after it
 #define SVAL_UPDATE_SESSION_TIMEOUT_MS 30000 // no op from the session for this long: TIMEOUT
 #define SVAL_UPDATE_LED_VAL 96               // LED brightness while the updater shows its states (D24)
+#ifndef SVAL_UPDATE_AFTER_WAIT_MS
+#    define SVAL_UPDATE_AFTER_WAIT_MS 60000 // after an update: idle this long with the halves still differing, then red (D24)
+#endif
+#ifndef SVAL_UPDATE_RED_MS
+#    define SVAL_UPDATE_RED_MS 30000 // every red updater light stops after this long (D24)
+#endif
 // M2, the relay to the other half (updater/update_split.c). The half without
 // USB drops a session after this long with no KEYBOARD_UPDATE traffic.
 #define SVAL_UPDATE_SPLIT_SLAVE_TIMEOUT_MS 5000
@@ -115,6 +121,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // After the other half accepts COMMIT, the link stays paused for its commit
 // (M1 #13: about 1-2 s from COMMIT to the reset) plus 2.5 s for its reboot
 // (R18: the 500 ms double-tap window and the 2 s USB detect).
+// The boot relay of a pair UF2 (updater/update_pair.c, docs/pair-uf2.md): how
+// long the half with USB waits for the other half's presence after boot, how
+// many relays it tries in one boot and the pause between them, and how long
+// it shows the red light after a record that was refused, damaged or tried
+// too often (a record kept for the next boot shows no light).
+#ifndef SVAL_UPDATE_PAIR_PEER_WAIT_MS
+#    define SVAL_UPDATE_PAIR_PEER_WAIT_MS 15000
+#endif
+#ifndef SVAL_UPDATE_PAIR_RELAY_TRIES
+#    define SVAL_UPDATE_PAIR_RELAY_TRIES 3
+#endif
+#ifndef SVAL_UPDATE_PAIR_RETRY_MS
+#    define SVAL_UPDATE_PAIR_RETRY_MS 2000
+#endif
+#ifndef SVAL_UPDATE_PAIR_ERROR_MS
+#    define SVAL_UPDATE_PAIR_ERROR_MS 30000
+#endif
 #define SVAL_UPDATE_SPLIT_COMMIT_MS 2000
 #define SVAL_UPDATE_SPLIT_REBOOT_MS 2500
 // A probe after the hold that finds the other half still COMMITTING probes
@@ -150,6 +173,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #define MATRIX_COL_PUSHED_STATES_THUMBS { 0, 0, 0, 0, 0, 0 }
 #endif
 #define DOUBLEDOWN_COL 5 // need a pullup on COL6
+
+// Thumb handedness strap: the WS2812 data pin, which reaches the thumb's
+// LED_DIN. A left thumb with R7 fitted pulls it to ground through 10k.
+#ifndef SVAL_THUMB_HAND_PIN
+    #define SVAL_THUMB_HAND_PIN GP19 // thumb LED_DIN; R7 strap on a left thumb
+#endif
+// The thumb row's FET gate (matrix row 0), on during the strap read: low is on.
+#ifndef SVAL_THUMB_ROW_PIN
+    #define SVAL_THUMB_ROW_PIN GP8
+#endif
 
 // Hardware revision strap. The pin is read with the internal pull-up enabled:
 // open = revision A, bridged to ground = revision B ("flipfet"). Override the

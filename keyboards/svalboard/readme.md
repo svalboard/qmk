@@ -35,7 +35,9 @@ Or you can flash directly with:
 qmk flash --keyboard svalboard --keymap default
 ```
 
-Svalboard currently uses the EE_HANDS flag to set handedness, so the MCU is either Left or Right, permanently. If for some reason you need to reflash this parameter to be the other hand, you must add the appropriate side bootloader parameter to program the eeprom -- this cannot be done by drag-and-drop of a UF2 file:
+The one-image targets (`svalboard/either`, `svalboard/trackball/pmw3389/either`) run the same image on both halves: each half takes its side from a thumb strap or its stored side record, which a host sets with Sval `0x33` ([protocol notes](docs/protocol.md), "Side"), and a half that ran a per-hand build keeps that side. The per-hand targets below work as before.
+
+The per-hand targets use the EE_HANDS flag to set handedness, so the MCU is either Left or Right, permanently. If for some reason you need to reflash this parameter to be the other hand, you must add the appropriate side bootloader parameter to program the eeprom -- this cannot be done by drag-and-drop of a UF2 file:
 ```
 qmk flash --keyboard svalboard --keymap default -bl uf2-split-left
 qmk flash --keyboard svalboard --keymap default -bl uf2-split-right

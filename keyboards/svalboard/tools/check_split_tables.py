@@ -41,7 +41,8 @@ mismatch. Default builds have none (they are not paired with updater builds:
 their transaction counts differ anyway).
 
 With --left/--right every left ELF is checked against every right ELF; with
---dir, *left*.elf and *right*.elf in each directory are paired the same way.
+--dir, *left*.elf and *right*.elf in each directory are paired the same way,
+and an *either*.elf (one image for both halves) counts as both.
 Exit 1 on any mismatch or unreadable table. The size of the shared-memory
 block is printed and compared too, but a difference there is only a warning:
 it does not travel on the wire.
@@ -65,7 +66,7 @@ ENTRY = 12
 TABLE = "split_transaction_table"
 SHMEM = "shared_memory"  # quantum/split_common/transport.c: static split_shared_memory_t shared_memory
 KB_IDS = "sval_split_kb_ids"  # updater/update_split.c, updater builds only
-MAX_TRANSACTIONS = 32    # transaction_id_define.h: 5 bits
+MAX_TRANSACTIONS = 32  # transaction_id_define.h: 5 bits
 
 
 class ElfError(Exception):
@@ -141,8 +142,7 @@ def read_table(path):
         if pad0 or pad1 or not callback_ok(cb):
             raise ElfError(f"{path}: entry {i} does not look like split_transaction_desc_t "
                            f"(padding {pad0:#x}/{pad1:#x}, callback {cb:#x}): has the struct changed?")
-        entries.append(dict(id=i, i2t_size=i2t_size, i2t_offset=i2t_off, t2i_size=t2i_size, t2i_offset=t2i_off,
-                            callback=cb != 0))
+        entries.append(dict(id=i, i2t_size=i2t_size, i2t_offset=i2t_off, t2i_size=t2i_size, t2i_offset=t2i_off, callback=cb != 0))
     shmem = symbols.get(SHMEM, [])
     kb_ids = None
     if KB_IDS in symbols:
@@ -150,14 +150,12 @@ def read_table(path):
         raw_ids = read(kaddr, ksize)
         if ksize < 5 or raw_ids[:4] != b"SVKB" or ksize != 5 + 3 * raw_ids[4]:
             raise ElfError(f"{path}: {KB_IDS} is not b'SVKB', n, then n (id, tag) triples ({raw_ids.hex()})")
-        kb_ids = [dict(id=raw_ids[5 + 3 * i], tag=raw_ids[6 + 3 * i:8 + 3 * i].decode("latin-1"))
-                  for i in range(raw_ids[4])]
+        kb_ids = [dict(id=raw_ids[5 + 3 * i], tag=raw_ids[6 + 3 * i:8 + 3 * i].decode("latin-1")) for i in range(raw_ids[4])]
         for e in kb_ids:
             if e["id"] >= count or any(entries[e["id"]][f] for f in ("i2t_size", "t2i_size", "callback")):
                 raise ElfError(f"{path}: keyboard RPC {e['tag']} has ID {e['id']}, which is not an empty "
                                "(boot-filled) entry of the table")
-    return dict(elf=path, count=count, entries=entries, shmem_size=shmem[0][1] if len(shmem) == 1 else None,
-                kb_ids=kb_ids)
+    return dict(elf=path, count=count, entries=entries, shmem_size=shmem[0][1] if len(shmem) == 1 else None, kb_ids=kb_ids)
 
 
 FIELDS = ("i2t_size", "i2t_offset", "t2i_size", "t2i_offset", "callback")
@@ -178,8 +176,10 @@ def compare(a, b):
             if ea[f] != eb[f]:
                 diffs.append(f"ID {ea['id']}: {f} {ea[f]} vs {eb[f]}")
     if a.get("kb_ids") != b.get("kb_ids"):
+
         def ids(t):
             return "none" if t.get("kb_ids") is None else ", ".join(f"{e['tag']}={e['id']}" for e in t["kb_ids"])
+
         diffs.append(f"keyboard RPC IDs ({KB_IDS}) {ids(a)} vs {ids(b)}")
     return diffs
 
@@ -225,6 +225,12 @@ def main():
                     left.append(p)
                 elif "right" in base:
                     right.append(p)
+                elif "either" in base:
+                    # One image for both halves: it pairs with itself and
+                    # with every other one (and, through the golden table,
+                    # with the per-side releases in the field).
+                    left.append(p)
+                    right.append(p)
         if not left or not right:
             ap.error("need at least one left and one right ELF")
         tables = {p: read_table(p) for p in left + right}
@@ -256,14 +262,15 @@ def main():
             return 1
         golden["elf"] = os.path.basename(args.golden)
         bad = 0
-        for p in left + right:
+        builds = list(dict.fromkeys(left + right))
+        for p in builds:
             diffs = compare(tables[p], golden)
             if diffs:
                 bad += 1
                 print(f"FAIL {os.path.basename(p)} differs from the golden table")
                 for d in diffs:
                     print(f"    {d}")
-        print(f"{len(left) + len(right) - bad} of {len(left) + len(right)} builds match the golden table")
+        print(f"{len(builds) - bad} of {len(builds)} builds match the golden table")
         failed += bad
     return 1 if failed else 0
 

@@ -37,9 +37,9 @@ static void                relay_get(void) {
 // Invariants watched on every pass of a relay: the other half erases,
 // verifies and commits only behind the pause, and the pause is never held
 // while the image streams (both halves type then).
-static int pause_violations, stream_paused;
+static int  pause_violations, stream_paused;
 static void watch(void) {
-    uint8_t st = update_split_slave_state();
+    uint8_t st   = update_split_slave_state();
     bool    slow = st == UPDATE_STATE_VERIFYING_MANIFEST || st == UPDATE_STATE_ERASING || st == UPDATE_STATE_VERIFYING_IMAGE || st == UPDATE_STATE_COMMITTING;
     relay_get();
     if (slow && !link_paused && update_relay_busy()) pause_violations++;
@@ -47,7 +47,7 @@ static void watch(void) {
 }
 
 // Erases happen behind the pause: checked at every ROM op (after_op).
-static int erase_unpaused;
+static int  erase_unpaused;
 static void erase_watch(int op) {
     (void)op;
     if (noplog > 0 && noplog <= (int)(sizeof(oplog) / sizeof(oplog[0])) && oplog[noplog - 1].op == 'E' && !link_paused) erase_unpaused++;
@@ -79,13 +79,13 @@ static bool only_slot_changed(void) {
 static void test_relay_happy(uint32_t len) {
     relay_fresh(len);
     pause_violations = stream_paused = erase_unpaused = 0;
-    after_op = erase_watch;
+    after_op                                          = erase_watch;
     CHECK(update_relay_start(blob, len, body_crc()));
     CHECK(link_paused); // from the start: the manifest check and erase follow the manifest
     CHECK(update_relay_busy());
     CHECK(updater_active());
     CHECK(!update_relay_start(blob, len, body_crc())); // one at a time
-    uint64_t t0 = sim_us;
+    uint64_t t0             = sim_us;
     uint64_t pages_max_pass = 0;
     for (int i = 0; i < 200000; i++) {
         relay_get();
@@ -126,7 +126,8 @@ static void test_relay_happy(uint32_t len) {
     uint64_t relay_ms = (sim_us - t0) / 1000;
 
     // Kept alive while the host decides: no timeout on the other half.
-    for (int i = 0; i < 12000; i++) pass();
+    for (int i = 0; i < 12000; i++)
+        pass();
     relay_get();
     CHECK_EQ(ri.phase, RELAY_VERIFIED);
     CHECK_EQ(update_split_slave_state(), UPDATE_STATE_VERIFIED);
@@ -138,7 +139,7 @@ static void test_relay_happy(uint32_t len) {
     CHECK(update_relay_commit());
     CHECK(link_paused);
     CHECK(!update_relay_commit());
-    uint64_t c0 = sim_us;
+    uint64_t c0         = sim_us;
     uint64_t resumed_at = 0;
     for (int i = 0; i < 20000; i++) {
         pass();
@@ -170,17 +171,27 @@ static void test_relay_slave_refusals(void) {
         const char     *what;
         update_status_t want;
     } cases[] = {
-        {"nonzero reserved byte", UPDATE_INVALID}, {"bad hash", UPDATE_BAD_HASH},
-        {"settings failing", UPDATE_UNAVAILABLE}, {"version 1", UPDATE_UNSUPPORTED},
+        {"nonzero reserved byte", UPDATE_INVALID},
+        {"bad hash", UPDATE_BAD_HASH},
+        {"settings failing", UPDATE_UNAVAILABLE},
+        {"version 1", UPDATE_UNSUPPORTED},
     };
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
         relay_fresh(0x2000);
         sval_update_manifest_t *m = blob_manifest();
         switch (c) {
-            case 0: m->reserved0 = 1; break; // version 1's key_id
-            case 1: img[0x1234] ^= 1; break; // the image differs from the manifest's hash
-            case 2: port_failing = true; break;
-            case 3: m->manifest_ver = 1; break;
+            case 0:
+                m->reserved0 = 1;
+                break; // version 1's key_id
+            case 1:
+                img[0x1234] ^= 1;
+                break; // the image differs from the manifest's hash
+            case 2:
+                port_failing = true;
+                break;
+            case 3:
+                m->manifest_ver = 1;
+                break;
         }
         CHECK(update_relay_start(blob, img_len, body_crc()));
         uint8_t ph = relay_until(RELAY_VERIFIED, 60000);
@@ -233,19 +244,19 @@ static void test_relay_slave_mismatch(void) {
 }
 
 static void test_relay_faults(void) {
-    const int f0 = failures;
-    int ok_runs = 0, clean_fails = 0;
+    const int f0      = failures;
+    int       ok_runs = 0, clean_fails = 0;
     for (int run = 0; run < 24; run++) {
         bool hostile = run >= 12; // also replays of older requests (not seen on the real link: paranoia)
         relay_fresh(0x1800 + 0x100 * (uint32_t)run);
-        rng = 1000u + (uint32_t)run * 7919u;
-        lk.drop_req = 3;
-        lk.drop_rsp = 3;
-        lk.flip_req = 3;
-        lk.flip_rsp = 3;
-        lk.dup      = 3;
-        lk.stale    = 3;
-        lk.replay   = hostile ? 2 : 0;
+        rng              = 1000u + (uint32_t)run * 7919u;
+        lk.drop_req      = 3;
+        lk.drop_rsp      = 3;
+        lk.flip_req      = 3;
+        lk.flip_rsp      = 3;
+        lk.dup           = 3;
+        lk.stale         = 3;
+        lk.replay        = hostile ? 2 : 0;
         pause_violations = stream_paused = 0;
         CHECK(update_relay_start(blob, img_len, body_crc()));
         uint8_t ph = relay_until(RELAY_VERIFIED, 300000);
@@ -268,7 +279,8 @@ static void test_relay_faults(void) {
             CHECK_EQ(ph, RELAY_FAILED);
             clean_fails++;
             CHECK(!link_paused);
-            for (int i = 0; i < 6000; i++) pass(); // the other half drops it by itself
+            for (int i = 0; i < 6000; i++)
+                pass(); // the other half drops it by itself
             CHECK_EQ(update_split_slave_state(), UPDATE_STATE_IDLE);
             CHECK_EQ(slave_commit_runs, 0);
         }
@@ -313,8 +325,8 @@ static void test_relay_link_loss(void) {
         }
         relay_get();
         CHECK_EQ(ri.phase, want);
-        link_up     = false;
-        uint64_t t0 = sim_us;
+        link_up                = false;
+        uint64_t t0            = sim_us;
         uint64_t slave_idle_at = 0, failed_at = 0, resumed_at = 0;
         for (int i = 0; i < 12000; i++) {
             pass();
@@ -337,7 +349,7 @@ static void test_relay_link_loss(void) {
             CHECK(ri.unconfirmed);
             CHECK_EQ(slave_commit_runs, 0);
             CHECK(resumed_at - t0 >= (uint64_t)(SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS + SVAL_UPDATE_SPLIT_COMMIT_MS + SVAL_UPDATE_SPLIT_REBOOT_MS) * 1000);
-            CHECK(update_split_awaiting_match()); // the red LED until presence shows MATCH
+            CHECK(update_split_awaiting_match()); // INFO flags bit5 (and the after-update light) until presence shows MATCH
             CHECK(slave_idle_at > 0);             // its session times out
         } else {
             CHECK_EQ(ri.phase, RELAY_FAILED);
@@ -464,9 +476,9 @@ static void test_relay_slave_timeout(void) {
 // ---- the mailbox ----------------------------------------------------------------------------
 
 // RPCs to the other half outside the relay (as the master would send them).
-static uint8_t      mseq = 0x40;
-static usplit_rsp_t mrs;
-static uint8_t      mout[USPLIT_MSG_MAX];
+static uint8_t         mseq = 0x40;
+static usplit_rsp_t    mrs;
+static uint8_t         mout[USPLIT_MSG_MAX];
 static update_status_t mrpc(uint8_t *req, uint8_t len) {
     slave_rpc(req, len, mout, USPLIT_MSG_MAX);
     if (usplit_rsp_parse(mout, usplit_rsp_len(req[0]), req[0], req[1], &mrs) != UPDATE_OK) return (update_status_t)0xEE;
@@ -478,8 +490,8 @@ static update_status_t m_op(uint8_t op) {
 }
 static update_status_t m_manifest(const uint8_t *manifest) {
     for (uint32_t off = 0; off < UPDATE_MANIFEST_BYTES; off += USPLIT_BEGIN_DATA_MAX) {
-        uint8_t n = UPDATE_MANIFEST_BYTES - off < USPLIT_BEGIN_DATA_MAX ? (uint8_t)(UPDATE_MANIFEST_BYTES - off) : USPLIT_BEGIN_DATA_MAX;
-        uint8_t req[USPLIT_MSG_MAX];
+        uint8_t         n = UPDATE_MANIFEST_BYTES - off < USPLIT_BEGIN_DATA_MAX ? (uint8_t)(UPDATE_MANIFEST_BYTES - off) : USPLIT_BEGIN_DATA_MAX;
+        uint8_t         req[USPLIT_MSG_MAX];
         update_status_t st = mrpc(req, usplit_req_begin(req, ++mseq, (uint8_t)off, manifest + off, n));
         if (st != UPDATE_OK) return st;
     }
@@ -503,9 +515,9 @@ static void slave_ticks(int n) {
 
 // The race injected at the first unlock of the slave's housekeeping pass,
 // right after it copied its job out: what the SlaveThread could do there.
-static int  race_kind, race_fired;
+static int     race_kind, race_fired;
 static uint8_t other_blob[UPDATE_MANIFEST_BYTES];
-static void race(int n) {
+static void    race(int n) {
     (void)n;
     if (race_fired || !race_kind) return;
     race_fired  = 1;
@@ -587,7 +599,8 @@ static void test_relay_mailbox(void) {
     CHECK(update_relay_start(blob, img_len, body_crc()));
     CHECK_EQ(relay_until(RELAY_VERIFIED, 60000), RELAY_VERIFIED);
     CHECK(update_relay_commit());
-    for (int i = 0; i < 5 && update_split_slave_state() != UPDATE_STATE_COMMITTING; i++) update_relay_task();
+    for (int i = 0; i < 5 && update_split_slave_state() != UPDATE_STATE_COMMITTING; i++)
+        update_relay_task();
     CHECK_EQ(update_split_slave_state(), UPDATE_STATE_COMMITTING);
     race_kind = 4, race_fired = 0;
     unlock_hook = race;
@@ -631,7 +644,7 @@ static void test_relay_pages(void) {
         off += n;
         CHECK_EQ(get24le(mrs.payload), off);
     }
-    CHECK_EQ(program_ops, programs + 1); // the page, once
+    CHECK_EQ(program_ops, programs + 1);  // the page, once
     CHECK_EQ(m_page(232, 24), UPDATE_OK); // the completing fragment again: not programmed again
     CHECK_EQ(m_page(0, 24), UPDATE_OK);
     CHECK_EQ(program_ops, programs + 1);
@@ -703,7 +716,8 @@ static void test_relay_pages(void) {
         }
         slave_rpc(in, l, o, USPLIT_MSG_MAX);
         bool zero = true;
-        for (int i = 0; i < USPLIT_MSG_MAX; i++) zero &= o[i] == 0;
+        for (int i = 0; i < USPLIT_MSG_MAX; i++)
+            zero &= o[i] == 0;
         if (!zero) {
             CHECK(l >= 2 && o[1] < USPLIT_OP_COUNT);
             if (l >= 2 && o[1] < USPLIT_OP_COUNT) CHECK_EQ(usplit_rsp_parse(o, usplit_rsp_len(o[1]), o[1], o[2], &mrs), UPDATE_OK);
@@ -744,7 +758,7 @@ static int relay_with_cut(uint32_t len, int cut_k, bool tear, bool *cut_hit) {
 }
 
 static void test_relay_cuts(void) {
-    const int f0 = failures;
+    const int      f0  = failures;
     const uint32_t len = 0x2000;
     bool           hit;
     int            total = relay_with_cut(len, 0, false, &hit);
@@ -797,7 +811,8 @@ static update_status_t send_commit(uint32_t client, uint32_t crc) {
 static void presence_up(void) {
     presence_sim = true;
     last_ping_us = 0;
-    for (int i = 0; i < 600; i++) pass();
+    for (int i = 0; i < 600; i++)
+        pass();
 }
 
 static bool session_to_relayed(uint32_t len) {
@@ -845,7 +860,8 @@ static void test_relay_session(void) {
         bool            answers;
         update_status_t want;
     } pres[] = {
-        {UPDATE_HAND_LEFT, 2001, true, UPDATE_OK},           {UPDATE_HAND_LEFT, 1999, true, UPDATE_OK}, // VERSION: the fix for a mismatch
+        {UPDATE_HAND_LEFT, 2001, true, UPDATE_OK},
+        {UPDATE_HAND_LEFT, 1999, true, UPDATE_OK},           // VERSION: the fix for a mismatch
         {UPDATE_HAND_RIGHT, 2001, true, UPDATE_UNAVAILABLE}, // SAME_HAND
         {UPDATE_HAND_LEFT, 2001, false, UPDATE_UNAVAILABLE}, // NONE
     };
@@ -872,7 +888,7 @@ static void test_relay_session(void) {
         fresh(0x2000);
         make_slave_update(0x2000);
         if (c == 0) blob_manifest()->pointing_id = UPDATE_POINTING_PMW3389; // this half's, not the other's
-        if (c == 1) blob_manifest()->hand = UPDATE_HAND_RIGHT;               // the request's hand picks the half
+        if (c == 1) blob_manifest()->hand = UPDATE_HAND_RIGHT;              // the request's hand picks the half
         presence_up();
         req_hand = UPDATE_HAND_LEFT;
         CHECK_EQ(load_manifest(CLIENT_A), UPDATE_OK);
@@ -904,7 +920,7 @@ static void test_relay_session(void) {
     pass();
     CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
     // the other hand's session ops are BUSY; this half's TEST_HALT too
-    req_hand = UPDATE_HAND_RIGHT;
+    req_hand       = UPDATE_HAND_RIGHT;
     uint8_t m0[22] = {0, 20};
     CHECK_EQ(send(CLIENT_A, UPDATE_OP_MANIFEST, m0, sizeof(m0)), UPDATE_BUSY);
     CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_BUSY);
@@ -923,12 +939,13 @@ static void test_relay_session(void) {
     CHECK_EQ(updater_state(), UPDATE_STATE_SUBSIDE_COMMITTING);
     CHECK(link_paused);
     pass();
-    CHECK_EQ(led_now, UPDATE_LED_WRITING);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS); // the other half writes: magenta is its own light, not this half's
     CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_BUSY);
     CHECK_EQ(send(CLIENT_A, UPDATE_OP_RELAY, NULL, 0), UPDATE_OK);
     CHECK_EQ(rsp[1], RELAY_HOLD);
     CHECK_EQ(rsp[20] & 1, 1);
-    for (int i = 0; i < 10000 && updater_state() == UPDATE_STATE_SUBSIDE_COMMITTING; i++) pass();
+    for (int i = 0; i < 10000 && updater_state() == UPDATE_STATE_SUBSIDE_COMMITTING; i++)
+        pass();
     CHECK_EQ(updater_state(), UPDATE_STATE_IDLE);
     CHECK_EQ(slave_commit_runs, 1);
     CHECK_EQ(slave_commit_crc, body_crc());
@@ -938,8 +955,11 @@ static void test_relay_session(void) {
     CHECK_EQ(rsp[12], UPDATE_OK);
 
     // Partial pair: the other half is on 2002, this one on 2001. Presence shows
-    // VERSION, INFO flags bit5, and the red LED here while idle (V).
-    for (int i = 0; i < 1200; i++) pass();
+    // VERSION and INFO flags bit5 (V); the lights stay rainbow on both halves
+    // (the ping carries it) while this half's own install is still to come.
+    led_seen = 0;
+    for (int i = 0; i < 1200; i++)
+        pass();
     CHECK_EQ(update_split_presence(), UPDATE_PRESENCE_VERSION);
     req_hand = UPDATE_HAND_RIGHT;
     CHECK_EQ(send(0, UPDATE_OP_INFO, NULL, 0), UPDATE_OK);
@@ -947,26 +967,66 @@ static void test_relay_session(void) {
     CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
     CHECK_EQ(rsp[22], UPDATE_PRESENCE_VERSION);
     pass();
-    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_UPDATING);
+    CHECK_EQ(led_seen & ((1 << UPDATE_LED_ERROR) | (1 << UPDATE_LED_DONE)), 0);
     // the other half can still be updated through this one (VERSION is allowed)
     req_hand = UPDATE_HAND_LEFT;
     CHECK_EQ(send(0, UPDATE_OP_INFO, NULL, 0), UPDATE_OK);
     CHECK_EQ(get32le(rsp + 14), 2002);
-    // this half to 2002 over USB (M1): then MATCH and the LED goes back
+    // this half to 2002 over USB (M1): then MATCH, the green flash, and the LEDs go back
     make_update(len);
     blob_manifest()->fw_version = 2002;
-    master_slot          = NULL;
-    commit_avail         = true;
-    master_commit_resets = true;
-    req_hand             = UPDATE_HAND_RIGHT;
+    master_slot                 = NULL;
+    commit_avail                = true;
+    master_commit_resets        = true;
+    req_hand                    = UPDATE_HAND_RIGHT;
     CHECK(to_verified(CLIENT_A));
     CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_ACCEPTED);
-    for (int i = 0; i < 300 && master_reboots == 0; i++) pass();
+    CHECK_EQ(led_seen & (1 << UPDATE_LED_ERROR), 0);
+    for (int i = 0; i < 300 && master_reboots == 0; i++)
+        pass();
     CHECK_EQ(master_reboots, 1);
     CHECK_EQ(master_id.fw_version, 2002);
-    for (int i = 0; i < 1200; i++) pass();
+    CHECK(led_seen & (1 << UPDATE_LED_WRITING));
+    // (the mock commit returns before its "reset", which the real one never
+    // does: the pass it returns in is not looked at)
+    led_seen = 0;
+    pass();
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS); // the boot after its own commit: until the halves match
+    for (int i = 0; i < 1200; i++)
+        pass();
     CHECK_EQ(update_split_presence(), UPDATE_PRESENCE_MATCH);
+    CHECK(led_seen & (1 << UPDATE_LED_DONE));
+    CHECK_EQ(led_seen & (1 << UPDATE_LED_ERROR), 0); // never red along the way
     CHECK_EQ(led_now, UPDATE_LED_NONE);
+
+    // The same partial pair left as it is: rainbow while idle for
+    // SVAL_UPDATE_AFTER_WAIT_MS after the relay, then red for
+    // SVAL_UPDATE_RED_MS, then nothing; INFO flags bit5 stays.
+    fresh(len);
+    make_slave_update(len);
+    presence_up();
+    CHECK(session_to_relayed(len));
+    slave_commit_resets = true;
+    CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_ACCEPTED);
+    for (int i = 0; i < 10000 && updater_state() == UPDATE_STATE_SUBSIDE_COMMITTING; i++)
+        pass();
+    CHECK_EQ(updater_state(), UPDATE_STATE_IDLE);
+    led_seen = 0;
+    wait_ms(SVAL_UPDATE_AFTER_WAIT_MS - 1000);
+    CHECK_EQ(update_split_presence(), UPDATE_PRESENCE_VERSION);
+    CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
+    CHECK_EQ(led_seen & (1 << UPDATE_LED_ERROR), 0);
+    wait_ms(1500);
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_FAILED);
+    wait_ms(SVAL_UPDATE_RED_MS);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_NONE);
+    req_hand = UPDATE_HAND_RIGHT;
+    CHECK_EQ(send(0, UPDATE_OP_INFO, NULL, 0), UPDATE_OK);
+    CHECK_EQ(rsp[21] & 0x20, 0x20);
 
     // ABORT while relaying: the other half is told, the link resumes.
     fresh(len);
@@ -977,8 +1037,10 @@ static void test_relay_session(void) {
     memcpy(shadow, update_host_flash + SVAL_UPDATE_BASE, len);
     master_slot = shadow;
     CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_ACCEPTED);
-    for (int i = 0; i < 3000 && update_split_slave_state() != UPDATE_STATE_RECEIVING; i++) pass();
-    for (int i = 0; i < 20; i++) pass();
+    for (int i = 0; i < 3000 && update_split_slave_state() != UPDATE_STATE_RECEIVING; i++)
+        pass();
+    for (int i = 0; i < 20; i++)
+        pass();
     CHECK_EQ(update_split_slave_state(), UPDATE_STATE_RECEIVING);
     CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
     CHECK_EQ(updater_state(), UPDATE_STATE_IDLE);
@@ -1008,9 +1070,11 @@ static void test_relay_session(void) {
     // The link drops while relaying: ERROR UNAVAILABLE, the link resumed;
     // ABORT from anyone clears it.
     CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_ACCEPTED);
-    for (int i = 0; i < 3000 && update_split_slave_state() != UPDATE_STATE_RECEIVING; i++) pass();
+    for (int i = 0; i < 3000 && update_split_slave_state() != UPDATE_STATE_RECEIVING; i++)
+        pass();
     link_up = false;
-    for (int i = 0; i < 3000 && updater_state() == UPDATE_STATE_RELAYING; i++) pass();
+    for (int i = 0; i < 3000 && updater_state() == UPDATE_STATE_RELAYING; i++)
+        pass();
     CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
     CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
     CHECK_EQ(rsp[12], UPDATE_UNAVAILABLE);
@@ -1027,7 +1091,8 @@ static void test_relay_session(void) {
     make_slave_update(len);
     presence_up();
     CHECK(session_to_relayed(len));
-    for (int i = 0; i < SVAL_UPDATE_SESSION_TIMEOUT_MS + 100; i++) pass();
+    for (int i = 0; i < SVAL_UPDATE_SESSION_TIMEOUT_MS + 100; i++)
+        pass();
     CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
     CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
     CHECK_EQ(rsp[12], UPDATE_TIMEOUT);
@@ -1060,10 +1125,12 @@ static void test_relay_presence(void) {
     memset(out, 0xEE, sizeof(out));
     sim_slave = true;
     update_split_presence_fill(out, 16); // too short: untouched
-    for (int i = 0; i < 32; i++) CHECK_EQ(out[i], 0xEE);
+    for (int i = 0; i < 32; i++)
+        CHECK_EQ(out[i], 0xEE);
     update_split_presence_fill(out, 17);
     sim_slave = false;
-    for (int i = 17; i < 32; i++) CHECK_EQ(out[i], 0xEE);
+    for (int i = 17; i < 32; i++)
+        CHECK_EQ(out[i], 0xEE);
     update_presence_t p;
     memcpy(&p, out, sizeof(p));
     CHECK_EQ(p.hand, UPDATE_HAND_LEFT);
@@ -1124,8 +1191,9 @@ static int relay_commit_e2e(uint32_t len, int cut_k, bool tear) {
     sval_update_manifest_t *m = blob_manifest();
     m->hand                   = UPDATE_HAND_LEFT;
     m->pointing_id            = UPDATE_POINTING_TRACKPOINT;
-    master_slot = img;
-    for (uint32_t i = 0; i < SVAL_UPDATE_MAX_IMAGE; i++) old_fw[i] = (uint8_t)(rnd() | 0x01);
+    master_slot               = img;
+    for (uint32_t i = 0; i < SVAL_UPDATE_MAX_IMAGE; i++)
+        old_fw[i] = (uint8_t)(rnd() | 0x01);
     memcpy(old_fw, BOOT2_ROM, 256);
     memcpy(update_host_flash, old_fw, sizeof(old_fw));
     hw_reset();
@@ -1168,7 +1236,7 @@ static void relay_invariants(uint32_t len) {
 }
 
 static void test_relay_real_commit(void) {
-    const int f0 = failures;
+    const int      f0  = failures;
     const uint32_t len = 0x3000;
     CHECK_EQ(relay_commit_e2e(len, 0, false), LAND_RESET);
     CHECK(image_in_place(len) && page0_valid());
@@ -1176,7 +1244,7 @@ static void test_relay_real_commit(void) {
     CHECK_EQ(latches, 1);
     CHECK(reset_ok);
     CHECK(link_paused); // this half was holding the pause when the other one reset
-    int total = flash_ops;
+    int total   = flash_ops;
     int staging = 0, commit = 0;
     for (int tear = 0; tear < 2; tear++) {
         for (int k = 1; k <= total; k++) {

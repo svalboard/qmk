@@ -12,7 +12,7 @@
 
 #ifndef SVAL_UPDATER_HOST_TEST
 void update_device_self(update_device_t *dev) {
-    dev->hand           = UPDATE_SELF_HAND;
+    dev->hand           = UPDATE_RUNNING_HAND;
     dev->pointing_id    = UPDATE_SELF_POINTING;
     dev->security_epoch = SVAL_UPDATE_SECURITY_EPOCH;
     dev->storage_format = SVAL_UPDATE_STORAGE_FORMAT;

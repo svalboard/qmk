@@ -39,3 +39,21 @@ void updater_via_command(uint8_t *data, uint8_t length);
 // skips its identity task.
 bool           updater_active(void);
 update_state_t updater_state(void);
+
+// The updater's light on the presence ping (D24): the half with USB sends its
+// light with every KEYBOARD_SYNC_A ping (presence_rpc_t.update_light,
+// kb/svalboard.h), so the half without USB, which cannot see presence, shows
+// the same rainbow, green flash and red. A master from before this byte sends
+// a shorter ping, and that half then shows nothing after an update.
+typedef enum {
+    UPDATE_LIGHT_NONE     = 0, // nothing to show
+    UPDATE_LIGHT_UPDATING = 1, // rainbow
+    UPDATE_LIGHT_DONE     = 2, // the halves match: the green flash, once
+    UPDATE_LIGHT_FAILED   = 3, // red
+} update_light_t;
+
+// The half with USB, for each ping: update_light_t.
+uint8_t updater_split_light(void);
+// The half without USB, from the ping's callback (the split SlaveThread):
+// has_light false for a ping without the byte.
+void updater_split_light_seen(bool has_light, uint8_t light);

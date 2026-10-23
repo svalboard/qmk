@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Check a published release's assets (M3): its state, then every .svup
-# against its .uf2 and as a release build would check it.
+# Check a published release's assets (M3): its state, then every pair UF2
+# as a release build would check it (docs/pair-uf2.md).
 #
 #   bash keyboards/svalboard/tools/m3/check_release.sh TAG [OWNER/REPO]
 #
 # Downloads into ~/m3dry/TAG (kept: the hardware check uses these files).
 # An x tag must be a published prerelease; a v tag must be a full release
 # (a draft until someone publishes it, D41). Any other tag is refused. Every
-# release must hold exactly 4 .uf2 and 4 .svup files (D34, D40).
+# release must hold exactly 2 pair UF2 files, sval and blank (D34, D40).
 set -euo pipefail
 tag="${1:?usage: check_release.sh TAG [OWNER/REPO]}"
 R="${2:-morganvenable/sval-qmk}"

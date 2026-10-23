@@ -15,10 +15,12 @@ on:
       # In-firmware updater (docs/updater.md, "Releases"). With updater
       # true the firmware is a release updater build (SVAL_UPDATER=yes
       # SVAL_UPDATE_RELEASE=yes) carrying version_string, and instead of
-      # publishing its .uf2 the job uploads the .uf2, its .svup and the ELF
-      # as the artifact release-<name>; release.yml publishes them once the
-      # lint passes. fw_version is the number release_version.py read from
-      # updater/fw_version.txt: the .svup must carry it. With updater false
+      # publishing its .uf2 the job uploads the pair UF2 (docs/pair-uf2.md:
+      # the image and the record that installs it on the other half too) and
+      # the ELF as the artifact release-<name>; release.yml publishes the
+      # pair UF2 once the lint passes. fw_version is the number
+      # release_version.py read from updater/fw_version.txt: the pair UF2's
+      # manifest must carry it. With updater false
       # (the default) the job builds and publishes what it always did; a tag
       # build checks out the run's commit (github.sha) and keeps no Git
       # credentials.
@@ -115,7 +117,7 @@ jobs:
         echo "keyboard_name=$KEYBOARD_NAME" >> $GITHUB_OUTPUT
       shell: bash
 
-    - name: Updater .svup
+    - name: Updater pair UF2
       if: ${{ inputs.updater }}
       env:
         VERSION: ${{ steps.get_version.outputs.VERSION }}
@@ -123,19 +125,20 @@ jobs:
         FW_VERSION: ${{ inputs.fw_version }}
       run: |
         NAME="${{ env.keyboard_name }}_${{ inputs.side }}_${{ inputs.keymap }}"
+        OUT="svalboard_${{ inputs.keymap }}_${VERSION}.uf2"
         mkdir -p updater-out
         # The commit's RAM code must not reach flash (plan R2).
         python3 -I keyboards/svalboard/tools/check_ram_funcs.py ".build/$NAME.elf"
-        python3 -I keyboards/svalboard/tools/make_update.py "$NAME.uf2" \
-          -o "updater-out/${NAME}_${VERSION}.svup" \
+        python3 -I keyboards/svalboard/tools/make_update.py pair "$NAME.uf2" \
+          -o "updater-out/$OUT" \
           --kb "${{ inputs.keyboard }}/${{ inputs.side }}" --keymap "${{ inputs.keymap }}" --release \
           --expect-version "$VERSION_STRING" --expect-fw-version "$FW_VERSION"
+        python3 -I keyboards/svalboard/tools/make_update.py verify-pair "updater-out/$OUT" --build release
         cp ".build/$NAME.elf" "updater-out/$NAME.elf"
-        cp "$NAME.uf2" "updater-out/${NAME}_${VERSION}.uf2"
         echo "release_name=$NAME" >> "$GITHUB_ENV"
       shell: bash
 
-    - name: Upload the .uf2, .svup and ELF
+    - name: Upload the pair UF2 and ELF
       uses: actions/upload-artifact@v4
       if: ${{ inputs.updater }}
       with:

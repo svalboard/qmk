@@ -19,30 +19,34 @@ name: Release QMK Firmware
 #
 #   gh workflow run release.yml -R svalboard/qmk --ref x3 -f tag=x3
 #
-# A release is four images: svalboard/left and svalboard/right, the auto
-# builds, which drive whichever pointing module is attached (D34), each with
-# the sval keymap and with the blank keymap (no key bindings: a test image for
+# A release is two files, one per keymap: svalboard/either, one image for both
+# halves (the side comes from the thumb strap or the stored side record), the
+# auto build that drives whichever pointing module is attached (D34), with the
+# sval keymap and with the blank keymap (no key bindings: a test image for
 # checking every key after a build, D40). Each is a release updater build
-# (SVAL_UPDATER=yes SVAL_UPDATE_RELEASE=yes; docs/updater.md, "Releases"), so
-# the published .uf2 files carry the in-firmware updater, and each comes with
-# a .svup for it. Per-module builds are not released, and SVAL_TEST_WIPE never
-# is:
+# (SVAL_UPDATER=yes SVAL_UPDATE_RELEASE=yes; docs/updater.md, "Releases"),
+# published as a pair UF2 (docs/pair-uf2.md): copied onto either half in
+# BOOTSEL it installs that half and then the other one over the split cable,
+# and Keybard installs from the same file. Per-side and per-module builds
+# still build but are not released, and SVAL_TEST_WIPE never is:
 #
 #   version  the tag and keyboards/svalboard/updater/fw_version.txt (D32):
 #            the tag must be a release tag (above), and the number must go
 #            up past every published release, x tags included
-#   build    4 release updater builds (pinned image and toolchain); each
-#            checks its RAM commit code and uploads its .uf2, its .svup
-#            (make_update.py --release) and its ELF. No build job can write
-#            to the repository
-#   lint     the tag still names this run's commit; each .svup holds its ELF's
-#            flash contents and its .uf2's image, with a manifest and
-#            build-info record that match the build; the release ELFs have no
-#            test hooks, keytest or host bootloader; every left/right
-#            pairing (sval or blank on either side) agrees on the split
-#            message table, which matches the committed golden table (P1)
-#   publish  the release named after the tag, with the 4 .uf2 and 4 .svup
-#            files: a draft for a v tag, a prerelease for an x tag
+#   build    2 release updater builds (pinned image and toolchain); each
+#            checks its RAM commit code and uploads its pair UF2
+#            (make_update.py pair --release, then verify-pair) and its ELF.
+#            No build job can write to the repository
+#   lint     the tag still names this run's commit; each pair UF2 has the
+#            pair layout and holds its ELF's flash contents, with a manifest
+#            and build-info record that match the build; the release ELFs
+#            have no test hooks, keytest or host bootloader; the builds agree
+#            on the split message table with each other and with the
+#            committed golden table, so they also talk to the per-side
+#            releases already on boards (P1)
+#   publish  the release named after the tag, with the 2 pair UF2 files and
+#            two lines on what to do with them: a draft for a v tag, a
+#            prerelease for an x tag
 #
 # Every job checks out the run's commit (github.sha), never the tag by name.
 on:
@@ -123,7 +127,7 @@ jobs:
       matrix:
         keyboard: [ svalboard ]
         keymap: [ sval, blank ]
-        side: [ left, right ]
+        side: [ either ]
 
   lint:
     needs: [ version, build ]
@@ -144,7 +148,7 @@ jobs:
         path: release
         merge-multiple: true
 
-    - name: Each .svup holds its ELF's and its .uf2's image; manifests match the builds
+    - name: Each pair UF2 holds its ELF's image; manifests match the builds
       env:
         VERSION: ${{ needs.version.outputs.version }}
       run: |
@@ -153,10 +157,10 @@ jobs:
 
     - name: Lint the release updater ELFs
       run: |
-        test "$(find release -name "*.elf" | wc -l)" -eq 4
+        test "$(find release -name "*.elf" | wc -l)" -eq 2
         python3 -I keyboards/svalboard/tools/check_release_elf.py release/*.elf
 
-    - name: Split message table of every pairing, and the golden table (P1)
+    - name: Split message table of the builds, and the golden table (P1)
       run: |
         python3 -I keyboards/svalboard/tools/check_split_tables.py --dir release \
           --golden keyboards/svalboard/tools/split_table_golden.json
@@ -173,7 +177,7 @@ jobs:
         path: release
         merge-multiple: true
 
-    - name: Release with the .uf2 and .svup files
+    - name: Release with the pair UF2 files
       env:
         GH_TOKEN: ${{ github.token }}
         TAG: ${{ github.ref_name }}
@@ -181,9 +185,13 @@ jobs:
         DRAFT: ${{ needs.version.outputs.draft }}
       run: |
         R="$GITHUB_REPOSITORY"
-        test "$(find release -name "*.uf2" | wc -l)" -eq 4
-        test "$(find release -name "*.svup" | wc -l)" -eq 4
-        args=(--verify-tag --title "$TAG" --notes "")
+        test "$(find release -name "*.uf2" | wc -l)" -eq 2
+        test "$(find release -name "*.svup" | wc -l)" -eq 0
+        # The release body: two plain lines on what to do with the files.
+        L1="To install by hand, copy svalboard_sval_$TAG.uf2 onto the RPI-RP2 drive of either half: that half installs it, then updates the other half over the split cable."
+        L2="Or open the same file in Keybard and install it from there."
+        NOTES="$(printf '%s\n\n%s' "$L1" "$L2")"
+        args=(--verify-tag --title "$TAG" --notes "$NOTES")
         if [ "$PRE" = true ]; then args+=(--prerelease); fi
         if [ "$DRAFT" = true ]; then args+=(--draft); fi
         if [ "$PRE" = "$DRAFT" ]; then
@@ -194,5 +202,5 @@ jobs:
           echo "::error::$TAG already has a release: delete it, then re-run all jobs"
           exit 1
         fi
-        gh release create "$TAG" -R "$R" "${args[@]}" release/*.uf2 release/*.svup
+        gh release create "$TAG" -R "$R" "${args[@]}" release/*.uf2
         gh release view "$TAG" -R "$R" --json isDraft,isPrerelease,assets -q '{isDraft, isPrerelease, assets: (.assets | length)}'

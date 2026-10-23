@@ -174,6 +174,7 @@
 #include "update_led.h"
 #include "update_commit.h"
 #include "update_split.h"
+#include "update_pair.h"   // the boot relay of a pair UF2 (docs/pair-uf2.md)
 #include "build_reset.h" // BUILD_RESET_TO_* (SETTINGS_RESET modes, D44)
 #include "sha512.h" // vendor/: SHA-512 from Monocypher
 
@@ -722,11 +723,15 @@ static update_status_t op_test_halt(uint32_t client, const uint8_t *req) {
 // valid, scratch1 = last op << 24 | state << 16 | status << 8 | op count,
 // scratch2 = ms of that op, scratch3 = ms of the last updater_task pass. At
 // boot the previous values and the reset reason are latched for DIAG.
+// scratch0 = CRUMB_MAGIC_COMMIT instead is the commit marker
+// (updater_port_commit_mark): the reset came from this half's own commit.
 #ifndef SVAL_UPDATER_HOST_TEST
 #    include "hardware/structs/watchdog.h"
 #    include "hardware/structs/vreg_and_chip_reset.h"
 #    define CRUMB_MAGIC 0x5C0B0001u
+#    define CRUMB_MAGIC_COMMIT 0x5C0B0002u
 static bool     crumbs_latched;
+static bool     crumbs_committed; // the last reset came from this half's own commit
 static uint8_t  reset_flags; // bit0 POR/brown-out, 1 RUN pin, 2 debugger, 3 watchdog timer, 4 watchdog force, 7 crumbs valid
 static uint32_t prev_crumb[3];
 static uint8_t  crumb_count;
@@ -736,7 +741,8 @@ static void crumbs_latch(void) {
     crumbs_latched = true;
     uint32_t cr = vreg_and_chip_reset_hw->chip_reset, wr = watchdog_hw->reason;
     reset_flags = (cr & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_POR_BITS ? 0x01 : 0) | (cr & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_RUN_BITS ? 0x02 : 0) | (cr & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_PSM_RESTART_BITS ? 0x04 : 0) | (wr & WATCHDOG_REASON_TIMER_BITS ? 0x08 : 0) | (wr & WATCHDOG_REASON_FORCE_BITS ? 0x10 : 0);
-    if (watchdog_hw->scratch[0] == CRUMB_MAGIC) {
+    if (watchdog_hw->scratch[0] == CRUMB_MAGIC || watchdog_hw->scratch[0] == CRUMB_MAGIC_COMMIT) {
+        crumbs_committed = watchdog_hw->scratch[0] == CRUMB_MAGIC_COMMIT;
         reset_flags |= 0x80;
         for (int i = 0; i < 3; i++) prev_crumb[i] = watchdog_hw->scratch[i + 1];
     }
@@ -753,6 +759,18 @@ static void crumb_op(uint8_t op, uint8_t st) {
 static void crumb_pass(void) {
     crumbs_latch();
     watchdog_hw->scratch[3] = updater_port_now_ms();
+}
+
+void updater_port_commit_mark(bool on) {
+    crumbs_latch();
+    watchdog_hw->scratch[0] = on ? CRUMB_MAGIC_COMMIT : CRUMB_MAGIC;
+}
+
+bool updater_port_commit_mark_take(void) {
+    crumbs_latch();
+    bool was         = crumbs_committed;
+    crumbs_committed = false;
+    return was;
 }
 
 static void crumbs_report(uint8_t *rsp) {
@@ -878,6 +896,11 @@ void updater_via_command(uint8_t *data, uint8_t length) {
         st = UPDATE_UNSUPPORTED;
     } else if (to_other && (op == UPDATE_OP_TEST_HALT || op == UPDATE_OP_DIAG)) {
         st = UPDATE_UNSUPPORTED; // this half's only
+    } else if (update_pair_busy() && op != UPDATE_OP_INFO && op != UPDATE_OP_STATUS && op != UPDATE_OP_RELAY && op != UPDATE_OP_DIAG) {
+        // The boot relay of a pair UF2 runs (docs/pair-uf2.md): every op that
+        // could start or touch a session waits for it. INFO, STATUS, RELAY
+        // (its progress) and DIAG are answered.
+        st = UPDATE_BUSY;
     } else if ((s.state == UPDATE_STATE_COMMITTING || s.state == UPDATE_STATE_SUBSIDE_COMMITTING) && op != UPDATE_OP_INFO && op != UPDATE_OP_STATUS && op != UPDATE_OP_RELAY &&
                !(op == UPDATE_OP_REBIND && s.state == UPDATE_STATE_SUBSIDE_COMMITTING)) {
         // Protocol 4: REBIND is answered while the other half commits, so a
@@ -1021,32 +1044,154 @@ static void verify_image_step(void) {
     s.state = UPDATE_STATE_VERIFIED;
 }
 
-static update_led_mode_t led_mode(void) {
-    uint32_t done_ms;
+// ---- the lights (D24, update_led.h) ----------------------------------------------------
+//
+// One meaning per color, and red only for a failure:
+//   blue blink       your turn: make the chord (the half with USB)
+//   white flash      got it: the chord was recognized
+//   rainbow          updating, keep plugged in: on both halves, from the start
+//                    of an update until the halves match, including while one
+//                    half waits for the other to restart after a relay
+//   magenta          this half's own commit, which holds a fixed color while
+//                    it writes from RAM (update_led_commit_latch)
+//   green flash      done: presence matches after an update or a relay
+//   red, 1 Hz        it failed, open Keybard: a refused or failed install, a
+//                    refused, damaged or tried-too-often pair record, or halves
+//                    that still differ SVAL_UPDATE_AFTER_WAIT_MS after an update.
+//                    Every red stops after SVAL_UPDATE_RED_MS; INFO flags bit5
+//                    and Keybard keep reporting the problem.
+//   none             nothing for you to do (a pair record kept waiting for an
+//                    absent other half shows nothing)
+//
+// The after-update window. The half with USB opens it when a relay ends DONE
+// (update_split_awaiting_match() rises) and on the first boot after its own
+// commit (the commit marker, updater_port_commit_mark); it shows the rainbow
+// until presence reads MATCH (then the green flash), or until it has been idle
+// SVAL_UPDATE_AFTER_WAIT_MS (then red, then nothing). The half without USB
+// cannot see presence: the master's light rides on its 500 ms presence ping
+// (updater_split_light, presence_rpc_t.update_light in kb/svalboard.h), and
+// that half follows it: rainbow, the green flash once, red. It opens its own
+// window at the first boot after its commit too, so it stays rainbow while it
+// waits for the first ping. A ping without the byte (a master from before it)
+// closes that window quietly: that half cannot tell, so it shows nothing.
+
+// SVAL_UPDATE_AFTER_WAIT_MS and SVAL_UPDATE_RED_MS: kb/config.h.
+#define DONE_FLASH_MS 600  // the green double flash (update_led.c's DONE_STEP_MS x 4)
+#define LIGHT_DONE_MS 2000 // DONE stays on the ping this long, so the other half sees it
+#define LIGHT_NO_BYTE 0xFF // a ping from a master without the byte
+
+typedef enum {
+    AFTER_NONE = 0,
+    AFTER_WAIT, // rainbow: an update finished, the halves do not match yet
+    AFTER_DONE, // the green flash
+    AFTER_RED,  // the halves still differ: red for SVAL_UPDATE_RED_MS
+} after_phase_t;
+
+static struct {
+    bool              booted;   // the first pass took the commit marker
+    uint8_t           phase;    // after_phase_t
+    bool              relay;    // the other half was there and is expected back (a relay ended DONE)
+    bool              answered; // presence answered since the window opened
+    bool              awaiting_was;
+    uint32_t          ms; // WAIT: the last activity; DONE, RED: the start
+    bool              done_any;
+    uint32_t          done_ms;  // the last green flash (the ping carries DONE for LIGHT_DONE_MS)
+    bool              red_on;   // a failure light's cause is present
+    uint32_t          red_ms;   // since then
+    update_led_mode_t shown;    // the last light, for the ping
+    uint8_t           hint_was; // the half without USB: the last light the master sent
+    uint8_t           rx_seen;  // pings handled
+} lt;
+
+// The half without USB: written by the presence ping's callback (the split
+// SlaveThread), read by housekeeping. A torn read costs one pass of light.
+static volatile uint8_t rx_light = LIGHT_NO_BYTE, rx_n;
+
+void updater_split_light_seen(bool has_light, uint8_t light) {
+    rx_light = has_light ? light : LIGHT_NO_BYTE;
+    rx_n     = rx_n + 1;
+}
+
+uint8_t updater_split_light(void) {
+    uint32_t t = updater_port_now_ms();
+    if (lt.done_any && t - lt.done_ms < LIGHT_DONE_MS) return UPDATE_LIGHT_DONE;
+    switch (lt.shown) {
+        case UPDATE_LED_PROGRESS:
+        case UPDATE_LED_WRITING:
+            return UPDATE_LIGHT_UPDATING;
+        case UPDATE_LED_ERROR:
+            return UPDATE_LIGHT_FAILED;
+        default:
+            return UPDATE_LIGHT_NONE;
+    }
+}
+
+static void after_open(bool relay) {
+    lt.phase    = AFTER_WAIT;
+    lt.relay    = relay;
+    lt.answered = false;
+    lt.ms       = now_ms;
+}
+
+static void after_done(void) {
+    lt.phase    = AFTER_DONE;
+    lt.ms       = now_ms;
+    lt.done_any = true;
+    lt.done_ms  = now_ms;
+}
+
+// The boot relay of a pair UF2: rainbow once the other half answers and can
+// take it (a record kept waiting for an absent half shows nothing), red after a record that was
+// refused, damaged or tried too often (update_pair.c, for
+// SVAL_UPDATE_PAIR_ERROR_MS).
+static bool pair_light(update_led_mode_t *mode, bool *failed) {
+    switch (update_pair_phase()) {
+        case PAIR_BOOT_HASH:
+        case PAIR_BOOT_WAIT:
+            *mode = update_pair_peer_takes() ? UPDATE_LED_PROGRESS : UPDATE_LED_NONE;
+            return true;
+        case PAIR_BOOT_RELAY:
+        case PAIR_BOOT_RETRY:
+            *mode = UPDATE_LED_PROGRESS; // the other half writes: this half holds no fixed color
+            return true;
+        case PAIR_BOOT_ERROR:
+            *mode   = UPDATE_LED_ERROR;
+            *failed = true;
+            return true;
+        default:
+            return false;
+    }
+}
+
+// This half's own update work: its light, or NONE when it has none. *failed:
+// a failure light (red), whose cause may outlast the light.
+static update_led_mode_t own_light(bool *failed) {
+    uint32_t          done_ms;
+    update_led_mode_t pair_mode;
+    *failed = false;
     switch (s.state) {
         case UPDATE_STATE_IDLE:
-            // The half without USB, in a session from the other half: the same
-            // colors (D24); back to normal when it ends or times out.
+            if (pair_light(&pair_mode, failed)) return pair_mode;
+            // The half without USB, in a session from the other half.
             switch (update_split_slave_state()) {
                 case UPDATE_STATE_IDLE:
-                    break;
+                    return UPDATE_LED_NONE;
                 case UPDATE_STATE_ERROR:
+                    *failed = true;
                     return UPDATE_LED_ERROR;
                 case UPDATE_STATE_COMMITTING:
                     return UPDATE_LED_WRITING;
                 default:
                     return UPDATE_LED_PROGRESS;
             }
-            return split_mismatch() ? UPDATE_LED_ERROR : UPDATE_LED_NONE;
         case UPDATE_STATE_MANIFEST_LOADING:
-            // A version mismatch with the other half shows the red error LED
-            // on the half with USB until it is fixed (V).
-            return split_mismatch() ? UPDATE_LED_ERROR : UPDATE_LED_NONE;
+            return UPDATE_LED_NONE; // nothing shown to the user yet
         case UPDATE_STATE_ERROR:
+            *failed = true;
             return UPDATE_LED_ERROR;
         case UPDATE_STATE_COMMITTING:
-        case UPDATE_STATE_SUBSIDE_COMMITTING:
             return UPDATE_LED_WRITING;
+        case UPDATE_STATE_SUBSIDE_COMMITTING: // the other half writes
         case UPDATE_STATE_RELAYING:
         case UPDATE_STATE_RELAYED:
             return UPDATE_LED_PROGRESS;
@@ -1057,11 +1202,109 @@ static update_led_mode_t led_mode(void) {
     if (s.pre_approved) return UPDATE_LED_PROGRESS;
     if (update_gesture_done(&done_ms)) {
         if (now_ms - done_ms < CHORD_FLASH_MS) return UPDATE_LED_CHORD;
-        if (s.state == UPDATE_STATE_CONFIRM_WAIT) return UPDATE_LED_APPROVED;
     } else if (s.state == UPDATE_STATE_CONFIRM_WAIT) {
         return UPDATE_LED_CONFIRM;
     }
-    return UPDATE_LED_PROGRESS;
+    return UPDATE_LED_PROGRESS; // approved: updating from here on
+}
+
+// The window on the half with USB.
+static void after_master(bool busy) {
+    uint8_t p        = updater_port_split_presence();
+    bool    awaiting = update_split_awaiting_match();
+    if (awaiting && !lt.awaiting_was) after_open(true); // a relay ended DONE
+    lt.awaiting_was = awaiting;
+    if (lt.phase != AFTER_WAIT && lt.phase != AFTER_RED) return;
+    if (p != UPDATE_PRESENCE_NONE) lt.answered = true;
+    if (p == UPDATE_PRESENCE_MATCH && !awaiting) {
+        after_done();
+        return;
+    }
+    if (busy && lt.phase == AFTER_WAIT) lt.ms = now_ms;
+    if (lt.phase == AFTER_WAIT && now_ms - lt.ms >= SVAL_UPDATE_AFTER_WAIT_MS) {
+        // Red if the other half answered and differs, or a relay sent it
+        // away and it never came back; a half on its own shows nothing.
+        if (lt.relay || lt.answered) {
+            lt.phase = AFTER_RED;
+            lt.ms    = now_ms;
+        } else {
+            lt.phase = AFTER_NONE;
+        }
+    }
+}
+
+// The window on the half without USB: the master's light from its pings.
+static void after_slave(bool busy) {
+    if (lt.rx_seen != rx_n) {
+        lt.rx_seen    = rx_n;
+        uint8_t light = rx_light;
+        switch (light) {
+            case UPDATE_LIGHT_UPDATING:
+                if (lt.phase != AFTER_WAIT) after_open(true);
+                lt.ms = now_ms;
+                break;
+            case UPDATE_LIGHT_DONE:
+                if (lt.hint_was != UPDATE_LIGHT_DONE) after_done();
+                break;
+            case UPDATE_LIGHT_FAILED:
+                if (lt.hint_was != UPDATE_LIGHT_FAILED) {
+                    lt.phase = AFTER_RED;
+                    lt.ms    = now_ms;
+                }
+                break;
+            default: // NONE, or a master that sends no light: nothing to show
+                if (lt.phase != AFTER_DONE) lt.phase = AFTER_NONE;
+                break;
+        }
+        lt.hint_was = light;
+    }
+    if (busy && lt.phase == AFTER_WAIT) lt.ms = now_ms;
+    // No ping for a whole wait after an update: the link never came back.
+    if (lt.phase == AFTER_WAIT && now_ms - lt.ms >= SVAL_UPDATE_AFTER_WAIT_MS) {
+        lt.phase = AFTER_RED;
+        lt.ms    = now_ms;
+    }
+}
+
+static update_led_mode_t led_mode(void) {
+    bool              failed;
+    update_led_mode_t own  = own_light(&failed);
+    bool              busy = own != UPDATE_LED_NONE || s.state != UPDATE_STATE_IDLE || update_relay_busy() || update_pair_busy() || update_split_slave_active();
+    if (!lt.booted) {
+        lt.booted = true;
+        if (updater_port_commit_mark_take()) after_open(false); // this half's own install just finished
+    }
+    if (updater_port_is_master()) {
+        after_master(busy);
+    } else {
+        after_slave(busy);
+    }
+    if (failed) {
+        // A failure is the last word: the window closes, and the red stops
+        // after SVAL_UPDATE_RED_MS while its cause stays.
+        if (lt.phase == AFTER_WAIT || lt.phase == AFTER_RED) lt.phase = AFTER_NONE;
+        if (!lt.red_on) {
+            lt.red_on = true;
+            lt.red_ms = now_ms;
+        }
+        return now_ms - lt.red_ms < SVAL_UPDATE_RED_MS ? UPDATE_LED_ERROR : UPDATE_LED_NONE;
+    }
+    lt.red_on = false;
+    if (own != UPDATE_LED_NONE) return own;
+    switch (lt.phase) {
+        case AFTER_WAIT:
+            return UPDATE_LED_PROGRESS;
+        case AFTER_DONE:
+            if (now_ms - lt.ms < DONE_FLASH_MS) return UPDATE_LED_DONE;
+            lt.phase = AFTER_NONE;
+            return UPDATE_LED_NONE;
+        case AFTER_RED:
+            if (now_ms - lt.ms < SVAL_UPDATE_RED_MS) return UPDATE_LED_ERROR;
+            lt.phase = AFTER_NONE;
+            return UPDATE_LED_NONE;
+        default:
+            return UPDATE_LED_NONE;
+    }
 }
 
 void updater_task(void) {
@@ -1071,6 +1314,8 @@ void updater_task(void) {
     // The relay (M2) runs before the session looks at it; once its COMMIT is
     // out it runs to the end of its hold even if the session went away.
     update_relay_task();
+    // The boot relay of a pair UF2 (docs/pair-uf2.md), after the relay it drives.
+    update_pair_task();
     now_ms         = updater_port_now_ms();
     bool hostbound = (s.state >= UPDATE_STATE_MANIFEST_LOADING && s.state <= UPDATE_STATE_VERIFIED) || s.state == UPDATE_STATE_RELAYING || s.state == UPDATE_STATE_RELAYED;
     if (hostbound && now_ms - s.op_ms >= SVAL_UPDATE_SESSION_TIMEOUT_MS) {
@@ -1138,7 +1383,9 @@ void updater_task(void) {
                 memset(page, 0, sizeof(page));
                 memset(&sha, 0, sizeof(sha));
                 // Returns only when the commit refused before touching the firmware.
+                updater_port_commit_mark(true); // the next boot shows the rainbow until the halves match
                 update_status_t st = update_commit_run(MANIFEST, s.crc_body);
+                updater_port_commit_mark(false);
                 fail(st != UPDATE_OK ? st : UPDATE_FLASH_ERR);
             }
             break;
@@ -1151,12 +1398,13 @@ void updater_task(void) {
         pass_max_ms    = ms16(now_ms - pass_t0);
         pass_max_state = pass_st;
     }
-    update_led_show(led_mode());
+    lt.shown = led_mode();
+    update_led_show(lt.shown);
     crumb_pass();
 }
 
 bool updater_active(void) {
-    return s.state != UPDATE_STATE_IDLE || update_split_slave_active() || update_relay_busy();
+    return s.state != UPDATE_STATE_IDLE || update_split_slave_active() || update_relay_busy() || update_pair_busy();
 }
 
 update_state_t updater_state(void) {
@@ -1165,6 +1413,10 @@ update_state_t updater_state(void) {
 
 #ifdef SVAL_UPDATER_HOST_TEST
 void updater_host_reset(void) {
+    update_pair_host_reset();
+    memset(&lt, 0, sizeof(lt));
+    rx_light = LIGHT_NO_BYTE;
+    rx_n     = 0;
     reset_session();
     held_clear();
     reset_due = false;
@@ -1227,6 +1479,10 @@ bool updater_port_settings_invalidate(uint8_t mode) {
 
 void updater_port_reboot(void) {
     soft_reset_keyboard();
+}
+
+bool updater_port_is_master(void) {
+    return is_keyboard_master();
 }
 
 // crt0 (ChibiOS crt0_v6m.S, CRT0_INIT_STACKS on by default) fills the process

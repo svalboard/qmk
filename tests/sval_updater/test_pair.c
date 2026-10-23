@@ -262,7 +262,7 @@ static void test_p4_pair_one_chord(void) {
     CHECK_EQ(send_image(CLIENT_A, 0, img_len), UPDATE_OK);
     CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_END, session_nonce), UPDATE_ACCEPTED);
     passes_until(UPDATE_STATE_VERIFIED, 5000);
-    CHECK_EQ(led_seen & ((1 << UPDATE_LED_CONFIRM) | (1 << UPDATE_LED_CHORD) | (1 << UPDATE_LED_APPROVED)), 0);
+    CHECK_EQ(led_seen & ((1 << UPDATE_LED_CONFIRM) | (1 << UPDATE_LED_CHORD)), 0);
     master_commit_resets = true;
     CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_ACCEPTED);
     for (int i = 0; i < 300 && master_reboots == 0; i++)
@@ -780,7 +780,7 @@ static void test_pair_no_chord(void) {
     CHECK_EQ(arm_rsp[13], UPDATE_ARM_PRE_APPROVED | UPDATE_ARM_NO_CHORD);
     pass();
     CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
-    CHECK_EQ(led_seen & ((1 << UPDATE_LED_CONFIRM) | (1 << UPDATE_LED_CHORD) | (1 << UPDATE_LED_APPROVED)), 0);
+    CHECK_EQ(led_seen & ((1 << UPDATE_LED_CONFIRM) | (1 << UPDATE_LED_CHORD)), 0);
     CHECK_EQ(status_flags2(CLIENT_A), 0x02);
     CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_BEGIN, session_nonce), UPDATE_ACCEPTED);
     // a pair ARM: the approval is held from the ARM on (the chord counts as made)

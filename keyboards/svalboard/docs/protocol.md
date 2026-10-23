@@ -47,7 +47,7 @@ Check feature flags before using an extension, send one request at a time per co
 - Request: `DF 2C`
 - Response: `DF 2C <format> <this half: 5 bytes> <other half: 5 bytes>`. `format` is `1`; `0` means the board has nothing to report. "This half" is the one plugged into USB.
 - Each half: `<flags> <built_for> <detected> <Product_ID> <Inverse_Product_ID>`.
-  - `flags`: bit 0 the block holds a report, bit 1 the half is the left half, bit 2 the sensor driver initialized, bit 3 the firmware drives whichever module is attached (the plain `left`/`right` builds), so `built_for` is the module it chose after the probe, or `0` when none answered.
+  - `flags`: bit 0 the block holds a report, bit 1 the half is the left half, bit 2 the sensor driver initialized, bit 3 the firmware drives whichever module is attached (the plain `left`/`right` builds), so `built_for` is the module it chose after the probe, or `0` when none answered. Bit 5: the half has no side yet (one-image builds, see Side), and bit 1 means nothing.
   - `built_for`: `0` no pointing module, `1` PMW3360 trackball, `2` PMW3389 trackball, `5` Azoteq trackpad, `6` TrackPoint.
   - `detected`: `0` not checked yet, `1` PMW3360 (`42 BD`), `2` PMW3389 (`47 B8`), `3` no module answered, `4` the trackball bus answered with some other ID, `5` Azoteq (IDs: product number, high byte first), `6` TrackPoint (first ID byte: its PS/2 device ID).
   - Each build checks its own module at startup. When that module doesn't answer, or the build has none, the half checks the other modules' buses about 1.5 s after boot (PS/2, then I2C, then SPI), so `detected` names whatever is attached. Until then it reads `0` (no module build) or `3` (its own module missing). While nothing works, the half looks again, its own module first, then the other buses: 3, 6, 12 and 30 s after boot, and never after that, so a board with no pointing module isn't probed again. It stops sooner once a module works, once a per-module build finds a module it can't drive, or once a module that answers has failed to start four times. A half whose module works is never probed. So `detected`, `built_for` and bit 2 can change during a half's first 30 s, after a host has connected (the other half's block follows within a presence ping, 0.5 s); a host that shows `3` or `0` should read again until then.
@@ -148,5 +148,34 @@ Each contact:
 - The touchpad reports at most 5 contacts, the most a Windows Precision Touchpad allows. A finger that lands while 5 are down is left out of the touchpad for as long as it stays down. `POINTING_CONTACTS` still lists such fingers after the reported ones, at their live position, with bit 7 set, up to 6 contacts in all, so three fingers on each pad all show. Contacts with bit 7 have IDs of their own (also stable while the finger is down), so the touchpad's IDs are unchanged: bit 7 and the ID together identify a contact.
 - Coordinates are per pad, in the touchpad's own orientation (the one the operating system sees), not the merged surface: the right pad does not carry the 2048 + gap offset.
 - While the touchpad isn't reporting, or its last report is older than 150 ms (the computer stopped reading), `n` is `0`.
+
+## Side
+
+`SIDE` (`0x33`) tells a host which half is which on the one-image builds (`svalboard/either`, `svalboard/trackball/pmw3389/either`), and lets it set that. Those builds run the same image on both halves. Each half takes its side at startup from, in order: a thumb strap (a left thumb with R7 from LED_DIN to ground, or a right thumb with R7 from LED_DIN to the thumb row), the side stored on the half, or nothing ("unknown"). The per-hand builds fix the side when they are built and don't have this command.
+
+- Discovery: GET_INFO byte 19, bit 6 (`sval_flag2_side`).
+- The stored side lives in its own flash record, apart from the settings. Settings resets, `EE_CLR`, storage format changes, UF2 copies and updates keep it; only a whole-chip erase clears it. Only this command or a thumb strap changes it.
+- The first start of a one-image build on a half that ran a per-hand build adopts that build's side (source `3`, migrated). A half that has never had a per-hand build (a new board) starts unknown.
+- A half with no side still enumerates and answers this protocol, but sends no keys and no pointing. Every half enumerates as the per-hand builds do (product ID `0x4044`, or the name the user gave the board).
+- The split link comes up whatever the other half's side, so the half with USB learns it (POINTING_HARDWARE flags bit 5 means "no side"). While the other half has no side, or both halves claim the same side, neither half's keys or pointing count: which one is wrong isn't known, so nothing is guessed. The reply below reports it.
+- A new side takes effect at the next start. Set bit 0 of `flags` to restart the half 0.1 s after the write.
+
+**GET:** `DF 33 00` → `DF 33 00 <status> <format> <side> <source> <strap> <strap raw> <record side> <record source> <other flags> <other side> <pair> <link tx> <link how> <flags>`
+- `status` `0`. `format` `1`.
+- `side`: `0` left, `1` right, `FF` unknown. This is the side the half runs as now.
+- `source`: `0` none, `1` factory (a host write), `2` Keybard (a host write), `3` migrated from a per-hand build, `4` thumb strap.
+- `strap`: the thumb strap read at startup: `0` no strap, `1` left, `2` anomaly, `3` not read on this build, `4` right. `strap raw`: bit 0 the pull-down read and bit 1 the pull-up read (thumb row on), bit 2 the pull-down read with the row off, bits 4-7 how many of 8 pull-up reads were high.
+- `record side` and `record source`: the stored record as it is now (`FE`: no record, or no room for one). It differs from `side` after a write until the restart, and on a board whose strap overrode it.
+- `other flags`: bit 0 the other half is connected, bit 1 it has reported its side. `other side` as `side`.
+- `pair`: `0` fine (or no other half), `1` both halves claim the same side, `2` a connected half has no side, `3` the other half hasn't reported yet (up to 0.5 s after it connects).
+- `link tx`: the GPIO this half transmits on over the split link (`0` or `1`; `FF` before the link starts). `link how`: `0` chosen by side, `1` found by listening for the other half, `2` the default for a half with no side, `3` swapped by the half with USB while the link was down (it tries the other pin pair every 2 s, so a half that transmits on its line still links).
+- `flags`: bit 0 keys and pointing are dropped now, bit 1 the record differs from the running side (a restart is pending), bit 2 this half has room for the record (16 MB flash), bit 3 this half has USB.
+
+**SET:** `DF 33 01 <target> <side> <source> <flags>` → `DF 33 01 <status>`
+- `target`: `0` this half (the one with USB), `1` the other half, over the split link.
+- `side`: `0` left or `1` right. `source`: `1` factory or `2` Keybard.
+- `status`: `0` OK, `1` invalid request, `2` no room for the record, `3` the write did not read back, `4` refused because the thumb strap says the other side, `5` the other half is not connected, `6` the other half did not answer (older firmware), `7` the other half took the request and saves it from its main loop: read its side again after it restarts.
+
+**CLEAR:** `DF 33 02 <target> <flags>` → `DF 33 02 <status>`. Stores "unknown", so the half starts with no side (unless a strap says otherwise: then `4`). For testing and factory rework.
 
 Packet formats: [client-ID protocol](../../../modules/svalboard/core/docs/CLIENT_ID_PROTOCOL.md), [layer state](../../../modules/svalboard/core/docs/LAYER_STATE_PROTOCOL.md), [command definitions](../../../modules/svalboard/core/sval.h).

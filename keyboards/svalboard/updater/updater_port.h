@@ -41,3 +41,16 @@ uint16_t updater_port_stack_free(uint16_t *size);
 // or BUILD_RESET_TO_BLANK, which then sets every key to KC_NO (D44).
 bool updater_port_settings_invalidate(uint8_t mode);
 void updater_port_reboot(void);
+
+// This half has USB (the split master). The boot relay of a pair UF2 runs
+// there only (update_pair.c).
+bool updater_port_is_master(void);
+
+// The commit marker, for the lights (D24): set just before this half's own
+// commit runs and cleared if the commit returns (it refused before writing).
+// The first updater_task() pass after the reset takes it, so a boot that
+// follows this half's own install shows the rainbow until the halves match.
+// Firmware: watchdog scratch 0, beside the reset breadcrumbs; it survives the
+// commit's watchdog reset, not a power cut.
+void updater_port_commit_mark(bool on);
+bool updater_port_commit_mark_take(void);

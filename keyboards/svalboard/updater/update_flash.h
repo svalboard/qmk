@@ -51,3 +51,14 @@ update_status_t update_flash_erase_sector(uint32_t off);
 // (UPDATE_INVALID otherwise: NOR can only clear bits) and must read back equal
 // afterwards (UPDATE_FLASH_ERR otherwise).
 update_status_t update_flash_program_page(uint32_t off, const uint8_t data[UPDATE_FLASH_PAGE]);
+
+// The pair record sector (update_pair.h, docs/pair-uf2.md), at the fixed
+// offset UPDATE_PAIR_RECORD_OFFSET: an uncached view of it, its erase, and a
+// program of its state page (page 1) over what is there (NOR: bits are only
+// cleared; the result must read back as old AND new). The RAM routine takes
+// no address: these can reach that sector and nothing else, and never page 0,
+// which only a UF2 copy in BOOTSEL writes. UPDATE_OK, UPDATE_UNAVAILABLE (die
+// not 16 MiB) or UPDATE_FLASH_ERR.
+const volatile uint8_t *update_pair_sector_read(void);
+update_status_t         update_pair_sector_erase(void);
+update_status_t         update_pair_state_program(const uint8_t page[UPDATE_FLASH_PAGE]);

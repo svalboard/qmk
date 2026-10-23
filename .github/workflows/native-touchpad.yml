@@ -1,7 +1,7 @@
 name: Svalboard native touchpad
 
 # The native Precision Touchpad (keyboards/svalboard/docs/native-touchpad.md):
-# host tests with hid-tools, the Azoteq driver gtests, the four release images
+# host tests with hid-tools, the Azoteq driver gtests, the two release images
 # built as release builds with the touchpad descriptor, release lint and split
 # table checked, and (on pull requests) the builds without an Azoteq path
 # compared byte for byte with the base. A pull request that changes those builds on
@@ -99,7 +99,8 @@ jobs:
         qmk setup -y
         test "$(arm-none-eabi-gcc -dumpversion)" = 13.2.1
         mkdir -p release
-        for side in left right; do
+        # The release images: one image for both halves (docs/pair-uf2.md).
+        for side in either; do
           for keymap in sval blank; do
             make -j$(nproc) svalboard/$side:$keymap SVAL_UPDATER=yes SVAL_UPDATE_RELEASE=yes SVAL_FW_VERSION_STRING=ci
             elf=.build/svalboard_${side}_${keymap}.elf

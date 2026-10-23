@@ -3,9 +3,9 @@
 
     test_release_artifacts.py OUT_DIR
 
-Builds a synthetic release directory (for each of the 4 release builds: a
-minimal ELF with one loadable segment at 0x10000000, the .uf2, and the .svup
-from make_update.py --release), checks that it passes, and that each kind of
+Builds a synthetic release directory (for each of the 2 release builds: a
+minimal ELF with one loadable segment at 0x10000000 and the pair UF2 from
+make_update.py pair --release), checks that it passes, and that each kind of
 substitution is refused.
 """
 import contextlib
@@ -64,9 +64,9 @@ def image_for(kb, km, data_tail=b""):
     return bytes(body)
 
 
-def make_svup(src, out, kb, km, raw=False):
-    """make_update.py --release, as a release build job runs it."""
-    return subprocess.run([sys.executable, "-I", str(TOOLS / "make_update.py"), str(src), *(["--raw"] if raw else []), "-o", str(out), "--kb", kb, "--keymap", km, "--release", "--expect-version", VER], capture_output=True, text=True)
+def make_pair(src, out, kb, km, raw=False):
+    """make_update.py pair --release, as a release build job runs it."""
+    return subprocess.run([sys.executable, "-I", str(TOOLS / "make_update.py"), "pair", str(src), *(["--raw"] if raw else []), "-o", str(out), "--kb", kb, "--keymap", km, "--release", "--expect-version", VER], capture_output=True, text=True)
 
 
 def make_dir(d):
@@ -74,13 +74,14 @@ def make_dir(d):
     for i, (kb, km) in enumerate(cra.RELEASE_BUILDS):
         n = cra.build_name(kb, km)
         flash = image_for(kb, km)
-        data = bytes([i]) * 0x40 if i % 2 else b""  # some builds with a .data segment
+        data = bytes([i]) * 0x40 if i % 2 else b""  # one build with a .data segment
         img = flash + data
         img += b"\xff" * (-len(img) % 256)
         (d / f"{n}.elf").write_bytes(elf(flash, data))
-        (d / f"{n}_{VER}.uf2").write_bytes(tmu.uf2(img))
-        p = make_svup(d / f"{n}_{VER}.uf2", d / f"{n}_{VER}.svup", kb, km)
-        check(p.returncode == 0, f"make_update.py --release {n}: {p.stdout}{p.stderr}")
+        (d / "src.uf2").write_bytes(tmu.uf2(img))
+        p = make_pair(d / "src.uf2", d / cra.published_name(km, VER), kb, km)
+        (d / "src.uf2").unlink()
+        check(p.returncode == 0, f"make_update.py pair --release {n}: {p.stdout}{p.stderr}")
 
 
 def quiet_main(args):
@@ -95,14 +96,15 @@ def main():
     good = out / "good"
     make_dir(good)
     hashes, problems = cra.check_dir(good, VER)
-    check([b for b in cra.RELEASE_BUILDS] == [("svalboard/left", "sval"), ("svalboard/right", "sval"), ("svalboard/left", "blank"), ("svalboard/right", "blank")], f"the release is the two auto builds with sval and blank (D34, D40): {cra.RELEASE_BUILDS}")
-    check(all(mu.kb_fields(kb)[1] == mu.POINTING["auto"] for kb, _ in cra.RELEASE_BUILDS), "release builds are auto")
-    check(not problems and len(hashes) == 4, f"a clean directory passes: {problems}")
+    check(cra.RELEASE_BUILDS == [("svalboard/either", "sval"), ("svalboard/either", "blank")], f"the release is one image for both halves, sval and blank (D34, D40): {cra.RELEASE_BUILDS}")
+    check(all(mu.kb_fields(kb) == (mu.HAND["either"], mu.POINTING["auto"]) for kb, _ in cra.RELEASE_BUILDS), "release builds are either-hand and auto")
+    check(sorted(p.name for p in good.iterdir()) == sorted(["svalboard_either_sval.elf", "svalboard_either_blank.elf", f"svalboard_sval_{VER}.uf2", f"svalboard_blank_{VER}.uf2"]), "two ELFs and two pair UF2s, no .svup")
+    check(not problems and len(hashes) == 2, f"a clean directory passes: {problems}")
     check(quiet_main([str(good), "--version", VER]) == 0, "main passes a clean directory")
     check(quiet_main([str(good), "--version", "vOther"]) == 1, "another version refused")
 
-    r, l = "svalboard_right_sval", "svalboard_left_sval"
-    rb = "svalboard_right_blank"
+    s, b = "svalboard_either_sval", "svalboard_either_blank"
+    su, bu = cra.published_name("sval", VER), cra.published_name("blank", VER)
 
     def case(what, needle, edit):
         d = out / "case"
@@ -113,54 +115,49 @@ def main():
         _, probs = cra.check_dir(d, VER)
         check(any(needle in p for p in probs), f"{what}: refused with {needle!r}: {probs}")
 
-    def flip(path, at=0x1000):
-        b = bytearray(path.read_bytes())
-        b[at] ^= 1
-        path.write_bytes(b)
+    def flip(path, at):
+        x = bytearray(path.read_bytes())
+        x[at] ^= 1
+        path.write_bytes(x)
 
-    def resvup(d, n, kb, km):
-        """Flip an image byte and make the .svup again from it, so the manifest matches the new image."""
-        _, img = mu.parse_svup((d / f"{n}_{VER}.svup").read_bytes())
+    def repair(d, kb, km, edit_img=None):
+        """The pair UF2 made again from an edited image, so its manifest matches the new image."""
+        _, img = mu.parse_pair_uf2((d / cra.published_name(km, VER)).read_bytes())
         img = bytearray(img)
-        img[0x1000] ^= 1
+        if edit_img:
+            edit_img(img)
         (d / "x.bin").write_bytes(img)
-        p = make_svup(d / "x.bin", d / f"{n}_{VER}.svup", kb, km, raw=True)
-        check(p.returncode == 0, f"re-made .svup: {p.stdout}{p.stderr}")
+        p = make_pair(d / "x.bin", d / cra.published_name(km, VER), kb, km, raw=True)
+        check(p.returncode == 0, f"re-made pair UF2: {p.stdout}{p.stderr}")
         (d / "x.bin").unlink()
 
-    def svup_byte(d, n, at, value):
-        b = bytearray((d / f"{n}_{VER}.svup").read_bytes())
-        b[at] = value
-        (d / f"{n}_{VER}.svup").write_bytes(b)
+    def flip_img(img):
+        img[0x1000] ^= 1
 
-    case("a flipped image byte with a re-made manifest", "not the ELF's flash contents", lambda d: resvup(d, r, "svalboard/right", "sval"))
-    case("a flipped .svup image byte", "SHA-512", lambda d: flip(d / f"{r}_{VER}.svup", 108 + 0x1000))
-    case("a flipped .uf2 byte", "the .uf2 does not hold the .svup's image", lambda d: flip(d / f"{r}_{VER}.uf2", 32 + 0x10))
-    case("another ELF", "not the ELF's flash contents", lambda d: shutil.copy(d / f"{l}.elf", d / f"{r}.elf"))
-    case("a left build as right", "the manifest says hand 0", lambda d: [shutil.copy(d / f"{l}{x}", d / f"{r}{x}") for x in (".elf",)] + [shutil.copy(d / f"{l}_{VER}{x}", d / f"{r}_{VER}{x}") for x in (".uf2", ".svup")])
-
-    def replace_with(d, kb, km):
-        """The right release build's three files swapped for another build's (a per-module or blank image)."""
+    def replace_with(d, kb, km, as_km="sval"):
+        """The sval release build's files swapped for another build's (a one-side, per-module or blank image)."""
         flash = image_for(kb, km)
         flash += b"\xff" * (-len(flash) % 256)
-        (d / f"{r}.elf").write_bytes(elf(flash))
-        (d / f"{r}_{VER}.uf2").write_bytes(tmu.uf2(flash))
-        p = make_svup(d / f"{r}_{VER}.uf2", d / f"{r}_{VER}.svup", kb, km)
-        check(p.returncode == 0, f"make_update.py --release {kb}:{km}: {p.stdout}{p.stderr}")
+        (d / f"{s}.elf").write_bytes(elf(flash))
+        (d / "x.uf2").write_bytes(tmu.uf2(flash))
+        p = subprocess.run([sys.executable, "-I", str(TOOLS / "make_update.py"), "pair", str(d / "x.uf2"), "-o", str(d / su), "--kb", "svalboard/either", "--keymap", km, "--release", "--expect-version", VER, "--yes"], capture_output=True, text=True)
+        (d / "x.uf2").unlink()
+        return p
 
-    case("a blank build as sval", "keymap_id 2", lambda d: replace_with(d, "svalboard/right", "blank"))
-    case("an sval build as blank", "the manifest says keymap_id 1", lambda d: [shutil.copy(d / f"{r}.elf", d / f"{rb}.elf")] + [shutil.copy(d / f"{r}_{VER}{x}", d / f"{rb}_{VER}{x}") for x in (".uf2", ".svup")])
-    case("a missing blank build", "missing", lambda d: (d / f"{rb}_{VER}.uf2").unlink())
+    case("a flipped image byte with a re-made manifest", "not the ELF's flash contents", lambda d: repair(d, "svalboard/either", "sval", flip_img))
+    case("a flipped image byte", "BAD_HASH" if False else "SHA-512", lambda d: flip(d / su, 32 + 0x10))
+    case("a damaged pair record", "CRC", lambda d: flip(d / su, (len((d / su).read_bytes()) // 512 - 16) * 512 + 32 + 50))
+    case("another ELF", "not the ELF's flash contents", lambda d: shutil.copy(d / f"{b}.elf", d / f"{s}.elf"))
+    case("a blank build as sval", "keymap_id 2", lambda d: [shutil.copy(d / f"{b}.elf", d / f"{s}.elf"), shutil.copy(d / bu, d / su)])
+    case("an sval build as blank", "keymap_id 1", lambda d: [shutil.copy(d / f"{s}.elf", d / f"{b}.elf"), shutil.copy(d / su, d / bu)])
+    case("a missing blank build", "missing", lambda d: (d / bu).unlink())
+    case("a one-side image with an either manifest", "build-info record says hand 1", lambda d: replace_with(d, "svalboard/right", "sval"))
     case("a per-module build as the release", "pointing_id 3", lambda d: replace_with(d, "svalboard/trackball/pmw3389/right", "sval"))
-    case("a per-module build's files", "unexpected file", lambda d: (d / "svalboard_trackpoint_right_sval.elf").write_bytes((d / f"{r}.elf").read_bytes()))
-    case("a manifest edited to the other hand", "the manifest says hand 0", lambda d: svup_byte(d, r, 7, 0))
-    case("a manifest without RELEASE", "flags 0x0", lambda d: svup_byte(d, r, 10, 0))
-    case("a nonzero reserved byte", "reserved", lambda d: svup_byte(d, r, 6, 1))
-    case("a version-1 manifest", "version-1", lambda d: svup_byte(d, r, 4, 1))
-    case("an extra artifact", "unexpected file", lambda d: shutil.copy(d / f"{r}.elf", d / "extra.elf"))
-    case("a missing .svup", "missing", lambda d: (d / f"{r}_{VER}.svup").unlink())
-    case("a truncated .svup", "too short", lambda d: (d / f"{r}_{VER}.svup").write_bytes(b"\0" * 10))
-    case("a leftover unsigned manifest", "unexpected file", lambda d: (d / f"{r}.manifest").write_bytes(b"\0" * 108))
+    case("a per-side build's files", "unexpected file", lambda d: (d / "svalboard_right_sval.elf").write_bytes((d / f"{s}.elf").read_bytes()))
+    case("a .svup beside them", "unexpected file", lambda d: (d / f"{s}_{VER}.svup").write_bytes(b"\0" * 200))
+    case("a plain UF2 as the pair UF2", "sectors", lambda d: (d / su).write_bytes(tmu.uf2(mu.parse_pair_uf2((d / su).read_bytes())[1][:0x1700])))
+    case("an extra artifact", "unexpected file", lambda d: shutil.copy(d / f"{s}.elf", d / "extra.elf"))
+    case("a truncated pair UF2", "multiple of 512", lambda d: (d / su).write_bytes((d / su).read_bytes()[:-100]))
 
     # the ELF reader against a non-ELF and an ELF that does not start at XIP_BASE
     bad = out / "bad.elf"

@@ -35,6 +35,10 @@
 // hand
 #define UPDATE_HAND_LEFT 0
 #define UPDATE_HAND_RIGHT 1
+// Manifests and build info only: one image for both halves (SVAL_EITHER_HAND),
+// which learns its side at boot. A running half reports 0 or 1, or 0xFF while
+// it has no side (it is then addressed with hand 0xFF, this half).
+#define UPDATE_HAND_EITHER 2
 
 // pointing_id: this half's pointing device only (D18). Append-only. Reported, and
 // warned about by the host tools, but never checked by the firmware (D33).
@@ -161,8 +165,8 @@ typedef enum {
 
 // ---- the other half, as split presence shows it (M2, D17, V) -------------------------
 // Reported by STATUS (byte 22) on the half with USB; INFO flags bit5 is set for
-// VERSION, SAME_HAND and INVALID, which also show the red error LED there
-// while the updater is idle. The half without USB always reports NONE.
+// VERSION, SAME_HAND and INVALID (the lights show it only after an update:
+// updater.c). The half without USB always reports NONE.
 
 typedef enum {
     UPDATE_PRESENCE_NONE      = 0, // no answer from the other half (or this half is not the master)

@@ -20,6 +20,13 @@ version and keymap as the manifest:
 
     make_update.py verify FILE.svup [--build release|plain]
 
+    make_update.py pair IN.uf2 -o PAIR.uf2 --kb svalboard/either [make's options] [--svup OUT.svup]
+    make_update.py verify-pair PAIR.uf2 [--build release|plain] [--svup OUT.svup]
+
+pair builds the one .uf2 that installs both halves (docs/pair-uf2.md): the
+image, then the pair record that sends it to the other half at the next boot.
+verify-pair checks one, and --svup extracts what Keybard sends.
+
 checks a .svup offline the way a build of that kind would before erasing
 anything: the manifest rules, the hash and the image structure.
 
@@ -50,7 +57,7 @@ MANIFEST_FMT = "<IHBBBBHHBBIII16s64s"
 MANIFEST_BYTES = 108
 assert struct.calcsize(MANIFEST_FMT) == MANIFEST_BYTES
 
-HAND = {"left": 0, "right": 1}
+HAND = {"left": 0, "right": 1, "either": 2}  # either: one image for both halves (SVAL_EITHER_HAND)
 POINTING = {"none": 0, "trackpoint": 1, "pmw3360": 2, "pmw3389": 3, "azoteq": 4, "auto": 5}
 KEYMAP = {"sval": 1, "blank": 2}  # the release keymaps (D22)
 FLAG_RELEASE, FLAG_DIAGNOSTIC = 0x0001, 0x0002
@@ -219,7 +226,7 @@ def kb_fields(kb):
     """hand and pointing_id from a keyboard path such as svalboard/trackball/pmw3389/right."""
     parts = kb.strip("/").split("/")
     if not parts or parts[0] != "svalboard" or parts[-1] not in HAND:
-        raise Refused(f"--kb {kb!r}: expected svalboard/.../left or svalboard/.../right")
+        raise Refused(f"--kb {kb!r}: expected svalboard/.../left, svalboard/.../right or svalboard/.../either")
     middle = parts[1:-1]
     table = {(): "auto",
              ("trackpoint",): "trackpoint",
@@ -431,6 +438,10 @@ def make(args):
 def verify_svup(args):
     """A .svup checked as a build of the given kind would before it erases anything."""
     manifest, image = parse_svup(Path(args.svup).read_bytes())
+    _verify_parts(manifest, image, args)
+
+
+def _verify_parts(manifest, image, args):
     m = parse_manifest(manifest)
     release_build = args.build == "release"
     problems = []
@@ -454,6 +465,185 @@ def verify_svup(args):
     print(f"{args.svup}: a {args.build} build accepts it ({what})")
 
 
+# ---- pair UF2 (docs/pair-uf2.md) -------------------------------------------------------------
+#
+# One .uf2 that installs both halves: the image (blocks from 0x10000000, padded
+# with 0xFF to whole 4 KiB sectors), then the pair record sector at
+# PAIR_RECORD_OFFSET (update_pair.h). Every block is an ordinary RP2040 flash
+# block, numbered in order, so block numbers 16k..16k+15 always fill one
+# sector: the RP2040 boot ROM erases the sector of a block's address when the
+# first block of its group of 16 block numbers arrives (virtual_disk.c), so a
+# layout with a partial sector before a jump would leave pages unerased.
+
+PAIR_RECORD_OFFSET = 0x270000  # UPDATE_PAIR_RECORD_OFFSET
+PAIR_MAGIC = 0x55505653  # "SVPU"
+PAIR_RECORD_VERSION = 1
+PAIR_KIND_RELAY_SELF = 1
+PAIR_RECORD_FMT = "<IHHB3sI108s"  # then crc u32
+PAIR_RECORD_BYTES = 128
+SECTOR, PAGE = 4096, 256
+PAGES_PER_SECTOR = SECTOR // PAGE
+assert struct.calcsize(PAIR_RECORD_FMT) + 4 == PAIR_RECORD_BYTES
+# Flash the file may never write: settings, staging slot, side records,
+# build reset record, identity (update_flash.c asserts the firmware side).
+PROTECTED = {"settings": (0x160000, 0x260000), "staging slot": (0x800000, 0x960000), "side records": (0xFFB000, 0xFFD000), "build reset record": (0xFFD000, 0xFFE000), "identity": (0xFFE000, 0x1000000)}
+
+
+def pair_record(manifest):
+    head = struct.pack(PAIR_RECORD_FMT, PAIR_MAGIC, PAIR_RECORD_VERSION, PAIR_RECORD_BYTES, PAIR_KIND_RELAY_SELF, b"\0\0\0", 0, manifest)
+    return head + struct.pack("<I", crc32_mpeg2(head))
+
+
+def parse_pair_record(raw):
+    """The record's fields, refusing anything the firmware would (update_pair_record_check)."""
+    magic, version, length, kind, reserved, image_offset, manifest = struct.unpack_from(PAIR_RECORD_FMT, raw)
+    (crc,) = struct.unpack_from("<I", raw, PAIR_RECORD_BYTES - 4)
+    if magic != PAIR_MAGIC:
+        raise Refused("no pair record (magic)")
+    if crc32_mpeg2(raw[:PAIR_RECORD_BYTES - 4]) != crc:
+        raise Refused("the pair record's CRC does not match")
+    if version != PAIR_RECORD_VERSION:
+        raise Refused(f"pair record version {version}, this tool knows {PAIR_RECORD_VERSION}")
+    if length != PAIR_RECORD_BYTES or kind != PAIR_KIND_RELAY_SELF or image_offset != 0 or reserved != b"\0\0\0":
+        raise Refused("the pair record's length, kind, image offset or reserved bytes are wrong")
+    return manifest
+
+
+def uf2_block(addr, data, block_no, num_blocks):
+    return (struct.pack("<8I", UF2_MAGIC0, UF2_MAGIC1, UF2_FLAG_FAMILY, addr, 256, block_no, num_blocks, RP2040_FAMILY) + data.ljust(476, b"\0") + struct.pack("<I", UF2_MAGIC_END))
+
+
+def pair_uf2_bytes(manifest, image):
+    """The pair UF2 for a manifest and its image."""
+    m = parse_manifest(manifest)
+    if m["hand"] != HAND["either"]:
+        raise Refused(f"a pair UF2 needs an image for either hand (hand 2), not hand {m['hand']}: the other half "
+                      "gets the same image")
+    if m["image_len"] != len(image) or hashlib.sha512(image).digest() != m["sha512"]:
+        raise Refused("the manifest does not describe this image")
+    padded = image + b"\xff" * (-len(image) % SECTOR)
+    record_sector = pair_record(manifest).ljust(SECTOR, b"\xff")
+    pages = [(XIP_BASE + i, padded[i:i + PAGE]) for i in range(0, len(padded), PAGE)]
+    pages += [(XIP_BASE + PAIR_RECORD_OFFSET + i, record_sector[i:i + PAGE]) for i in range(0, SECTOR, PAGE)]
+    return b"".join(uf2_block(addr, data, n, len(pages)) for n, (addr, data) in enumerate(pages))
+
+
+def parse_pair_uf2(data):
+    """(manifest, image) from a pair UF2, refusing any layout other than pair_uf2_bytes's."""
+    if not data or len(data) % 512:
+        raise Refused(f"UF2 length {len(data)} is not a positive multiple of 512")
+    count = len(data) // 512
+    if count % PAGES_PER_SECTOR or count < 2 * PAGES_PER_SECTOR:
+        raise Refused(f"{count} blocks: a pair UF2 is whole 4 KiB sectors, the image's and the record's")
+    flash = {}
+    for i in range(count):
+        block = data[i * 512:(i + 1) * 512]
+        m0, m1, flags, addr, size, block_no, num_blocks, family = struct.unpack_from("<8I", block, 0)
+        (m_end,) = struct.unpack_from("<I", block, 508)
+        if (m0, m1, m_end) != (UF2_MAGIC0, UF2_MAGIC1, UF2_MAGIC_END):
+            raise Refused(f"block {i}: bad UF2 magic")
+        if flags != UF2_FLAG_FAMILY or family != RP2040_FAMILY or size != 256:
+            raise Refused(f"block {i}: flags {flags:#x}, family {family:#010x}, payload {size}: not an RP2040 flash block")
+        if block_no != i or num_blocks != count:
+            raise Refused(f"block {i}: numbered {block_no} of {num_blocks}, expected {i} of {count}")
+        flash[addr - XIP_BASE] = block[32:32 + 256]
+    img_pages = count - PAGES_PER_SECTOR
+    expect = [i * PAGE for i in range(img_pages)] + [PAIR_RECORD_OFFSET + i * PAGE for i in range(PAGES_PER_SECTOR)]
+    got = [struct.unpack_from("<I", data, i * 512 + 12)[0] - XIP_BASE for i in range(count)]
+    if got != expect:
+        raise Refused("block addresses are not the image from 0x10000000 in whole sectors, then the pair record sector")
+    if img_pages * PAGE > MAX_IMAGE:
+        raise Refused(f"the image area ends at {XIP_BASE + img_pages * PAGE:#010x}, beyond {XIP_BASE + MAX_IMAGE:#010x}")
+    sector = b"".join(flash[PAIR_RECORD_OFFSET + i * PAGE] for i in range(PAGES_PER_SECTOR))
+    if sector[PAIR_RECORD_BYTES:] != b"\xff" * (SECTOR - PAIR_RECORD_BYTES):
+        raise Refused("the pair record sector is not 0xFF after the record")
+    manifest = parse_pair_record(sector)
+    m = parse_manifest(manifest)
+    area = b"".join(flash[i * PAGE] for i in range(img_pages))
+    n = m["image_len"]
+    if not IMAGE_MIN <= n <= len(area) or len(area) - n >= SECTOR or n % IMAGE_ALIGN:
+        raise Refused(f"the manifest's image_len {n:#x} does not fill the {len(area):#x}-byte image area")
+    if area[n:] != b"\xff" * (len(area) - n):
+        raise Refused("the image area is not 0xFF after the image")
+    return manifest, area[:n]
+
+
+def pair_writes(data):
+    """[(lo, hi)] flash offset ranges a pair UF2's blocks write (whole sectors, as the boot ROM erases)."""
+    count = len(data) // 512
+    addrs = sorted(struct.unpack_from("<I", data, i * 512 + 12)[0] - XIP_BASE for i in range(count))
+    out = []
+    for a in addrs:
+        lo = a - a % SECTOR
+        if out and out[-1][1] >= lo:
+            out[-1] = (out[-1][0], max(out[-1][1], lo + SECTOR))
+        else:
+            out.append((lo, lo + SECTOR))
+    return out
+
+
+def pair_layout_problems(data):
+    """Where a pair UF2 would write protected flash, or []."""
+    problems = []
+    for lo, hi in pair_writes(data):
+        for what, (plo, phi) in PROTECTED.items():
+            if lo < phi and plo < hi:
+                problems.append(f"it writes [{lo:#x}, {hi:#x}), which overlaps the {what} [{plo:#x}, {phi:#x})")
+    return problems
+
+
+def make_pair(args):
+    """make_update.py pair IN.uf2 -o OUT.uf2 --kb svalboard/either [make's options]"""
+    image = read_image(args)
+    manifest = manifest_from_args(image, args)
+    if args.release and args.unsafe_allow_bad_image:
+        raise Refused("--unsafe-allow-bad-image is for test images, never --release")
+    check_structure(image, args.unsafe_allow_bad_image)
+    if args.release:
+        m = parse_manifest(manifest)
+        problems = release_image_problems(manifest, image)
+        if args.expect_version is not None and manifest_version(m) != args.expect_version:
+            problems.append(f"version {manifest_version(m)!r}, expected {args.expect_version!r}")
+        if args.expect_fw_version is not None and m["fw_version"] != args.expect_fw_version:
+            problems.append(f"fw_version {m['fw_version']}, expected {args.expect_fw_version}")
+        if problems:
+            raise Refused("not a release update: " + "; ".join(problems))
+    elif args.expect_version is not None or args.expect_fw_version is not None:
+        raise Refused("--expect-* go with --release")
+    confirm(identity_warnings(manifest, image), args.yes)
+    data = pair_uf2_bytes(manifest, image)
+    problems = pair_layout_problems(data)
+    if problems:
+        raise Refused("; ".join(problems))
+    out = Path(args.output)
+    out.write_bytes(data)
+    if args.svup:
+        Path(args.svup).write_bytes(manifest + image)
+    print(describe(out, manifest, image) + f", {len(data) // 512} UF2 blocks, pair record at {XIP_BASE + PAIR_RECORD_OFFSET:#010x}")
+
+
+def verify_pair(args):
+    """A pair UF2 checked as the boot relay and a build of the given kind would, and
+    its layout: whole sectors, nothing outside the image area and the record sector."""
+    data = Path(args.uf2).read_bytes()
+    manifest, image = parse_pair_uf2(data)
+    m = parse_manifest(manifest)
+    problems = pair_layout_problems(data)
+    if m["hand"] != HAND["either"]:
+        problems.append(f"INVALID: hand {m['hand']}: the boot relay sends this image to the other half, so it must be for either hand")
+    tmp = argparse.Namespace(svup=args.uf2, build=args.build)
+    try:
+        _verify_parts(manifest, image, tmp)
+    except Refused as e:
+        problems.append(str(e))
+    if args.svup:
+        Path(args.svup).write_bytes(manifest + image)
+    if problems:
+        raise Refused(f"{args.uf2}: " + "; ".join(problems))
+    print(f"{args.uf2}: a pair UF2 a {args.build} build accepts ({len(image)} B image, version {manifest_version(m)!r} "
+          f"({m['fw_version']}), writes " + ", ".join(f"[{lo:#x}, {hi:#x})" for lo, hi in pair_writes(data)) + ")")
+
+
 # ---- command line ---------------------------------------------------------------------------
 
 
@@ -466,9 +656,21 @@ def main(argv=None):
             ap.add_argument("--build", choices=("release", "plain"), default="release", help="release: SVAL_UPDATE_RELEASE (no DIAGNOSTIC images); plain: SVAL_UPDATER alone")
             verify_svup(ap.parse_args(argv[1:]))
             return 0
-        ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], allow_abbrev=False)
+        if argv and argv[0] == "verify-pair":
+            ap = argparse.ArgumentParser(prog="make_update.py verify-pair", description=verify_pair.__doc__, allow_abbrev=False)
+            ap.add_argument("uf2")
+            ap.add_argument("--build", choices=("release", "plain"), default="release")
+            ap.add_argument("--svup", help="also write the manifest and image as a .svup (what Keybard sends)")
+            verify_pair(ap.parse_args(argv[1:]))
+            return 0
+        pair = bool(argv) and argv[0] == "pair"
+        if pair:
+            argv = argv[1:]
+        ap = argparse.ArgumentParser(prog="make_update.py pair" if pair else None, description=__doc__.split("\n\n")[0], allow_abbrev=False)
         ap.add_argument("input", help="QMK .uf2 (or raw .bin with --raw)")
-        ap.add_argument("-o", "--output", required=True, help="output .svup")
+        ap.add_argument("-o", "--output", required=True, help="output .svup (pair: the pair .uf2)")
+        if pair:
+            ap.add_argument("--svup", help="also write the .svup of the same manifest and image")
         ap.add_argument("--raw", action="store_true", help="input is a raw image starting at 0x10000000")
         ap.add_argument("--kb", help="keyboard path, e.g. svalboard/trackball/pmw3389/right (sets hand and pointing)")
         ap.add_argument("--hand", choices=sorted(HAND))
@@ -486,7 +688,7 @@ def main(argv=None):
         ap.add_argument("--expect-fw-version", type=int, help="--release: refuse unless fw_version is this")
         ap.add_argument("--yes", action="store_true", help="write the .svup without asking when --kb names another side or pointing device than the image")
         ap.add_argument("--unsafe-allow-bad-image", action="store_true", help="build an image that fails the structure checks (for rejection tests)")
-        make(ap.parse_args(argv))
+        (make_pair if pair else make)(ap.parse_args(argv))
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2

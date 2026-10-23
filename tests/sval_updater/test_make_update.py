@@ -63,6 +63,145 @@ def run(*args, answer=""):
     return p.returncode, p.stdout + p.stderr
 
 
+def bootrom_write(flash, uf2_bytes, order=None, stop_after=None):
+    """The RP2040 boot ROM's UF2 path (pico-bootrom-rp2040 virtual_disk.c,
+    vd_write_block and _write_uf2_page): a block counts only with the family
+    flag, the RP2040 family, not-main-flash clear and a 256-byte payload; every
+    block of a transfer must carry the same num_blocks; the 4 KiB sector of a
+    block's address is erased when the first block of its group of 16 block
+    numbers (block_no * 256 / 4096) arrives, and only then; a block number seen
+    before is ignored. flash: a bytearray of the die, changed in place. order:
+    the order the host writes the 512-byte sectors in (default: file order).
+    stop_after: stop after that many blocks (an interrupted copy). Returns
+    whether the transfer completed (the ROM then reboots)."""
+    blocks = [uf2_bytes[i:i + 512] for i in range(0, len(uf2_bytes), 512)]
+    order = list(range(len(blocks))) if order is None else order
+    num, seen, cleared, valid = None, set(), set(), 0
+    for k, i in enumerate(order):
+        if stop_after is not None and k >= stop_after:
+            return False
+        b = blocks[i]
+        m0, m1, flags, addr, size, block_no, num_blocks, family = struct.unpack_from("<8I", b, 0)
+        if (m0, m1, struct.unpack_from("<I", b, 508)[0]) != (mu.UF2_MAGIC0, mu.UF2_MAGIC1, mu.UF2_MAGIC_END):
+            continue
+        if not flags & mu.UF2_FLAG_FAMILY or family != mu.RP2040_FAMILY or flags & mu.UF2_FLAG_NOT_MAIN_FLASH or size != 256:
+            continue  # "ignoring write of non Mu UF2 sector"
+        if num != num_blocks:
+            num, seen, cleared, valid = num_blocks, set(), set(), 0  # a new transfer
+        if block_no >= num_blocks or block_no in seen:
+            continue
+        off = addr - mu.XIP_BASE
+        group = block_no * 256 // 4096
+        if group not in cleared:
+            cleared.add(group)
+            lo = off - off % 4096
+            flash[lo:lo + 4096] = b"\xff" * 4096
+        flash[off:off + 256] = bytes(x & y for x, y in zip(flash[off:off + 256], b[32:32 + 256]))
+        seen.add(block_no)
+        valid += 1
+    return num is not None and valid == num
+
+
+def test_pair(out, tmp, release_img):
+    import random
+    rng = random.Random(4)
+    either = ["--kb", "svalboard/either", "--version-string", "pair-test", "--fw-version", "3001"]
+    img = image(0x1A00)  # not a whole sector: the image area is padded
+    src = tmp / "either.uf2"
+    src.write_bytes(uf2(img))
+    pair_path, svup_path = out / "pair_either.uf2", tmp / "pair_either.svup"
+    rc, text = run("pair", src, "-o", pair_path, "--svup", svup_path, *either)
+    check(rc == 0, f"pair: built ({text.strip()})")
+    if rc != 0:
+        return
+    data = pair_path.read_bytes()
+    manifest, body = mu.parse_pair_uf2(data)
+    m = mu.parse_manifest(manifest)
+    check(body == img and m["hand"] == 2 and m["fw_version"] == 3001, f"pair: round trip, hand {m['hand']}")
+    check(svup_path.read_bytes() == manifest + img, "pair --svup: the same manifest and image as a .svup")
+    count = len(data) // 512
+    check(count == 16 * 2 + 16, f"pair: 2 image sectors and the record sector, {count} blocks")
+    # Every group of 16 block numbers is one sector (the boot ROM's erase rule).
+    for i in range(count):
+        a = struct.unpack_from("<I", data, i * 512 + 12)[0]
+        first = struct.unpack_from("<I", data, (i - i % 16) * 512 + 12)[0]
+        check(a // 4096 == first // 4096 and a % 4096 == (i % 16) * 256, f"pair: block {i} is page {i % 16} of its group's sector")
+    check(mu.pair_writes(data) == [(0, 0x2000), (0x270000, 0x271000)], f"pair: writes {mu.pair_writes(data)}")
+    check(mu.pair_layout_problems(data) == [], "pair: no protected flash")
+    rec = data[32 * 512 + 32:32 * 512 + 32 + 128]
+    check(struct.unpack_from("<I", data, 32 * 512 + 12)[0] == 0x10270000 and rec[:4] == b"SVPU", "pair: the record is the first page of the last sector")
+    check(mu.parse_pair_record(rec) == manifest, "pair: the record carries the manifest")
+    for build in ("plain", "release"):
+        rc, text = run("verify-pair", pair_path, "--build", build)
+        check(rc == 0, f"verify-pair --build {build}: {text.strip()}")
+
+    # The boot ROM, in file order and in any order the host writes: the same flash.
+    want = bytearray(rng.randbytes(0x300000))
+    want[0:0x2000] = img + b"\xff" * (0x2000 - len(img))
+    want[0x270000:0x271000] = rec + b"\xff" * (4096 - 128)
+    for trial in range(20):
+        flash = bytearray(rng.randbytes(0x300000))
+        flash[0x2000:0x270000] = want[0x2000:0x270000]
+        flash[0x271000:] = want[0x271000:]
+        order = list(range(count))
+        if trial:
+            rng.shuffle(order)
+        done = bootrom_write(flash, data, order)
+        check(done and flash == want, f"boot ROM model, order {'file' if not trial else 'shuffled'}: the pair UF2 lands exactly")
+    # The model is sharp: an image area that is not whole sectors, followed
+    # straight by the record, leaves the record's sector unerased.
+    naive = b"".join(
+        mu.uf2_block(a, d, n, 7 + 16)
+        for n, (a, d) in enumerate([(mu.XIP_BASE + i * 256, img[i * 256:(i + 1) * 256].ljust(256, b"\xff")) for i in range(7)] + [(mu.XIP_BASE + 0x270000 + i * 256, (rec + b"\xff" * 4096)[i * 256:(i + 1) * 256]) for i in range(16)])
+    )
+    flash = bytearray(b"\x00" * 0x300000)
+    bootrom_write(flash, naive)
+    check(flash[0x270000:0x270000 + 128] != rec, "boot ROM model: a partial sector before the jump corrupts the record")
+    # An interrupted copy writes some blocks and never the record (it is last).
+    flash = bytearray(b"\x00" * 0x300000)
+    check(not bootrom_write(flash, data, stop_after=20) and flash[0x270000:0x270004] != b"SVPU", "an interrupted copy leaves no record")
+    # Flagged or foreign-family blocks are skipped by the ROM: verified in its source, not relied on.
+    flagged = bytearray(data)
+    struct.pack_into("<I", flagged, 8, mu.UF2_FLAG_FAMILY | mu.UF2_FLAG_NOT_MAIN_FLASH)
+    flash = bytearray(b"\x00" * 0x300000)
+    bootrom_write(flash, bytes(flagged))
+    check(flash[0:256] == b"\xff" * 256, "boot ROM model: a not-main-flash block is not written (its sector is erased by the next block of its group)")
+
+    # Refusals.
+    side = tmp / "right.uf2"
+    side.write_bytes(uf2(img))
+    rc, text = run("pair", side, "-o", tmp / "x.uf2", "--kb", "svalboard/right", "--yes")
+    check(rc == 2 and "either hand" in text and not (tmp / "x.uf2").exists(), f"pair refuses a one-side image: {text.strip()}")
+
+    def bad(what, blob, needle):
+        p = tmp / "bad_pair.uf2"
+        p.write_bytes(blob)
+        rc, text = run("verify-pair", p, "--build", "plain")
+        check(rc == 2 and needle in text, f"verify-pair refuses {what}: {text.strip()}")
+
+    flip = bytearray(data)
+    flip[32 * 512 + 32 + 40] ^= 0x01  # inside the record's manifest
+    bad("a damaged record", bytes(flip), "CRC")
+    bad("a copy cut short (no record sector)", data[:16 * 512], "sectors")
+    img2 = bytearray(data)
+    img2[5 * 512 + 32 + 7] ^= 0x10  # an image byte: the hash
+    bad("a changed image", bytes(img2), "BAD_HASH")
+    gap = bytearray(data)
+    struct.pack_into("<I", gap, 3 * 512 + 12, mu.XIP_BASE + 0xFFB000)  # a block at the side records
+    bad("a block elsewhere", bytes(gap), "addresses")
+    check(mu.pair_layout_problems(mu.uf2_block(mu.XIP_BASE + 0xFFC000, b"", 0, 1)) != [], "a write to the side records is a layout problem")
+    check(mu.pair_layout_problems(mu.uf2_block(mu.XIP_BASE + 0xFFE000, b"", 0, 1)) != [], "a write to identity is a layout problem")
+
+    # A release pair (release_img with the either hand), and the C cross-check file.
+    rel_src = tmp / "rel_either.uf2"
+    rel_src.write_bytes(uf2(release_img(hand=2)))
+    rc, text = run("pair", rel_src, "-o", tmp / "rel_pair.uf2", "--kb", "svalboard/either", "--keymap", "sval", "--release", "--expect-version", "vM3-test", "--expect-fw-version", "3")
+    check(rc == 0, f"pair --release: built ({text.strip()})")
+    rc, text = run("verify-pair", tmp / "rel_pair.uf2", "--build", "release")
+    check(rc == 0, f"verify-pair of a release pair: {text.strip()}")
+    (out / "pair_index.txt").write_text("pair_either.uf2\n")
+
+
 def main():
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
@@ -337,6 +476,8 @@ def main():
                 raw = binf.read_bytes()
                 raw += b"\xff" * (-len(raw) % 256)
                 check(body[:len(raw)] == raw and len(body) - len(raw) < 256, f"{real.name}: image equals the .bin")
+
+    test_pair(out, tmp, release_img)
 
     (out / "index.txt").write_text("".join(f"{n} {e}\n" for n, e in index))
     print(f"make_update.py: {checks} checks, {failures} failures, {len(index)} .svup files for the C cross-check")

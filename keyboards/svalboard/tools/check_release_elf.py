@@ -13,7 +13,8 @@ exits 1 on any failure:
   - the record says RELEASE, and none of TEST_HOOKS, KEYTEST,
     HOST_BOOTLOADER, NO_CHORD or DEV_KEEP (D43); its reserved bits and bytes
     are 0; its updater protocol
-    is the tools'; it is a release build (D34): a known side, the auto
+    is the tools'; it is a release build (D34): one image for both halves (hand
+    2, svalboard/either), the auto
     pointing build (every driver) and a release keymap (sval or blank, D40);
   - no test hooks (update_commit_test_halt, op_test_halt, halt_point,
     halt_fed), no SVAL_KEYTEST (keytest_task, keytest_command), no
@@ -75,7 +76,10 @@ def check(path):
             errors.append(f"the build-info record has hand {hand}, pointing_id {pointing_id}, reserved {reserved0}/{reserved}")
         elif pointing_id != mu.POINTING["auto"]:
             errors.append(f"the build-info record has pointing_id {pointing_id}: a release is the auto build "
-                          f"({mu.POINTING['auto']}, svalboard/left and svalboard/right)")
+                          f"({mu.POINTING['auto']}, svalboard/either)")
+        elif hand != mu.HAND["either"]:
+            errors.append(f"the build-info record has hand {hand}: a release is one image for both halves "
+                          f"(hand {mu.HAND['either']}, svalboard/either; docs/pair-uf2.md)")
         if keymap_id not in mu.KEYMAP.values():
             errors.append(f"the build-info record has keymap_id {keymap_id}: a release is the sval or blank keymap")
         if not flags & mu.BI_RELEASE:

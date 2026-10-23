@@ -66,6 +66,13 @@ typedef struct __attribute__((__packed__)) _presence_rpc_t {
     uint16_t scan_deep_period_ms;
     uint8_t  idle_flags;
     uint8_t  scan_deep_clock_idx;
+#ifdef SVAL_UPDATER
+    // The updater's light (update_light_t, updater/updater.h), appended (D24):
+    // the half without USB shows the same one. The slave reads it only when
+    // the ping is long enough: a master from before it sends 18 bytes, and an
+    // older slave never reads past its own fields.
+    uint8_t update_light;
+#endif
 } presence_rpc_t;
 
 // Which pointing module a half's firmware drives and which one answered, so a host
@@ -84,6 +91,7 @@ enum sval_pointer_sensor {
 #define SVAL_POINTER_INIT_OK  0x04 // the sensor driver initialised
 #define SVAL_POINTER_AUTO     0x08 // the firmware drives whichever module is attached; built_for is the one it chose
 #define SVAL_POINTER_OS_TOUCHPAD 0x10 // the OS drives this pad as a touchpad (native touchpad builds): pointer settings do not apply
+#define SVAL_POINTER_SIDE_UNKNOWN 0x20 // either-hand builds: the half has no side yet, and SVAL_POINTER_LEFT means nothing
 typedef struct __attribute__((__packed__)) {
     uint8_t flags;              // SVAL_POINTER_*
     uint8_t built_for;          // enum sval_pointer_sensor
@@ -135,6 +143,25 @@ enum sval_hw_rev {
 };
 uint8_t sval_hw_rev(void);
 bool    sval_hw_rev_is_flipfet(void);
+
+// Thumb handedness strap, read once at boot from SVAL_THUMB_HAND_PIN (the
+// WS2812 data pin) with the thumb row on. A left thumb with R7 (10k LED_DIN
+// to GND) reads low under both pulls; a right thumb with R7 (10k LED_DIN to
+// the thumb row) reads high under both. DEFAULT is not "right": it is also an
+// unmodified thumb, no thumb, or a thumb on the 8-pin cable.
+enum sval_thumb_hand {
+    SVAL_THUMB_HAND_DEFAULT    = 0, // pull-up 1, pull-down 0: no strap
+    SVAL_THUMB_HAND_LEFT       = 1, // pull-up 0, pull-down 0: TCL R7 fitted
+    SVAL_THUMB_HAND_ANOMALY    = 2, // pull-up 0, pull-down 1: no strap does this
+    SVAL_THUMB_HAND_SKIPPED    = 3, // not probed (Pimoroni build: GP19 is I2C1 SCL)
+    SVAL_THUMB_HAND_RIGHT      = 4, // pull-up 1, pull-down 1 (row on): TCR R7 fitted
+    SVAL_THUMB_HAND_NOT_PROBED = 0xFF,
+};
+uint8_t sval_thumb_hand(void);
+// Raw readings: bit 0 = pull-down read (row on), bit 1 = pull-up majority
+// (row on), bit 2 = pull-down read with the row off (diagnosis only),
+// bits 4-7 = how many of the 8 pull-up reads were high.
+uint8_t sval_thumb_hand_raw(void);
 bool    sval_other_half_connected(void);
 uint8_t sval_pad_hands(void); // hands whose pointing module is an Azoteq pad (bit 0 left, bit 1 right)
 void    sval_scan_timing(uint16_t *pre, uint16_t *post); // matrix.c

@@ -38,13 +38,15 @@ it again afterwards.
 - **Approve on the keyboard.** When Keybard asks, hold Index South and Middle
   South together for one second on the half plugged into USB (on the default
   layout, `M` and `,` on the right, `V` and `C` on the left). The LEDs blink
-  blue while it waits and flash white when it sees the keys.
+  blue while it waits and flash white when it sees the keys. Then both halves
+  show a rainbow while they update (keep the keyboard plugged in) and flash
+  green when they are done.
 - **Checked before it is installed.** The keyboard checks that the firmware
   arrived intact. Keybard warns you if it was built for the other hand. It does
   not check who built it: only approve updates you started.
 - **Version check between halves.** Once both halves run this release or
-  later, Keybard tells you when they differ and the LEDs on the half with USB
-  blink red until both match.
+  later, Keybard tells you when they differ. If they still differ a minute
+  after an update, the LEDs blink red for 30 seconds: open Keybard to finish.
 - **One firmware for every pointing module.** After attaching or changing a
   module, unplug and replug the keyboard. If you used a trackball, TrackPoint
   or touchpad build before, select the keyboard again in Keybard; on Linux,
