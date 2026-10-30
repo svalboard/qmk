@@ -102,8 +102,8 @@ const uint16_t PROGMEM keymaps[DYNAMIC_KEYMAP_LAYER_COUNT][MATRIX_ROWS][MATRIX_C
         /*R3*/     KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_NO,
         /*R4*/     KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_NO,
         /*L1*/     SV_OUTPUT_STATUS,   KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_NO,
-        /*L2*/     KC_TRNS,            SV_RIGHT_DPI_INC,   KC_TRNS,            SV_RIGHT_DPI_DEC,   KC_TRNS,            KC_NO,
-        /*L3*/     KC_TRNS,            SV_LEFT_DPI_INC,    KC_TRNS,            SV_LEFT_DPI_DEC,    KC_TRNS,            KC_NO,
+        /*L2*/     KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_NO,
+        /*L3*/     KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_TRNS,            KC_NO,
         /*L4*/     KC_TRNS,            KC_TRNS, KC_TRNS,   KC_TRNS,            KC_TRNS,            KC_NO,
 
         /*        Down                Pad                 Up                  Nail                Knuckle             Double Down         */
