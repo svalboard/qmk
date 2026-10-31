@@ -29,6 +29,8 @@ class RuntimeSettings(unittest.TestCase):
 #define TAPPING_RETRO_TAPPING_BIT 2
 #define TAPPING_CHORDAL_HOLD_BIT 3
 #define LEADER_PER_KEY_TIMING_BIT 0
+#define SVAL_DEFAULT_LEADER_TIMEOUT 300
+#define SVAL_DEFAULT_LEADER_PER_KEY_TIMING 1
 typedef struct { int unused; } keyrecord_t;
 static struct {
  unsigned raw, swap_control_capslock, capslock_to_control, swap_lalt_lgui,
@@ -69,6 +71,9 @@ int main(void) {
  assert(sval_auto_shift()==0x7F && autoshift_enabled && autoshift_timeout_val==215);
  put(3,0x7E); assert(sval_auto_shift()==0x7E && !autoshift_enabled);
  put(20,0); assert(sval_tapping_toggle()==1);
+ put(20,15); assert(sval_tapping_toggle()==15);
+ put(20,16); assert(sval_tapping_toggle()==15); /* QMK counts at most 15 taps */
+ put(20,0);
  uint8_t raw=255; assert(sval_qmk_settings_get(20,&raw,1)==0 && raw==0);
  for (uint8_t bit=0;bit<4;bit++) { put(1,1<<bit); assert(sval_grave_esc_override()==(1<<bit)); }
  put(18,65535); put(19,65535);

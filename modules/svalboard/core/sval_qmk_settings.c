@@ -8,6 +8,12 @@
 
 #ifdef MOUSEKEY_ENABLE
 #    include "mousekey.h"
+// mousekey.c defines these two without declaring them in mousekey.h. With
+// MK_KINETIC_SPEED the wheel interval is computed at run time, not set.
+extern uint8_t mk_wheel_delay;
+#    ifndef MK_KINETIC_SPEED
+extern uint8_t mk_wheel_interval;
+#    endif
 #endif
 
 #ifdef AUTO_SHIFT_ENABLE
@@ -36,7 +42,7 @@ typedef struct __attribute__((packed)) {
     uint16_t tap_code_delay;
     uint16_t tap_hold_caps_delay;
     uint8_t  tapping_toggle;
-    uint8_t  unused;
+    uint8_t  migrations; // SVAL_QS_MIGRATED_* bits: one-time boot migrations already done (was unused, 0)
     uint16_t quick_tap_term;
     uint16_t flow_tap_term;
     uint16_t leader_timeout;
@@ -97,6 +103,21 @@ enum sval_qsid {
 
 // auto_shift bit positions (QSID 3)
 #define AUTO_SHIFT_ENABLE_BIT 0
+
+// migrations bits
+#define SVAL_QS_MIGRATED_WHEEL_BIT 0 // the wheel delay and interval are applied (see sval_qmk_settings_migrate)
+
+// The largest value each setting's runtime variable holds. QMK's mouse key
+// variables are 8-bit (mousekey.c): the intervals, speeds and times to max hold
+// 0-255, and the delays, stored in ms, are applied in 10 ms units, so 0-2550 ms.
+// A tap count stops at 15 (keyrecord_t tap.count is 4 bits), so a tapping
+// toggle or one-shot tap toggle above 15 could never be reached. Larger stored
+// values used to wrap (an interval of 256 became 0 and moved every scan); they
+// are now held at these limits.
+#define SVAL_MK_8BIT_MAX 255
+#define SVAL_MK_DELAY_MAX_MS 2550
+#define SVAL_TAP_COUNT_MAX 15
+#define SVAL_AT_MOST(value, max) ((value) < (max) ? (value) : (max))
 
 // Setting descriptor
 typedef struct {
@@ -186,6 +207,24 @@ static uint16_t default_mousekey_interval(void) {
 #endif
 }
 
+static uint16_t default_mousekey_wheel_interval(void) {
+#ifdef MOUSEKEY_WHEEL_INTERVAL
+    return MOUSEKEY_WHEEL_INTERVAL;
+#else
+    return 80;
+#endif
+}
+
+// Lower a stored field to max, noting the change (the struct is packed, so no
+// pointers to its fields).
+#define HOLD_AT_MOST(field, max) \
+    do {                         \
+        if ((field) > (max)) {   \
+            (field) = (max);     \
+            changed = true;      \
+        }                        \
+    } while (0)
+
 // LEADER_TIMEOUT is the live variable (post_config.h), so it can't be the
 // default: SVAL_DEFAULT_LEADER_TIMEOUT is.
 static uint8_t default_leader_options(void) {
@@ -196,10 +235,11 @@ static uint8_t default_leader_options(void) {
 #endif
 }
 
-// Replace a 0 in a setting where 0 is never valid with its default. Returns
-// true when something changed. Leader: a 0 timeout came from the reset bug
-// (no Keybard screen allows it), so the board never had working leader timing,
-// and the per-key option it was stored with gets the default too.
+// Replace a 0 in a setting where 0 is never valid with its default, and hold
+// each value at the largest its runtime variable can use. Returns true when
+// something changed. Leader: a 0 timeout came from the reset bug (no Keybard
+// screen allows it), so the board never had working leader timing, and the
+// per-key option it was stored with gets the default too.
 static bool sval_qmk_settings_repair(void) {
     bool changed = false;
     if (settings.combo_term == 0) {
@@ -223,13 +263,50 @@ static bool sval_qmk_settings_repair(void) {
         settings.leader_options = (settings.leader_options & ~(1 << LEADER_PER_KEY_TIMING_BIT)) | default_leader_options();
         changed                 = true;
     }
+    HOLD_AT_MOST(settings.mousekey_delay, SVAL_MK_DELAY_MAX_MS);
+    HOLD_AT_MOST(settings.mousekey_interval, SVAL_MK_8BIT_MAX);
+    HOLD_AT_MOST(settings.mousekey_max_speed, SVAL_MK_8BIT_MAX);
+    HOLD_AT_MOST(settings.mousekey_time_to_max, SVAL_MK_8BIT_MAX);
+    HOLD_AT_MOST(settings.mousekey_wheel_delay, SVAL_MK_DELAY_MAX_MS);
+    HOLD_AT_MOST(settings.mousekey_wheel_interval, SVAL_MK_8BIT_MAX);
+    HOLD_AT_MOST(settings.mousekey_wheel_max_speed, SVAL_MK_8BIT_MAX);
+    HOLD_AT_MOST(settings.mousekey_wheel_time_to_max, SVAL_MK_8BIT_MAX);
+    HOLD_AT_MOST(settings.tapping_toggle, SVAL_TAP_COUNT_MAX);
+    HOLD_AT_MOST(settings.osk_tap_toggle, SVAL_TAP_COUNT_MAX);
+#ifdef MOUSEKEY_ENABLE
+    // The step size (QSID 11) is QMK's compile-time MOUSEKEY_MOVE_DELTA
+    // (info.json mousekey.move_delta), which no setting changes. The stored
+    // value reads back as the step the board uses; a write is accepted for
+    // older hosts and has no effect.
+    if (settings.mousekey_move_delta != MOUSEKEY_MOVE_DELTA) {
+        settings.mousekey_move_delta = MOUSEKEY_MOVE_DELTA;
+        changed                      = true;
+    }
+#endif
     return changed;
+}
+
+// One-time boot migrations, each marked done in settings.migrations so it runs
+// once. Returns true when something changed.
+//
+// Wheel: firmware before this one stored the wheel delay and interval (QSIDs 14
+// and 15) but never applied them, so every board scrolled at the build's
+// defaults whatever was stored. A stored wheel interval of 0 would now scroll
+// every scan, a speed the board never had, so on the first boot of this
+// firmware it becomes the default. After that a 0 is a value someone chose
+// with the setting working, and it is kept.
+static bool sval_qmk_settings_migrate(void) {
+    if (settings.migrations & (1 << SVAL_QS_MIGRATED_WHEEL_BIT)) return false;
+    if (settings.mousekey_wheel_interval == 0) settings.mousekey_wheel_interval = default_mousekey_wheel_interval();
+    settings.migrations |= 1 << SVAL_QS_MIGRATED_WHEEL_BIT;
+    return true;
 }
 
 // Initialize QMK settings
 void sval_qmk_settings_init(void) {
     sval_qmk_settings_load();
-    if (sval_qmk_settings_repair()) {
+    bool migrated = sval_qmk_settings_migrate();
+    if (sval_qmk_settings_repair() || migrated) {
         sval_qmk_settings_save();
     }
     sval_qmk_settings_apply();
@@ -257,12 +334,18 @@ static void sval_qmk_settings_apply(void) {
 #endif
 
 #ifdef MOUSEKEY_ENABLE
-    mk_delay             = settings.mousekey_delay / 10;
-    mk_interval          = settings.mousekey_interval;
-    mk_max_speed         = settings.mousekey_max_speed;
-    mk_time_to_max       = settings.mousekey_time_to_max;
-    mk_wheel_max_speed   = settings.mousekey_wheel_max_speed;
-    mk_wheel_time_to_max = settings.mousekey_wheel_time_to_max;
+    // Held at the variables' limits here too, so no stored value can wrap. The
+    // delays are stored in ms and applied in 10 ms units, as in Vial.
+    mk_delay       = SVAL_AT_MOST(settings.mousekey_delay, SVAL_MK_DELAY_MAX_MS) / 10;
+    mk_interval    = SVAL_AT_MOST(settings.mousekey_interval, SVAL_MK_8BIT_MAX);
+    mk_max_speed   = SVAL_AT_MOST(settings.mousekey_max_speed, SVAL_MK_8BIT_MAX);
+    mk_time_to_max = SVAL_AT_MOST(settings.mousekey_time_to_max, SVAL_MK_8BIT_MAX);
+    mk_wheel_delay = SVAL_AT_MOST(settings.mousekey_wheel_delay, SVAL_MK_DELAY_MAX_MS) / 10;
+#    ifndef MK_KINETIC_SPEED
+    mk_wheel_interval = SVAL_AT_MOST(settings.mousekey_wheel_interval, SVAL_MK_8BIT_MAX);
+#    endif
+    mk_wheel_max_speed   = SVAL_AT_MOST(settings.mousekey_wheel_max_speed, SVAL_MK_8BIT_MAX);
+    mk_wheel_time_to_max = SVAL_AT_MOST(settings.mousekey_wheel_time_to_max, SVAL_MK_8BIT_MAX);
 #endif
 
 #ifdef LEADER_ENABLE
@@ -376,6 +459,7 @@ int sval_qmk_settings_set(uint16_t qsid, const uint8_t *data, uint8_t length) {
 // Reset all settings to defaults
 void sval_qmk_settings_reset(void) {
     memset(&settings, 0, sizeof(settings));
+    settings.migrations = 1 << SVAL_QS_MIGRATED_WHEEL_BIT; // defaults need no migration
 
     // Set defaults
     settings.tapping_term = TAPPING_TERM;
@@ -598,9 +682,10 @@ uint16_t sval_tap_hold_caps_delay(void) {
 }
 
 // A toggle count of 0 would leave a held TT() layer on after release, so 0 is
-// read as 1: one tap toggles, while a held key still releases its layer.
+// read as 1: one tap toggles, while a held key still releases its layer. A
+// count above 15 is read as 15, the most taps QMK counts.
 uint8_t sval_tapping_toggle(void) {
-    return settings.tapping_toggle ? settings.tapping_toggle : 1;
+    return settings.tapping_toggle ? SVAL_AT_MOST(settings.tapping_toggle, SVAL_TAP_COUNT_MAX) : 1;
 }
 
 // One-shot keys: QMK settings 6 (timeout, 0 = none) and 5 (taps to lock; 0 or 1
@@ -610,12 +695,12 @@ uint16_t get_oneshot_timeout(void) {
 }
 
 uint8_t sval_oneshot_tap_toggle(void) {
-    return settings.osk_tap_toggle;
+    return SVAL_AT_MOST(settings.osk_tap_toggle, SVAL_TAP_COUNT_MAX);
 }
 
 void sval_qmk_settings_set_one_shot(uint16_t timeout, uint8_t tap_toggle) {
     settings.osk_timeout    = timeout;
-    settings.osk_tap_toggle = tap_toggle;
+    settings.osk_tap_toggle = SVAL_AT_MOST(tap_toggle, SVAL_TAP_COUNT_MAX);
     sval_qmk_settings_save();
 }
 

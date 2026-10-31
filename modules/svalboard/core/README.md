@@ -63,6 +63,10 @@ Sval validity uses a **layout stamp**, not a build timestamp. Compatible updates
 
 A settings reset writes the QMK defaults, and a leader timeout of 300 ms with per-key timing on (`SVAL_DEFAULT_LEADER_TIMEOUT`, `SVAL_DEFAULT_LEADER_PER_KEY_TIMING`). Five settings can't work at 0: the combo term, tapping term, Auto Shift timeout, mouse key interval and leader timeout. A 0 stored in one of them is replaced with its default at boot and saved, and a host that writes 0 to one gets the default stored instead. Settings where 0 has a meaning keep it: the one-shot timeout (no timeout), the Flow Tap term (off), the quick tap term (off) and the tap code delay.
 
+Every setting is held at the largest value the runtime variable it is applied to can use. QMK's mouse key variables are 8-bit: the intervals, speeds and times to max go up to 255, and the cursor and wheel delays, stored in ms and applied in 10 ms units, up to 2550 ms. QMK counts at most 15 taps, so the tapping toggle and the one-shot tap toggle go up to 15. A larger stored value is held at the limit at boot and on a write, so it can't wrap (an interval of 256 used to become 0 and move the cursor every scan). The mouse key step size (QSID 11) is QMK's compile-time `MOUSEKEY_MOVE_DELTA` (info.json `mousekey.move_delta`); a write is accepted and has no effect, and the setting reads back as the step the board uses.
+
+The wheel delay and wheel interval (QSIDs 14 and 15) are applied, as Vial did. Earlier firmware (v4.3.3 and before) stored them without applying them, so on the first boot of firmware that applies them, a stored wheel interval of 0 (which would scroll every scan, a speed the board never had) becomes the default. The `migrations` byte of the settings block records that the migration ran; after it, a 0 is kept.
+
 The firmware never reads configuration stored by other firmware, Vial included. Setups move between firmwares as layout files, which store keycodes by name.
 
 ## Host protocol and compatibility
