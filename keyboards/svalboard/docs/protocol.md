@@ -271,6 +271,29 @@ The setting is a VIA custom value, not a Sval command:
 - Both halves use the same mode. The half with USB owns the setting and sends its mode in the split presence ping (every 0.5 s; its last byte), as it sends the scan timing; the other half uses it and doesn't store it. Until the first ping, and with an older half on USB, the other half uses its own saved mode. Each half's `STATUS` bit 1 shows the mode it uses, so a host can see the other half follow.
 - Stored in the last spare bit of the keyboard settings' first byte (`optical_debounce_off`, 0 = on), so the settings keep their size and layout stamp: updating to this firmware keeps them.
 
+## Touchpad taps
+
+The touchpad chip (Azoteq IQS5xx) makes clicks of its own while the pad is a mouse: a tap clicks, a two-finger tap right clicks, and a finger held still for the hold time (press and hold) presses the left button until it lifts, for dragging. This setting turns each one on or off and sets the hold time. It applies wherever the pads are a mouse: macOS, a BIOS or boot menu, every OS on builds without the native touchpad, and Windows and Linux until they switch the pads to touchpad mode. In touchpad mode the OS makes its own taps from the contacts, with its own touchpad settings, and the chip's clicks don't reach it (`SVAL_POINTER_OS_TOUCHPAD` in `0x2C`).
+
+The setting is a VIA custom value, not a Sval command:
+
+- Discovery: GET_INFO byte 20, bit 4 (`sval_flag3_pad_gestures`, `0x10`). Every build with the Azoteq driver sets it (the auto builds whatever module is attached; `0x2C` says which hand has a pad). Older firmware leaves it zero, and doesn't answer the values below.
+- Values, channel `0`, read with `id_custom_get_value` (`0x08`) and written with `id_custom_set_value` (`0x07`):
+
+| Value | Name | Data | Default |
+|---|---|---|---|
+| `51` | `id_pad_tap` | `1` a tap clicks, `0` it doesn't | `1` |
+| `52` | `id_pad_two_finger` | `1` a two-finger tap right clicks, `0` it doesn't | `1` |
+| `53` | `id_pad_hold` | `1` press and hold presses the left button, `0` it doesn't | `1` |
+| `54` | `id_pad_hold_ms` | hold time, ms, 16-bit little-endian | `300` |
+
+- The hold time is one of 20, 50, 100, 150, 200, 250, 300, 350, 400, 500, 600, 700, 800, 1000, 1200 or 1500 ms; a write takes the nearest (a tie, the shorter). Read it back for the stored value. Firmware before this held for 20 ms.
+- A write works at once, on both pads: the half with USB writes its chip within a report cycle, and the other half gets the setting in the next presence ping (every 0.5 s; its last byte) and writes its own. `id_custom_save` (`0x09`) stores it with the other keyboard settings. A settings reset sets the defaults again.
+- Defaults: all three on, hold 300 ms (`AZOTEQ_IQS5XX_HOLD_TIME`, QMK's driver default; firmware before this used 20 ms, so a finger resting still clicked almost at once). The stored byte records only changes from the defaults: its 0 means "the build's defaults", and the hold time's default is its own value (index 0), never a stored 20. A board that has never changed the setting writes nothing to the chip beyond what the driver's start writes from the build's defines, and after an update it holds for 300 ms. A self-built firmware that changes those defines keeps them until the setting is changed.
+- The chip loses the setting when it restarts, so the firmware writes it again after every start of the chip (with the glass tuning), as long as it differs from the defaults.
+- Stored in two bytes of their own after the keyboard settings' magic (the setting and its complement), not in the keyboard settings, which have no spare byte left: the settings keep their size and layout stamp, so updating to this firmware keeps them. Two bytes that don't match read as the defaults.
+- Split: with an older half on USB, the other half keeps its own saved setting (the defaults, unless it once ran on USB with another). An older half without USB ignores the byte, and its pad keeps its build's taps.
+
 ## Scan timing
 
 The board scans its keys with two saved waits per row, in microseconds: before reading the row (`id_scan_prewait_us`, VIA value `13`) and after it (`id_scan_postwait_us`, `14`). They are the timing the board runs, always; there is no other timing setting. Both are 16-bit little-endian, on channel `0`; `id_custom_save` (`0x09`) stores them. A Scan Lab sweep overrides them while it runs, and the updater raises them while it waits for its chord.

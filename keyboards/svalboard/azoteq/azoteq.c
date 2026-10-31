@@ -6,6 +6,7 @@
 #include "drivers/sensors/azoteq_iqs5xx.h"
 #include "svalboard.h"
 #include "pointing_detect.h"
+#include "pad_gestures.h"
 
 #ifdef SVAL_AZOTEQ_MULTITOUCH
 // Native touchpad builds (azoteq/multitouch.mk): every contact is read, and
@@ -121,9 +122,35 @@ static i2c_status_t sval_iqs_write(uint16_t reg, const uint8_t *data, uint16_t l
     return i2c_write_register16(AZO_I2C_ADDRESS, reg, data, len, AZOTEQ_IQS5XX_TIMEOUT_MS);
 }
 
+// The touchpad tap setting (pad_gestures.h): tap, two-finger tap, press and
+// hold and the hold time, over what the driver's start wrote from the build's
+// defines. Written at every start of the chip (with the glass tuning) and on
+// every change. A setting of 0 is the build's defaults, which the start has
+// just written, so a board that never changed it writes nothing more.
+static volatile bool azo_gestures_pending = false;
+
+// Inside an open communication window; leaves it open.
+static i2c_status_t azo_write_gestures(void) {
+    uint8_t      regs[SVAL_PAD_REG_BYTES];
+    i2c_status_t status = i2c_read_register16(AZO_I2C_ADDRESS, SVAL_PAD_REG_GESTURES, regs, sizeof(regs), AZOTEQ_IQS5XX_TIMEOUT_MS);
+    if (status != I2C_STATUS_SUCCESS) return status;
+    sval_pad_regs_apply(sval_pad_gestures(), regs);
+    return sval_iqs_write(SVAL_PAD_REG_GESTURES, regs, sizeof(regs));
+}
+
+bool sval_pad_gestures_supported(void) {
+    return true;
+}
+
+void sval_pad_gestures_changed(void) {
+    azo_gestures_pending = true;
+}
+
 // Inside an open communication window; ends it.
 static i2c_status_t sval_iqs_apply_tuning(void) {
     i2c_status_t status = I2C_STATUS_SUCCESS;
+
+    if (sval_pad_gestures() != 0 || azo_gestures_pending) status |= azo_write_gestures();
 
     const uint8_t mult[2] = {SVAL_IQS_TOUCH_MULT_SET, SVAL_IQS_TOUCH_MULT_CLEAR};
     status |= sval_iqs_write(SVAL_IQS_REG_TOUCH_MULT_SET, mult, sizeof(mult));
@@ -144,6 +171,7 @@ static void sval_iqs_tune(void) {
         azo_wake();
         status = sval_iqs_apply_tuning();
     }
+    if (status == I2C_STATUS_SUCCESS) azo_gestures_pending = false;
     dprintf("IQS5XX: glass tuning %s (i2c status %d)\n", status == I2C_STATUS_SUCCESS ? "applied" : "FAILED", status);
 }
 
@@ -240,8 +268,24 @@ uint8_t sval_pointer_retry_own(void) {
 }
 #endif
 
+// A changed tap setting, written in a window of its own.
+static void azo_gestures_task(void) {
+    if (!azo_gestures_pending || azo_product == AZOTEQ_IQS5XX_UNKNOWN) return;
+    azo_wake();
+    i2c_status_t status = azo_write_gestures();
+    azoteq_iqs5xx_end_session();
+    if (status != I2C_STATUS_SUCCESS) {
+        azo_wake();
+        status = azo_write_gestures();
+        azoteq_iqs5xx_end_session();
+    }
+    azo_gestures_pending = false; // a failure is not retried here; the next start writes it
+    dprintf("IQS5XX: tap setting %02X %s\n", sval_pad_gestures(), status == I2C_STATUS_SUCCESS ? "written" : "FAILED");
+}
+
 report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
     azo_log_identity();
+    azo_gestures_task();
 #ifdef SVAL_AZOTEQ_MULTITOUCH
     if (!azo_sched_ready) {
         pad_sched_init(&azo_sched);
