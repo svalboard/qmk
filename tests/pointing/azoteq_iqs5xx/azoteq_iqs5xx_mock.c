@@ -43,3 +43,7 @@ uint8_t pointing_device_handle_buttons(uint8_t buttons, bool pressed, pointing_d
     }
     return buttons;
 }
+
+void azoteq_iqs5xx_mock_set_read_status(i2c_status_t status) {
+    mock_read_status = status;
+}
