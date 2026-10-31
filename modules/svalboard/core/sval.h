@@ -131,6 +131,7 @@ enum sval_feature_flags3 {
     // Bit 1 is left for the board ID record branch.
     sval_flag3_typing_pause  = (1 << 2), // 0x3C pauses keyboard output while a key tester is open
     sval_flag3_flicker_latch = (1 << 3), // 0x3D reads each switch's raw changes since the last read
+    sval_flag3_pad_gestures  = (1 << 4), // VIA values 51-54: the touchpad tap setting (Azoteq builds)
 };
 
 // Status byte after the modifiers in the 0x16 reply (sval_flag2_modifier_state).

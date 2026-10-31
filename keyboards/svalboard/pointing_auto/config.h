@@ -15,7 +15,7 @@
 #define AZOTEQ_IQS5XX_TPS43
 #define AZOTEQ_IQS5XX_TIMEOUT_MS 10
 #define AZOTEQ_IQS5XX_PRESS_AND_HOLD_ENABLE true
-#define AZOTEQ_IQS5XX_HOLD_TIME 20
+#define AZOTEQ_IQS5XX_HOLD_TIME 300 // press and hold, ms (QMK's driver default, 0x12C)
 
 // TrackPoint: PS/2 on PIO1
 #define PS2_PIO_USE_PIO1

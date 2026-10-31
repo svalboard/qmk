@@ -50,6 +50,7 @@ VIA_INSECURE = yes
 # debounced in both, 5 ms per key, deferred.
 DEBOUNCE_TYPE = custom
 SRC += debounce_sval.c
+SRC += pad_gestures.c
 
 # On-device action-path tests; opt in with -e SVAL_KEYTEST=yes.
 ifeq ($(strip $(SVAL_KEYTEST)), yes)

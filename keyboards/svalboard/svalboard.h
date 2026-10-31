@@ -81,6 +81,9 @@ typedef struct __attribute__((__packed__)) _presence_rpc_t {
     // appended: the slave uses it only when the ping is long enough to hold it,
     // so a master from before it leaves the slave on its own saved mode.
     uint8_t debounce_mode;
+    // The touchpad tap setting (sval_pad_sync_byte(), pad_gestures.h),
+    // appended the same way: the slave uses it only when the ping holds it.
+    uint8_t pad_gestures;
 } presence_rpc_t;
 
 // Which pointing module a half's firmware drives and which one answered, so a host
@@ -174,6 +177,12 @@ uint8_t sval_thumb_hand(void);
 // bits 4-7 = how many of the 8 pull-up reads were high.
 uint8_t sval_thumb_hand_raw(void);
 bool    sval_other_half_connected(void);
+// The touchpad tap setting (pad_gestures.h): what this half uses now. The
+// half with USB owns the saved one; the other half uses its presence ping's.
+uint8_t sval_pad_gestures(void);
+// Azoteq builds (azoteq/azoteq.c): the setting changed, write it to the chip.
+void sval_pad_gestures_changed(void);
+bool sval_pad_gestures_supported(void);
 uint8_t sval_pad_hands(void); // hands whose pointing module is an Azoteq pad (bit 0 left, bit 1 right)
 void    sval_scan_timing(uint16_t *pre, uint16_t *post); // matrix.c
 uint8_t sval_pushed_mask(bool thumbs);                    // matrix.c

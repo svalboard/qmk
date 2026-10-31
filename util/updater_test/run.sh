@@ -29,6 +29,13 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 "$out/test_timing"
 "$out/test_debounce"
 
+# Touchpad tap setting (kb/pad_gestures.c): defaults are today's behavior, each
+# switch, the hold time table, the stored record, the chip's gesture register
+# bytes, split sync with older halves.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -I"$kb" "$root/tests/sval_pad_gestures/test_pad_gestures.c" "$kb/pad_gestures.c" -o "$out/test_pad_gestures"
+"$out/test_pad_gestures"
+
 # Settings reset on the first boot of a different firmware build (kb/build_reset.c).
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
     -DBUILD_RESET_HOST_TEST -I"$kb" "$tests/test_build_reset.c" "$kb/build_reset.c" -o "$out/test_build_reset"

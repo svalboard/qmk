@@ -17,6 +17,7 @@
 #include "typing_pause.h"
 #include "flicker_latch.h"
 #include "debounce_sval.h"
+#include "pad_gestures.h"
 #include "sval.h"
 #include "pointing_motion.h" // after sval.h: needs the generated fragment ids
 #include "identity.h"
@@ -43,6 +44,7 @@ _Static_assert(sizeof(((presence_rsp_t *)0)->update) == UPDATE_PRESENCE_BYTES, "
 _Static_assert(sizeof(presence_rsp_t) <= RPC_S2M_BUFFER_SIZE, "presence reply fits the split RPC buffer");
 _Static_assert(sizeof(presence_rpc_t) <= RPC_M2S_BUFFER_SIZE, "presence ping fits the split RPC buffer");
 _Static_assert(offsetof(presence_rpc_t, debounce_mode) == 18, "presence ping: the debounce mode follows the updater light");
+_Static_assert(offsetof(presence_rpc_t, pad_gestures) == 19, "presence ping: the tap setting follows the debounce mode");
 #endif
 // The debounce mode took the last spare bit of the first byte: the settings
 // keep their size, so a board that updates keeps them and reads it as 0 (on).
@@ -60,6 +62,30 @@ bool sval_optical_debounce_on(void) {
 #endif
 
 saved_values_t global_saved_values;
+
+// The touchpad tap setting (pad_gestures.h). Not in saved_values_t, which has
+// no spare byte: growing it would change the settings' size and layout stamp,
+// and every board would lose its settings. It is stored in its own two bytes
+// right after the settings' magic (read_eeprom_kb), and 0 is the defaults, so
+// a board that never changed it runs as before.
+static uint8_t pad_gestures = 0;
+
+uint8_t sval_pad_gestures(void) {
+    return pad_gestures;
+}
+
+static void pad_gestures_set(uint8_t s) {
+    s &= SVAL_PAD_KNOWN;
+    if (s == pad_gestures) return;
+    pad_gestures = s;
+    sval_pad_gestures_changed();
+}
+
+// Builds without an Azoteq driver: nothing to write, and no capability.
+__attribute__((weak)) void sval_pad_gestures_changed(void) {}
+__attribute__((weak)) bool sval_pad_gestures_supported(void) {
+    return false;
+}
 // The turbo index the half with USB sent in the last presence ping (half
 // without USB only). Used only for a wait of 0, which only an older half with
 // USB sends (sval_timing_effective).
@@ -172,6 +198,9 @@ uint8_t sval_thumb_hand_raw(void) {
 // can never be mistaken for a stamp.
 #define SVALBOARD_MAGIC_SIZE 6
 #define SVALBOARD_MAGIC_OFFSET (SVALBOARD_VIA_CONFIG_OFFSET + SVALBOARD_VIA_CONFIG_SIZE)
+// The touchpad tap setting's record, after the magic (pad_gestures.h).
+#define SVALBOARD_PAD_GESTURES_OFFSET (SVALBOARD_MAGIC_OFFSET + SVALBOARD_MAGIC_SIZE)
+_Static_assert(SVALBOARD_PAD_GESTURES_OFFSET + SVAL_PAD_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the tap setting fits the VIA custom config");
 
 #if VIA_ENABLE
 static void svalboard_get_magic(uint8_t *magic) {
@@ -204,10 +233,24 @@ void svalboard_eeprom_set_valid(void) {
     via_update_custom_config(magic, SVALBOARD_MAGIC_OFFSET, SVALBOARD_MAGIC_SIZE);
 }
 
+static void pad_gestures_save(void) {
+    uint8_t rec[SVAL_PAD_RECORD_BYTES];
+    sval_pad_record_write(pad_gestures, rec);
+    via_update_custom_config(rec, SVALBOARD_PAD_GESTURES_OFFSET, SVAL_PAD_RECORD_BYTES);
+}
+
+static void pad_gestures_load(void) {
+    uint8_t rec[SVAL_PAD_RECORD_BYTES];
+    via_read_custom_config(rec, SVALBOARD_PAD_GESTURES_OFFSET, SVAL_PAD_RECORD_BYTES);
+    pad_gestures_set(sval_pad_record_read(rec));
+}
+
 void write_eeprom_kb(void) {
     via_update_custom_config(&global_saved_values, SVALBOARD_VIA_CONFIG_OFFSET, SVALBOARD_VIA_CONFIG_SIZE);
+    pad_gestures_save();
 }
 #else
+static void pad_gestures_load(void) {}
 static bool svalboard_eeprom_is_valid(void) {
     return true;
 }
@@ -298,6 +341,7 @@ void read_eeprom_kb(void) {
     if (!svalboard_eeprom_is_valid()) {
         // Fresh EEPROM - apply defaults
         svalboard_saved_values_defaults();
+        pad_gestures_set(0);
         write_eeprom_kb();
         svalboard_eeprom_set_valid();
     } else {
@@ -313,6 +357,7 @@ void read_eeprom_kb(void) {
             global_saved_values.scan_postwait_us = post;
             write_eeprom_kb();
         }
+        pad_gestures_load();
     }
     sval_active_layer = 0;
 }
@@ -456,9 +501,10 @@ void sval_client_packet_kb(uint32_t client_id) {
 }
 
 // GET_INFO byte 20 (the third feature byte): main board (0x38, mainboard.c),
-// typing pause (0x3C) and flicker latch (0x3D).
+// typing pause (0x3C), flicker latch (0x3D) and, on Azoteq builds, the
+// touchpad tap setting (VIA values 51-54).
 uint8_t sval_get_feature_flags3_kb(void) {
-    return sval_flag3_main_board | sval_flag3_typing_pause | sval_flag3_flicker_latch;
+    return sval_flag3_main_board | sval_flag3_typing_pause | sval_flag3_flicker_latch | (sval_pad_gestures_supported() ? sval_flag3_pad_gestures : 0);
 }
 
 void sval_flicker_latch_kb(uint8_t *data, uint8_t length) {
@@ -619,9 +665,13 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
     // The master's optical debounce mode, when its ping carries it (RAM only, as above).
     bool has_debounce                        = in_buflen >= offsetof(presence_rpc_t, debounce_mode) + 1;
     global_saved_values.optical_debounce_off = !sval_debounce_sync_mode(has_debounce, has_debounce ? in->debounce_mode : 0, sval_optical_debounce_on());
+    // The master's touchpad tap setting, when its ping carries it (RAM only).
+    bool has_pad = in_buflen >= offsetof(presence_rpc_t, pad_gestures) + 1;
+    pad_gestures_set(sval_pad_sync_setting(has_pad, has_pad ? in->pad_gestures : 0, pad_gestures));
 #ifdef SVAL_UPDATER
-    // The master's updater light (D24), when its ping carries it.
-    bool has_light = in_buflen >= sizeof(presence_rpc_t);
+    // The master's updater light (D24), when its ping carries it. Measured to
+    // its own byte: the ping has grown past it since.
+    bool has_light = in_buflen >= offsetof(presence_rpc_t, update_light) + 1;
     updater_split_light_seen(has_light, has_light ? in->update_light : 0);
 #endif
     // Tell the master this half's side and sensor (Sval 0x2C). Older masters ignore it.
@@ -926,6 +976,7 @@ void housekeeping_task_kb(void) {
             rpcout.update_light = updater_split_light();
 #endif
             rpcout.debounce_mode = sval_debounce_sync_byte(sval_optical_debounce_on());
+            rpcout.pad_gestures  = sval_pad_sync_byte(pad_gestures);
             presence_rsp_t rpcin  = {0};
             if (transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin)) {
                 if (rpcin.magic[0] == SVAL_PRESENCE_RSP_MAGIC0 && rpcin.magic[1] == SVAL_PRESENCE_RSP_MAGIC1 && (rpcin.pointer.flags & SVAL_POINTER_REPORTED)) {
@@ -1037,6 +1088,11 @@ enum sval_via_value_id {
     id_optical_debounce = 48, // toggle: debounce the optical keys (1, the default) or not (0); the thumb Double Down always is
     id_automouse_timeout_ms = 49, // u16: auto mouse layer timeout, ms, 100-2000 in 10 ms steps
     id_automouse_no_timeout = 50, // toggle: the auto mouse layer has no timeout (the old "Infinite")
+    // The touchpad tap setting (pad_gestures.h), with sval_flag3_pad_gestures:
+    id_pad_tap        = 51, // toggle: a tap clicks (1, the default)
+    id_pad_two_finger = 52, // toggle: a two-finger tap right clicks (1, the default)
+    id_pad_hold       = 53, // toggle: press and hold presses the left button (1, the default)
+    id_pad_hold_ms    = 54, // u16: the hold time, ms, nearest of sval_pad_hold_ms (300, the default)
 };
 
 void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
@@ -1158,6 +1214,18 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     break;
                 case id_optical_debounce:
                     global_saved_values.optical_debounce_off = value_data[0] == 0;
+                    break;
+                case id_pad_tap:
+                    pad_gestures_set(sval_pad_with(pad_gestures, SVAL_PAD_TAP_OFF, value_data[0] != 0));
+                    break;
+                case id_pad_two_finger:
+                    pad_gestures_set(sval_pad_with(pad_gestures, SVAL_PAD_TWO_FINGER_OFF, value_data[0] != 0));
+                    break;
+                case id_pad_hold:
+                    pad_gestures_set(sval_pad_with(pad_gestures, SVAL_PAD_HOLD_OFF, value_data[0] != 0));
+                    break;
+                case id_pad_hold_ms:
+                    pad_gestures_set(sval_pad_with_hold_ms(pad_gestures, value_data[0] | (value_data[1] << 8)));
                     break;
                 // Before this, the four idle toggles above id_idle_long_nap fell
                 // into id_optical_debounce: they changed the debounce mode, not their bit.
@@ -1295,6 +1363,21 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                 case id_optical_debounce:
                     value_data[0] = sval_optical_debounce_on() ? 1 : 0;
                     break;
+                case id_pad_tap:
+                    value_data[0] = sval_pad_tap_on(pad_gestures) ? 1 : 0;
+                    break;
+                case id_pad_two_finger:
+                    value_data[0] = sval_pad_two_finger_on(pad_gestures) ? 1 : 0;
+                    break;
+                case id_pad_hold:
+                    value_data[0] = sval_pad_hold_on(pad_gestures) ? 1 : 0;
+                    break;
+                case id_pad_hold_ms: {
+                    uint16_t ms   = sval_pad_hold_time_ms(pad_gestures);
+                    value_data[0] = ms & 0xFF;
+                    value_data[1] = ms >> 8;
+                    break;
+                }
                 default:
                     // Layer colors: id 32-47
                     if (*value_id >= id_layer0_color && *value_id < id_layer0_color + 16) {
