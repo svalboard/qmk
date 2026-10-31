@@ -294,6 +294,73 @@ The setting is a VIA custom value, not a Sval command:
 - Stored in two bytes of their own after the keyboard settings' magic (the setting and its complement), not in the keyboard settings, which have no spare byte left: the settings keep their size and layout stamp, so updating to this firmware keeps them. Two bytes that don't match read as the defaults.
 - Split: with an older half on USB, the other half keeps its own saved setting (the defaults, unless it once ran on USB with another). An older half without USB ignores the byte, and its pad keeps its build's taps.
 
+## Touchpad tuning
+
+How the touchpad chip (Azoteq IQS5xx) decides a tap or a press and hold, and when two fingers start to scroll. The chip counts these distances in pixels of its output resolution, and that resolution differs between builds: the native touchpad keeps the full 2048 pixels across the pad's 43 mm, and the builds without it scale it to the pointer DPI (about 1354 at 800 cpi). The firmware takes each distance in 0.01 mm and converts it from the resolution the chip has, read back from the chip at each write and written again when the DPI changes it, so it is the same size in every build.
+
+- Discovery: GET_INFO byte 20, bit 5 (`sval_flag3_pad_tuning`, `0x20`). Every build with the Azoteq driver sets it, with bit 4 (`Touchpad taps`).
+- Values, channel `0`, 16-bit little-endian, read with `id_custom_get_value` (`0x08`) and written with `id_custom_set_value` (`0x07`):
+
+| Value | Name | Data | Default |
+|---|---|---|---|
+| `55` | `id_pad_dead_zone` | the dead zone, 0.01 mm: a tap or a press and hold is canceled once the finger moves farther than this from where it touched down (the chip's Tap distance, `0x06BB`) | `120` (1.2 mm) |
+| `56` | `id_pad_tap_ms` | the tap time, ms: a tap must lift within it; press and hold fires at the tap time plus the hold time (`0x06B9`) | `150` |
+| `57` | `id_pad_scroll_start` | how far two fingers move before they scroll, 0.01 mm (`0x06C8`); `0` is the build's own | the build's own (50 pixels: 1.05 mm on the native touchpad) |
+
+- The dead zone is one of 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2, 1.4, 1.6, 2.0, 2.5, 3.0 or 4.0 mm; the tap time one of 50, 75, 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 500, 600, 800 or 1000 ms; the scroll distance the build's own or one of 0.3, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0 or 10.0 mm. A write takes the nearest (a tie, the smaller). Read it back for the stored value.
+- Reading `57` while it is the build's own gives that distance in 0.01 mm at the resolution in force (`105` on the native touchpad); writing that same number back, or `0`, keeps the build's own.
+- Before this, the dead zone was the driver's 25 pixels in every build: about 0.52 mm on the native touchpad (the release image) and 0.79 mm at 800 cpi. The default is now 1.2 mm in every build: 57 pixels on the native touchpad and about 38 at 800 cpi. The tap time and the scroll distance keep what every build had.
+- A write works at once and reaches the other half the way the tap setting does (the presence ping, a 16-bit word after its byte). `id_custom_save` (`0x09`) stores it. A settings reset sets the defaults again.
+- Stored in four bytes of their own after the tap setting's two (the setting and its complement), so the settings keep their size and layout stamp. Bytes that don't check out read as the defaults.
+
+## Touchpad touch
+
+The touch page of `POINTING_MOTION` shows each pad's touch as the chip's tap and press-and-hold rules see it: where the finger touched down, where it is, how long it has been down, how far it has moved from the down point, and the chip's gesture events. It is for the editor's touchpad visualizer, so a user can see why a touch did or didn't click. It only watches: nothing about it changes what the pads report.
+
+- Discovery: GET_INFO byte 20, bit 6 (`sval_flag3_pad_touch`, `0x40`). The native touchpad builds set it; they read every finger's position from the chip. Other builds leave it zero, and answer the request below with the motion page.
+- Request: `DF 2D <reader> 01` (byte 3 is the page; `0`, or nothing, is the motion page above). Older firmware ignores byte 3 and answers with the motion page (format `1`).
+- It reads and clears the events only. It doesn't clear the motion counts, and it doesn't count as host activity.
+- The board follows the pads only while a host has read this page within the last 1.5 s. The half with USB then fetches the other pad's block over the split link every 16 ms. The first read after a pause starts fresh: a touch already down then shows from the next read.
+- Response: `DF 2D` then 56 bytes. `format` `0` means no data (the half without USB).
+
+| off | size | field |
+|---|---|---|
+| 0 | 1 | format = `2` |
+| 1 | 1 | bit 0 a tap clicks, bit 1 a two-finger tap right clicks, bit 2 press and hold presses the left button (`Touchpad taps`) |
+| 2 | 1 | ms since the previous touch-page read, up to 255; `0` on the first |
+| 3 | 1 | bit 0: bytes 48-55 hold each pad's finger size (firmware before it leaves them zero) |
+| 4 | 2 | the dead zone in force, 0.01 mm |
+| 6 | 2 | the tap time in force, ms |
+| 8 | 2 | the hold time in force, ms |
+| 10 | 2 | the pad's width, 0.01 mm (`4300`) |
+| 12 | 2 | the pad's height, 0.01 mm (`4000`) |
+| 14 | 16 | the left pad |
+| 30 | 16 | the right pad |
+| 46 | 2 | the scroll distance in force on the USB half's pad, 0.01 mm |
+| 48 | 3 | the left pad's first finger: touch strength (16-bit little-endian), then area (channels) |
+| 51 | 3 | the right pad's first finger, the same |
+| 54 | 1 | channels across the pad (TPS43: `8`) |
+| 55 | 1 | channels down the pad (TPS43: `7`) |
+
+Each pad:
+
+| off | size | field |
+|---|---|---|
+| 0 | 1 | flags: bit 0 valid (this pad is read and the block is live), bit 1 a finger is down, bit 2 the computer has this pad as a touchpad (its clicks are the computer's, not the chip's), bit 3 this touch has left the dead zone, bits 4-6 fingers down now (0-5), bit 7 the chip reports press and hold now |
+| 1 | 1 | events since the last touch-page read: bit 0 touch down, bit 1 the last finger lifted, bit 2 the chip's single tap, bit 3 its two-finger tap, bit 4 press and hold began, bit 5 a scroll, bit 6 the touch left the dead zone while a tap or a hold could still fire (that cancels it), bit 7 a swipe or zoom |
+| 2 | 2 | x, 0.01 mm across the pad (the first finger) |
+| 4 | 2 | y, 0.01 mm down the pad |
+| 6 | 2 | down x, where this touch began |
+| 8 | 2 | down y |
+| 10 | 2 | ms since touch-down while a finger is down; the last touch's length after it lifts |
+| 12 | 2 | the farthest this touch has been from its down point, 0.01 mm |
+| 14 | 2 | the tap distance the chip has, pixels |
+
+- Coordinates are in the chip's own orientation on that pad, as `POINTING_CONTACTS` gives them, in 0.01 mm. While no finger is down, x and y are where the last touch lifted.
+- A single tap is reported as the finger lifts; press and hold at the tap time plus the hold time, while the touch has stayed inside the dead zone. Bit 6 of the events is the firmware's own check: Euclidean distance in the chip's pixels, more than the tap distance, before the tap time ends (or before the hold fires, with press and hold on). The chip doesn't report a cancel, and its datasheet doesn't say how it measures the distance, so a touch near the edge can come out either way.
+- A block that is not valid (no pad on that hand, or the other half is disconnected or has older firmware) is all zero.
+- Finger size: the chip's own numbers for the first finger (datasheet 5.2.4-5.2.5), zero while no finger is down. Touch strength is the sum of the finger's channel deltas: it rises with pressure and contact, and its scale depends on the pad's sensitivity, so it compares touches on one pad rather than measuring anything. Area is how many channels the finger covers. A channel is the pad's width and height divided by bytes 54 and 55 (about 5.4 x 5.7 mm on the TPS43), so area times that is roughly the contact's footprint. Both come from the contact read the native touchpad already makes every cycle: they cost no I2C, and the other half's reply grows by these 3 bytes inside its existing 32-byte split RPC.
+
 ## Scan timing
 
 The board scans its keys with two saved waits per row, in microseconds: before reading the row (`id_scan_prewait_us`, VIA value `13`) and after it (`id_scan_postwait_us`, `14`). They are the timing the board runs, always; there is no other timing setting. Both are 16-bit little-endian, on channel `0`; `id_custom_save` (`0x09`) stores them. A Scan Lab sweep overrides them while it runs, and the updater raises them while it waits for its chord.

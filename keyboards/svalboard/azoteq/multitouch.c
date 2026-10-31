@@ -139,6 +139,9 @@ static void reset_stream(void) {
 // One pad read (drivers/sensors/azoteq_iqs5xx.c): raw is the 45 bytes from
 // register 0x000C, valid when the read and its end of session succeeded.
 void sval_mt_sample(const uint8_t *raw, bool valid) {
+#ifndef SVAL_MT_HOST_TEST
+    sval_touch_sample(raw, valid); // the touch page (touch_stream.c); only while a host reads it
+#endif
     samples++;
     uint8_t       flags = 0, mask = 0;
     const uint8_t prev_mask = last_mask;

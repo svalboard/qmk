@@ -72,3 +72,107 @@ uint8_t sval_pad_sync_setting(bool present, uint8_t sync_byte, uint8_t current) 
     if (!present || !(sync_byte & SVAL_PAD_SYNC_VALID)) return current;
     return sync_byte & SVAL_PAD_KNOWN;
 }
+
+// ---------------------------------------------------------------- tuning
+
+const uint16_t sval_pad_dead_zone_mm100[SVAL_PAD_TUNE_CHOICES] = {120, 20, 30, 40, 50, 60, 70, 80, 90, 100, 140, 160, 200, 250, 300, 400};
+const uint16_t sval_pad_tap_ms[SVAL_PAD_TUNE_CHOICES]          = {150, 50, 75, 100, 125, 175, 200, 225, 250, 300, 350, 400, 500, 600, 800, 1000};
+const uint16_t sval_pad_scroll_mm100[SVAL_PAD_TUNE_CHOICES]    = {0, 30, 50, 75, 100, 125, 150, 175, 200, 250, 300, 400, 500, 600, 800, 1000};
+
+#define TUNE_DEAD_SHIFT 0
+#define TUNE_TAP_SHIFT 4
+#define TUNE_SCROLL_SHIFT 8
+
+static uint8_t tune_index(uint16_t t, uint8_t shift) {
+    return (t >> shift) & 0x0F;
+}
+
+static uint16_t tune_set(uint16_t t, uint8_t shift, uint8_t i) {
+    return (uint16_t)(((t & ~(0x0Fu << shift)) | ((uint16_t)i << shift)) & SVAL_PAD_TUNE_KNOWN);
+}
+
+// The nearest entry from index first on; a tie takes the smaller value.
+static uint8_t nearest(const uint16_t *table, uint8_t first, uint16_t v) {
+    uint8_t  best      = first;
+    uint16_t best_diff = UINT16_MAX;
+    for (uint8_t i = first; i < SVAL_PAD_TUNE_CHOICES; i++) {
+        uint16_t d = v > table[i] ? v - table[i] : table[i] - v;
+        if (d < best_diff || (d == best_diff && table[i] < table[best])) {
+            best      = i;
+            best_diff = d;
+        }
+    }
+    return best;
+}
+
+uint16_t sval_pad_dead_zone(uint16_t t) {
+    return sval_pad_dead_zone_mm100[tune_index(t, TUNE_DEAD_SHIFT)];
+}
+
+uint16_t sval_pad_tap_time_ms(uint16_t t) {
+    return sval_pad_tap_ms[tune_index(t, TUNE_TAP_SHIFT)];
+}
+
+uint16_t sval_pad_scroll_start(uint16_t t) {
+    return sval_pad_scroll_mm100[tune_index(t, TUNE_SCROLL_SHIFT)];
+}
+
+uint16_t sval_pad_tune_with_dead_zone(uint16_t t, uint16_t mm100) {
+    return tune_set(t, TUNE_DEAD_SHIFT, nearest(sval_pad_dead_zone_mm100, 0, mm100));
+}
+
+uint16_t sval_pad_tune_with_tap_ms(uint16_t t, uint16_t ms) {
+    return tune_set(t, TUNE_TAP_SHIFT, nearest(sval_pad_tap_ms, 0, ms));
+}
+
+uint16_t sval_pad_tune_with_scroll(uint16_t t, uint16_t mm100) {
+    return tune_set(t, TUNE_SCROLL_SHIFT, mm100 == 0 ? 0 : nearest(sval_pad_scroll_mm100, 1, mm100));
+}
+
+uint16_t sval_pad_mm100_to_px(uint16_t mm100, uint16_t res, uint16_t span_mm100) {
+    if (!span_mm100) return 1;
+    uint32_t px = ((uint32_t)mm100 * res + span_mm100 / 2) / span_mm100;
+    if (px < 1) px = 1;
+    return px > UINT16_MAX ? UINT16_MAX : (uint16_t)px;
+}
+
+uint16_t sval_pad_px_to_mm100(uint16_t px, uint16_t res, uint16_t span_mm100) {
+    if (!res) return 0;
+    uint32_t mm = ((uint32_t)px * span_mm100 + res / 2) / res;
+    return mm > UINT16_MAX ? UINT16_MAX : (uint16_t)mm;
+}
+
+void sval_pad_tune_record_write(uint16_t t, uint8_t rec[SVAL_PAD_TUNE_RECORD_BYTES]) {
+    t &= SVAL_PAD_TUNE_KNOWN;
+    rec[0] = t & 0xFF;
+    rec[1] = t >> 8;
+    rec[2] = (uint8_t)~rec[0];
+    rec[3] = (uint8_t)~rec[1];
+}
+
+uint16_t sval_pad_tune_record_read(const uint8_t rec[SVAL_PAD_TUNE_RECORD_BYTES]) {
+    if ((uint8_t)(rec[0] ^ rec[2]) != 0xFF || (uint8_t)(rec[1] ^ rec[3]) != 0xFF) return 0;
+    uint16_t t = rec[0] | (uint16_t)rec[1] << 8;
+    return (t & ~SVAL_PAD_TUNE_KNOWN) ? 0 : t;
+}
+
+static void put_be16(uint8_t *p, uint16_t v) {
+    p[0] = v >> 8;
+    p[1] = v & 0xFF;
+}
+
+void sval_pad_tune_regs_apply(uint16_t t, uint16_t xres, uint16_t scroll_build_px, uint8_t regs[SVAL_PAD_TUNE_REG_BYTES]) {
+    put_be16(&regs[2], sval_pad_tap_time_ms(t));                                                 // 0x06B9 tap time
+    put_be16(&regs[4], sval_pad_mm100_to_px(sval_pad_dead_zone(t), xres, SVAL_PAD_WIDTH_MM100)); // 0x06BB tap distance
+    uint16_t scroll = sval_pad_scroll_start(t);
+    put_be16(&regs[17], scroll ? sval_pad_mm100_to_px(scroll, xres, SVAL_PAD_WIDTH_MM100) : scroll_build_px); // 0x06C8
+}
+
+uint16_t sval_pad_tune_sync_word(uint16_t t) {
+    return SVAL_PAD_TUNE_SYNC_VALID | (t & SVAL_PAD_TUNE_KNOWN);
+}
+
+uint16_t sval_pad_tune_sync_setting(bool present, uint16_t sync_word, uint16_t current) {
+    if (!present || !(sync_word & SVAL_PAD_TUNE_SYNC_VALID)) return current;
+    return sync_word & SVAL_PAD_TUNE_KNOWN;
+}

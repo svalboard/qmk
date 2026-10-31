@@ -882,9 +882,15 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
             // Response: [0xDF] [0x2D] [format] [report...]
             // Read-and-clear. format 0: no data. The keyboard defines the report
             // (Svalboard: keyboards/svalboard/docs/protocol.md).
+            // Request [0xDF] [0x2D] [reader] [1]: the touch page instead, which
+            // clears no motion counts (sval_flag3_pad_touch).
             if (length > 2) {
+                const uint8_t page = length > 3 ? data[3] : 0;
                 memset(&data[2], 0, length - 2);
-                sval_pointing_motion_kb(&data[2], length - 2);
+                if (page == 1)
+                    sval_pointing_touch_kb(&data[2], length - 2);
+                else
+                    sval_pointing_motion_kb(&data[2], length - 2);
             }
             break;
         }
@@ -1241,6 +1247,7 @@ __attribute__((weak)) void sval_pointing_motion_kb(uint8_t *out, uint8_t length)
 __attribute__((weak)) void sval_main_board_kb(uint8_t *out, uint8_t length) {}
 
 __attribute__((weak)) void sval_pointing_contacts_kb(uint8_t *out, uint8_t length) {}
+__attribute__((weak)) void sval_pointing_touch_kb(uint8_t *out, uint8_t length) {}
 
 // Override via_command_kb to intercept wrapper and Sval protocol
 bool via_command_kb(uint8_t *data, uint8_t length) {

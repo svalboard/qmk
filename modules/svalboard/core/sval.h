@@ -132,6 +132,8 @@ enum sval_feature_flags3 {
     sval_flag3_typing_pause  = (1 << 2), // 0x3C pauses keyboard output while a key tester is open
     sval_flag3_flicker_latch = (1 << 3), // 0x3D reads each switch's raw changes since the last read
     sval_flag3_pad_gestures  = (1 << 4), // VIA values 51-54: the touchpad tap setting (Azoteq builds)
+    sval_flag3_pad_tuning    = (1 << 5), // VIA values 55-57: the touchpad dead zone, tap time and scroll distance (Azoteq builds)
+    sval_flag3_pad_touch     = (1 << 6), // 0x2D page 1: each pad's touch, live (native touchpad builds)
 };
 
 // Status byte after the modifiers in the 0x16 reply (sval_flag2_modifier_state).
@@ -414,6 +416,9 @@ void sval_pointing_motion_kb(uint8_t *out, uint8_t length);
 // with the touch contacts down now. Weak no-op in the module; out[0] = 0 means
 // no data.
 void sval_pointing_contacts_kb(uint8_t *out, uint8_t length);
+// POINTING_MOTION page 1 (0x2D with byte 3 = 1): the touch page. The keyboard
+// fills out[0..length-1] (already zeroed); it clears no motion counts.
+void sval_pointing_touch_kb(uint8_t *out, uint8_t length);
 
 // SIDE (0x33, SVAL_EITHER_HAND builds only): the keyboard handles data after
 // [0xDF] [0x33] in place: [op] [status] [...].

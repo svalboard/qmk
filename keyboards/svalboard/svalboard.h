@@ -29,24 +29,24 @@ struct layer_hsv {
 };
 
 struct __attribute__((__packed__)) saved_values {
-    bool left_scroll :1;
-    bool right_scroll :1;
-    bool axis_scroll_lock: 1;
-    bool auto_mouse: 1;
-    bool natural_scroll: 1;
-    bool left_automouse: 1;  // Left pointer movement activates the auto mouse layer
-    bool right_automouse: 1; // Right pointer movement activates the auto mouse layer
-    bool optical_debounce_off: 1; // Optical keys not debounced; 0, the default, debounces them (debounce_sval.c)
-    uint8_t left_dpi_index;
-    uint8_t right_dpi_index;
-    uint8_t mh_timer_index;       // auto mouse timeout, the old choice (mh_timer_choices); kept at the nearest one
+    bool             left_scroll : 1;
+    bool             right_scroll : 1;
+    bool             axis_scroll_lock : 1;
+    bool             auto_mouse : 1;
+    bool             natural_scroll : 1;
+    bool             left_automouse : 1;       // Left pointer movement activates the auto mouse layer
+    bool             right_automouse : 1;      // Right pointer movement activates the auto mouse layer
+    bool             optical_debounce_off : 1; // Optical keys not debounced; 0, the default, debounces them (debounce_sval.c)
+    uint8_t          left_dpi_index;
+    uint8_t          right_dpi_index;
+    uint8_t          mh_timer_index; // auto mouse timeout, the old choice (mh_timer_choices); kept at the nearest one
     struct layer_hsv layer_colors[DYNAMIC_KEYMAP_LAYER_COUNT];
     // Was turbo_scan. Until the boot migration (sval_timing_migrate) it may
     // hold the old turbo index (0-6); after it, the auto mouse layer timeout
     // in 10 ms units (10-200), or 0 for "use mh_timer_index".
-    uint8_t automouse_10ms;
+    uint8_t  automouse_10ms;
     uint16_t automouse_threshold; // Movement distance required for layer activation (0=disabled)
-    uint8_t automouse_decay;      // Accumulator decay time in 10ms units (0=no decay)
+    uint8_t  automouse_decay;     // Accumulator decay time in 10ms units (0=no decay)
     uint16_t scan_prewait_us;     // Row-on settle time before reading (never 0 after the boot migration)
     uint16_t scan_postwait_us;    // Row-off recovery time after reading (never 0 after the boot migration)
     uint16_t scan_period_us;      // Frame period while active (0 = unpaced, scan back to back)
@@ -84,6 +84,9 @@ typedef struct __attribute__((__packed__)) _presence_rpc_t {
     // The touchpad tap setting (sval_pad_sync_byte(), pad_gestures.h),
     // appended the same way: the slave uses it only when the ping holds it.
     uint8_t pad_gestures;
+    // The touchpad tuning (sval_pad_tune_sync_word(), pad_gestures.h), 16-bit,
+    // appended the same way.
+    uint16_t pad_tuning;
 } presence_rpc_t;
 
 // Which pointing module a half's firmware drives and which one answered, so a host
@@ -97,11 +100,11 @@ enum sval_pointer_sensor {
     SVAL_SENSOR_AZOTEQ      = 5, // trackpad (IQS5xx)
     SVAL_SENSOR_TRACKPOINT  = 6, // TrackPoint (PS/2)
 };
-#define SVAL_POINTER_REPORTED 0x01 // this block holds a report
-#define SVAL_POINTER_LEFT     0x02 // the half is the left half (EE_HANDS)
-#define SVAL_POINTER_INIT_OK  0x04 // the sensor driver initialised
-#define SVAL_POINTER_AUTO     0x08 // the firmware drives whichever module is attached; built_for is the one it chose
-#define SVAL_POINTER_OS_TOUCHPAD 0x10 // the OS drives this pad as a touchpad (native touchpad builds): pointer settings do not apply
+#define SVAL_POINTER_REPORTED 0x01     // this block holds a report
+#define SVAL_POINTER_LEFT 0x02         // the half is the left half (EE_HANDS)
+#define SVAL_POINTER_INIT_OK 0x04      // the sensor driver initialised
+#define SVAL_POINTER_AUTO 0x08         // the firmware drives whichever module is attached; built_for is the one it chose
+#define SVAL_POINTER_OS_TOUCHPAD 0x10  // the OS drives this pad as a touchpad (native touchpad builds): pointer settings do not apply
 #define SVAL_POINTER_SIDE_UNKNOWN 0x20 // either-hand builds: the half has no side yet, and SVAL_POINTER_LEFT means nothing
 typedef struct __attribute__((__packed__)) {
     uint8_t flags;              // SVAL_POINTER_*
@@ -183,61 +186,69 @@ uint8_t sval_pad_gestures(void);
 // Azoteq builds (azoteq/azoteq.c): the setting changed, write it to the chip.
 void sval_pad_gestures_changed(void);
 bool sval_pad_gestures_supported(void);
-uint8_t sval_pad_hands(void); // hands whose pointing module is an Azoteq pad (bit 0 left, bit 1 right)
-void    sval_scan_timing(uint16_t *pre, uint16_t *post); // matrix.c
-uint8_t sval_pushed_mask(bool thumbs);                    // matrix.c
-void    sval_row_drive_raw(uint8_t row, bool on);         // matrix.c: no critical section
-uint32_t sval_scan_period_now(uint8_t *stage);            // matrix.c: effective frame period us (0 = unpaced); stage 0/1/2
-void    sval_scan_stats(uint32_t *frame_us, uint16_t *led_us, uint8_t *stage); // matrix.c: measured
+// The touchpad tuning (pad_gestures.h): what this half uses now, as above.
+uint16_t sval_pad_tuning(void);
+// Azoteq builds (azoteq/azoteq.c): the scroll distance in force and the
+// build's own, 0.01 mm, at the resolution the chip has.
+uint16_t sval_pad_scroll_in_force_mm100(void);
+uint16_t sval_pad_scroll_build_mm100(void);
+// Native touchpad builds (azoteq/touch_stream.c): the touch page of 0x2D.
+bool     sval_pad_touch_supported(void);
+uint8_t  sval_pad_hands(void);                                                  // hands whose pointing module is an Azoteq pad (bit 0 left, bit 1 right)
+void     sval_scan_timing(uint16_t *pre, uint16_t *post);                       // matrix.c
+uint8_t  sval_pushed_mask(bool thumbs);                                         // matrix.c
+void     sval_row_drive_raw(uint8_t row, bool on);                              // matrix.c: no critical section
+uint32_t sval_scan_period_now(uint8_t *stage);                                  // matrix.c: effective frame period us (0 = unpaced); stage 0/1/2
+void     sval_scan_stats(uint32_t *frame_us, uint16_t *led_us, uint8_t *stage); // matrix.c: measured
 
 typedef struct saved_values saved_values_t;
 
 extern saved_values_t global_saved_values;
-void svalboard_saved_values_defaults(void); // factory defaults into global_saved_values (RAM only)
-void svalboard_eeprom_set_valid(void);       // stamp the stored saved_values as current
-void output_keyboard_info(void);
-void increase_left_dpi(void);
-void increase_right_dpi(void);
-void decrease_left_dpi(void);
-void decrease_right_dpi(void);
-void set_left_dpi(uint8_t index);
-void set_right_dpi(uint8_t index);
-void set_dpi_from_eeprom(void);
-void write_eeprom_kb(void);
-void read_eeprom_kb(void);
-void change_turbo_scan(void);
+void                  svalboard_saved_values_defaults(void); // factory defaults into global_saved_values (RAM only)
+void                  svalboard_eeprom_set_valid(void);      // stamp the stored saved_values as current
+void                  output_keyboard_info(void);
+void                  increase_left_dpi(void);
+void                  increase_right_dpi(void);
+void                  decrease_left_dpi(void);
+void                  decrease_right_dpi(void);
+void                  set_left_dpi(uint8_t index);
+void                  set_right_dpi(uint8_t index);
+void                  set_dpi_from_eeprom(void);
+void                  write_eeprom_kb(void);
+void                  read_eeprom_kb(void);
+void                  change_turbo_scan(void);
 
 // Idle power diagnostics, reported by Scan Lab op 0x12.
 typedef struct {
-    uint8_t sensor_present;  // 1 if this half has a PMW33xx sensor
-    uint8_t sensor_mode;     // last Motion byte OP_MODE: 0 run, 1 rest1, 2 rest2, 3 rest3; bit7 valid, bit6 lifted
-    uint8_t sensor_config2;  // last value written to Config2 (0x20 = rest enabled)
+    uint8_t sensor_present; // 1 if this half has a PMW33xx sensor
+    uint8_t sensor_mode;    // last Motion byte OP_MODE: 0 run, 1 rest1, 2 rest2, 3 rest3; bit7 valid, bit6 lifted
+    uint8_t sensor_config2; // last value written to Config2 (0x20 = rest enabled)
     uint8_t rgb_val_now;
     uint8_t rgb_val_awake;
-    uint8_t rgb_stage;       // 0 awake, 1 dimmed, 2 off
+    uint8_t rgb_stage; // 0 awake, 1 dimmed, 2 off
     uint8_t rgb_enabled;
 } sval_idle_status_t;
 void sval_idle_status(sval_idle_status_t *st);
 void sval_pointer_status(sval_idle_status_t *st); // weak: fills the sensor_* fields
 
 // Deep-idle clock and nap control (power.c).
-void     sval_clock_low(void);        // clk_sys/clk_peri from the USB PLL at 48 MHz, system PLL off, PIO dividers rescaled
-void     sval_clock_full(void);       // back to 125 MHz (no-op when already there)
+void     sval_clock_low(void);  // clk_sys/clk_peri from the USB PLL at 48 MHz, system PLL off, PIO dividers rescaled
+void     sval_clock_full(void); // back to 125 MHz (no-op when already there)
 bool     sval_clock_is_low(void);
-uint8_t  sval_clock_mhz(void);        // clock in force now
-uint8_t  sval_deep_clock_mhz(void);   // configured deep-idle clock (48/24/12)
+uint8_t  sval_clock_mhz(void);         // clock in force now
+uint8_t  sval_deep_clock_mhz(void);    // configured deep-idle clock (48/24/12)
 bool     sval_rgb_idle_quiesced(void); // master: RGB has reached its deep-idle state and the last write is done
-uint32_t sval_deep_nap_us(void);      // longest nap allowed in deep idle on this half
+uint32_t sval_deep_nap_us(void);       // longest nap allowed in deep idle on this half
 void     sval_sleep_gating_init(void); // stop clocking unused blocks while the core is in WFI
 bool     sval_host_recent(void);       // a host app sent a raw HID packet within SVAL_HOST_ACTIVE_MS
-uint32_t sval_host_idle_ms(void);     // ms since the last host packet (UINT32_MAX until the first one)
+uint32_t sval_host_idle_ms(void);      // ms since the last host packet (UINT32_MAX until the first one)
 
 // Idle power features. Flags live in global_saved_values.idle_flags on both halves.
-void sval_pointer_rest_apply(void);   // push SVAL_IDLE_POINTER_REST into the sensor (weak no-op without one)
-void sval_rgb_idle_task(void);        // master: dim/restore the RGB by idle stage
-uint8_t sval_rgb_awake_val(void);     // RGB brightness as it was before any idle dimming
-void recalibrate_pointer(void);
-void sval_set_active_layer(uint32_t layer, bool save);
-void sval_on_reconnect(void);
+void    sval_pointer_rest_apply(void); // push SVAL_IDLE_POINTER_REST into the sensor (weak no-op without one)
+void    sval_rgb_idle_task(void);      // master: dim/restore the RGB by idle stage
+uint8_t sval_rgb_awake_val(void);      // RGB brightness as it was before any idle dimming
+void    recalibrate_pointer(void);
+void    sval_set_active_layer(uint32_t layer, bool save);
+void    sval_on_reconnect(void);
 int16_t get_left_dpi(void);
 int16_t get_right_dpi(void);
