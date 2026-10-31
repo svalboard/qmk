@@ -502,7 +502,15 @@ bool azoteq_iqs5xx_init(void) {
 };
 
 report_mouse_t azoteq_iqs5xx_get_report(report_mouse_t mouse_report) {
-    report_mouse_t temp_report = {.buttons = mouse_report.buttons};
+    // The chip reports a gesture's button only while the gesture lasts: a
+    // tap for one read, press and hold until the finger lifts. The driver
+    // owns the buttons it pressed and releases them when the chip stops
+    // reporting them; any other button that came in (a mouse key, another
+    // device, the core passing the last report back in) stays as it was.
+    static uint8_t gesture_owned = 0;
+    const uint8_t  outside       = mouse_report.buttons & ~gesture_owned;
+    uint8_t        gesture       = 0;
+    report_mouse_t temp_report   = {0};
 
     azoteq_iqs5xx_base_data_t base_data       = {0};
     i2c_status_t              status          = azoteq_iqs5xx_get_base_data(&base_data);
@@ -516,33 +524,33 @@ report_mouse_t azoteq_iqs5xx_get_report(report_mouse_t mouse_report) {
 #endif
         if (base_data.gesture_events_0.single_tap || base_data.gesture_events_0.press_and_hold) {
             pd_dprintf("IQS5XX - Single tap/hold.\n");
-            temp_report.buttons = pointing_device_handle_buttons(temp_report.buttons, true, POINTING_DEVICE_BUTTON1);
+            gesture = pointing_device_handle_buttons(gesture, true, POINTING_DEVICE_BUTTON1);
         } else if (base_data.gesture_events_1.two_finger_tap) {
             pd_dprintf("IQS5XX - Two finger tap.\n");
-            temp_report.buttons = pointing_device_handle_buttons(temp_report.buttons, true, POINTING_DEVICE_BUTTON2);
+            gesture = pointing_device_handle_buttons(gesture, true, POINTING_DEVICE_BUTTON2);
         } else if (base_data.gesture_events_0.swipe_x_neg) {
             pd_dprintf("IQS5XX - X-.\n");
-            temp_report.buttons = pointing_device_handle_buttons(temp_report.buttons, true, POINTING_DEVICE_BUTTON4);
-            ignore_movement     = true;
+            gesture         = pointing_device_handle_buttons(gesture, true, POINTING_DEVICE_BUTTON4);
+            ignore_movement = true;
         } else if (base_data.gesture_events_0.swipe_x_pos) {
             pd_dprintf("IQS5XX - X+.\n");
-            temp_report.buttons = pointing_device_handle_buttons(temp_report.buttons, true, POINTING_DEVICE_BUTTON5);
-            ignore_movement     = true;
+            gesture         = pointing_device_handle_buttons(gesture, true, POINTING_DEVICE_BUTTON5);
+            ignore_movement = true;
         } else if (base_data.gesture_events_0.swipe_y_neg) {
             pd_dprintf("IQS5XX - Y-.\n");
-            temp_report.buttons = pointing_device_handle_buttons(temp_report.buttons, true, POINTING_DEVICE_BUTTON6);
-            ignore_movement     = true;
+            gesture         = pointing_device_handle_buttons(gesture, true, POINTING_DEVICE_BUTTON6);
+            ignore_movement = true;
         } else if (base_data.gesture_events_0.swipe_y_pos) {
             pd_dprintf("IQS5XX - Y+.\n");
-            temp_report.buttons = pointing_device_handle_buttons(temp_report.buttons, true, POINTING_DEVICE_BUTTON3);
-            ignore_movement     = true;
+            gesture         = pointing_device_handle_buttons(gesture, true, POINTING_DEVICE_BUTTON3);
+            ignore_movement = true;
         } else if (base_data.gesture_events_1.zoom) {
             if (AZOTEQ_IQS5XX_COMBINE_H_L_BYTES(base_data.x.h, base_data.x.l) < 0) {
                 pd_dprintf("IQS5XX - Zoom out.\n");
-                temp_report.buttons = pointing_device_handle_buttons(temp_report.buttons, true, POINTING_DEVICE_BUTTON7);
+                gesture = pointing_device_handle_buttons(gesture, true, POINTING_DEVICE_BUTTON7);
             } else if (AZOTEQ_IQS5XX_COMBINE_H_L_BYTES(base_data.x.h, base_data.x.l) > 0) {
                 pd_dprintf("IQS5XX - Zoom in.\n");
-                temp_report.buttons = pointing_device_handle_buttons(temp_report.buttons, true, POINTING_DEVICE_BUTTON8);
+                gesture = pointing_device_handle_buttons(gesture, true, POINTING_DEVICE_BUTTON8);
             }
         } else if (base_data.gesture_events_1.scroll) {
             pd_dprintf("IQS5XX - Scroll.\n");
@@ -555,8 +563,12 @@ report_mouse_t azoteq_iqs5xx_get_report(report_mouse_t mouse_report) {
         }
 
     } else {
+        // A failed read reports no gesture, so a pad that stops answering
+        // cannot leave a button down.
         pd_dprintf("IQS5XX - get report failed, i2c status: %d \n", status);
     }
 
+    temp_report.buttons = outside | gesture;
+    gesture_owned       = gesture & ~outside;
     return temp_report;
 }

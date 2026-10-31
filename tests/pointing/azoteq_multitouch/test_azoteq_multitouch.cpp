@@ -390,3 +390,33 @@ TEST_F(AzoteqMultitouch, TimeoutAndOtherBusFaultsAreNotRetried) {
         EXPECT_FALSE(valid);
     }
 }
+
+// The mouse path on a host that never asks for touchpad mode (macOS, a BIOS):
+// the chip's gestures through this build's contact read, polled the way the
+// USB half runs it (the last buttons come back in). Press and hold (a still
+// finger for AZOTEQ_IQS5XX_HOLD_TIME, 20 ms here) and a tap must let go.
+TEST_F(AzoteqMultitouch, GestureButtonsReleaseInTheMousePath) {
+    uint8_t held = 0;
+    auto    poll = [&](uint8_t g0, uint8_t g1, uint8_t fingers) {
+        source[1] = g0; // gesture events 0: bit 0 single tap, bit 1 press and hold
+        source[2] = g1; // gesture events 1: bit 0 two-finger tap
+        set_count(fingers);
+        if (fingers)
+            put_contact(0, 0);
+        else
+            lift(0);
+        report_mouse_t in = {};
+        in.buttons        = held;
+        held              = azoteq_iqs5xx_get_report(in).buttons;
+        return held;
+    };
+    const uint8_t b1 = 1 << POINTING_DEVICE_BUTTON1, b2 = 1 << POINTING_DEVICE_BUTTON2;
+    EXPECT_EQ(poll(0, 0, 1), 0);
+    for (int i = 0; i < 10; i++)
+        EXPECT_EQ(poll(0x02, 0, 1), b1); // firm press: press and hold
+    EXPECT_EQ(poll(0, 0, 0), 0) << "left button stays down after the finger lifts";
+    EXPECT_EQ(poll(0, 0x01, 0), b2); // two-finger tap
+    EXPECT_EQ(poll(0, 0, 0), 0) << "right button stays down after a two-finger tap";
+    EXPECT_EQ(poll(0x01, 0, 0), b1); // single tap
+    EXPECT_EQ(poll(0, 0, 0), 0) << "left button stays down after a tap";
+}
