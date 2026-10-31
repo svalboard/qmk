@@ -34,6 +34,13 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 # bytes, split sync with older halves.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
     -I"$kb" "$root/tests/sval_pad_gestures/test_pad_gestures.c" "$kb/pad_gestures.c" -o "$out/test_pad_gestures"
+
+# Touchpad touch page (kb/pad_touch.c): touch down and up, the chip's gesture
+# events, drift out of the dead zone while a tap or a hold could fire, the
+# 16-byte block in 0.01 mm, events cleared by a read and kept by a merge.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -I"$kb" "$root/tests/sval_pad_touch/test_pad_touch.c" "$kb/pad_touch.c" "$kb/pad_gestures.c" -o "$out/test_pad_touch"
+"$out/test_pad_touch"
 "$out/test_pad_gestures"
 
 # Settings reset on the first boot of a different firmware build (kb/build_reset.c).

@@ -45,6 +45,7 @@ _Static_assert(sizeof(presence_rsp_t) <= RPC_S2M_BUFFER_SIZE, "presence reply fi
 _Static_assert(sizeof(presence_rpc_t) <= RPC_M2S_BUFFER_SIZE, "presence ping fits the split RPC buffer");
 _Static_assert(offsetof(presence_rpc_t, debounce_mode) == 18, "presence ping: the debounce mode follows the updater light");
 _Static_assert(offsetof(presence_rpc_t, pad_gestures) == 19, "presence ping: the tap setting follows the debounce mode");
+_Static_assert(offsetof(presence_rpc_t, pad_tuning) == 20, "presence ping: the touchpad tuning follows the tap setting");
 #endif
 // The debounce mode took the last spare bit of the first byte: the settings
 // keep their size, so a board that updates keeps them and reads it as 0 (on).
@@ -81,8 +82,33 @@ static void pad_gestures_set(uint8_t s) {
     sval_pad_gestures_changed();
 }
 
+// The touchpad tuning (pad_gestures.h): the dead zone, tap time and scroll
+// distance. Stored in its own four bytes after the tap setting's record, the
+// same way, and 0 is the defaults (a 0.8 mm dead zone).
+static uint16_t pad_tuning = 0;
+
+uint16_t sval_pad_tuning(void) {
+    return pad_tuning;
+}
+
+static void pad_tuning_set(uint16_t t) {
+    t &= SVAL_PAD_TUNE_KNOWN;
+    if (t == pad_tuning) return;
+    pad_tuning = t;
+    sval_pad_gestures_changed();
+}
+
 // Builds without an Azoteq driver: nothing to write, and no capability.
-__attribute__((weak)) void sval_pad_gestures_changed(void) {}
+__attribute__((weak)) void     sval_pad_gestures_changed(void) {}
+__attribute__((weak)) uint16_t sval_pad_scroll_in_force_mm100(void) {
+    return 0;
+}
+__attribute__((weak)) uint16_t sval_pad_scroll_build_mm100(void) {
+    return 0;
+}
+__attribute__((weak)) bool sval_pad_touch_supported(void) {
+    return false;
+}
 __attribute__((weak)) bool sval_pad_gestures_supported(void) {
     return false;
 }
@@ -201,6 +227,9 @@ uint8_t sval_thumb_hand_raw(void) {
 // The touchpad tap setting's record, after the magic (pad_gestures.h).
 #define SVALBOARD_PAD_GESTURES_OFFSET (SVALBOARD_MAGIC_OFFSET + SVALBOARD_MAGIC_SIZE)
 _Static_assert(SVALBOARD_PAD_GESTURES_OFFSET + SVAL_PAD_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the tap setting fits the VIA custom config");
+// The touchpad tuning's record, after the tap setting's.
+#define SVALBOARD_PAD_TUNING_OFFSET (SVALBOARD_PAD_GESTURES_OFFSET + SVAL_PAD_RECORD_BYTES)
+_Static_assert(SVALBOARD_PAD_TUNING_OFFSET + SVAL_PAD_TUNE_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the touchpad tuning fits the VIA custom config");
 
 #if VIA_ENABLE
 static void svalboard_get_magic(uint8_t *magic) {
@@ -237,12 +266,18 @@ static void pad_gestures_save(void) {
     uint8_t rec[SVAL_PAD_RECORD_BYTES];
     sval_pad_record_write(pad_gestures, rec);
     via_update_custom_config(rec, SVALBOARD_PAD_GESTURES_OFFSET, SVAL_PAD_RECORD_BYTES);
+    uint8_t tune[SVAL_PAD_TUNE_RECORD_BYTES];
+    sval_pad_tune_record_write(pad_tuning, tune);
+    via_update_custom_config(tune, SVALBOARD_PAD_TUNING_OFFSET, SVAL_PAD_TUNE_RECORD_BYTES);
 }
 
 static void pad_gestures_load(void) {
     uint8_t rec[SVAL_PAD_RECORD_BYTES];
     via_read_custom_config(rec, SVALBOARD_PAD_GESTURES_OFFSET, SVAL_PAD_RECORD_BYTES);
     pad_gestures_set(sval_pad_record_read(rec));
+    uint8_t tune[SVAL_PAD_TUNE_RECORD_BYTES];
+    via_read_custom_config(tune, SVALBOARD_PAD_TUNING_OFFSET, SVAL_PAD_TUNE_RECORD_BYTES);
+    pad_tuning_set(sval_pad_tune_record_read(tune));
 }
 
 void write_eeprom_kb(void) {
@@ -342,6 +377,7 @@ void read_eeprom_kb(void) {
         // Fresh EEPROM - apply defaults
         svalboard_saved_values_defaults();
         pad_gestures_set(0);
+        pad_tuning_set(0);
         write_eeprom_kb();
         svalboard_eeprom_set_valid();
     } else {
@@ -502,9 +538,10 @@ void sval_client_packet_kb(uint32_t client_id) {
 
 // GET_INFO byte 20 (the third feature byte): main board (0x38, mainboard.c),
 // typing pause (0x3C), flicker latch (0x3D) and, on Azoteq builds, the
-// touchpad tap setting (VIA values 51-54).
+// touchpad tap setting (VIA values 51-54) and tuning (55-57), and on native
+// touchpad builds the touch page of 0x2D.
 uint8_t sval_get_feature_flags3_kb(void) {
-    return sval_flag3_main_board | sval_flag3_typing_pause | sval_flag3_flicker_latch | (sval_pad_gestures_supported() ? sval_flag3_pad_gestures : 0);
+    return sval_flag3_main_board | sval_flag3_typing_pause | sval_flag3_flicker_latch | (sval_pad_gestures_supported() ? sval_flag3_pad_gestures | sval_flag3_pad_tuning : 0) | (sval_pad_touch_supported() ? sval_flag3_pad_touch : 0);
 }
 
 void sval_flicker_latch_kb(uint8_t *data, uint8_t length) {
@@ -605,8 +642,8 @@ static void sval_local_pointer_identity(sval_pointer_identity_t *id) {
     sval_pointer_identity(id);
     // The other buses found something (or nothing) where the build's own module didn't answer;
     // a later search's find replaces it.
-    bool own_missing = id->built_for == SVAL_SENSOR_NONE || id->detected == SVAL_SENSOR_NO_RESPONSE;
-    const sval_probe_result_t *found = sval_pointer_found();
+    bool                       own_missing = id->built_for == SVAL_SENSOR_NONE || id->detected == SVAL_SENSOR_NO_RESPONSE;
+    const sval_probe_result_t *found       = sval_pointer_found();
     if (sval_pointer_searched() && own_missing && (found->detected != SVAL_SENSOR_NO_RESPONSE || id->built_for == SVAL_SENSOR_NONE)) {
         id->detected           = found->detected;
         id->product_id         = found->id0;
@@ -668,6 +705,9 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
     // The master's touchpad tap setting, when its ping carries it (RAM only).
     bool has_pad = in_buflen >= offsetof(presence_rpc_t, pad_gestures) + 1;
     pad_gestures_set(sval_pad_sync_setting(has_pad, has_pad ? in->pad_gestures : 0, pad_gestures));
+    // And its touchpad tuning (RAM only).
+    bool has_tune = in_buflen >= offsetof(presence_rpc_t, pad_tuning) + sizeof(in->pad_tuning);
+    pad_tuning_set(sval_pad_tune_sync_setting(has_tune, has_tune ? in->pad_tuning : 0, pad_tuning));
 #ifdef SVAL_UPDATER
     // The master's updater light (D24), when its ping carries it. Measured to
     // its own byte: the ping has grown past it since.
@@ -681,8 +721,8 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
             out->board_magic = SVAL_BOARD_RPC_MAGIC;
             sval_local_board_identity(&out->board);
         }
-        out->magic[0]       = SVAL_PRESENCE_RSP_MAGIC0;
-        out->magic[1]       = SVAL_PRESENCE_RSP_MAGIC1;
+        out->magic[0] = SVAL_PRESENCE_RSP_MAGIC0;
+        out->magic[1] = SVAL_PRESENCE_RSP_MAGIC1;
         sval_local_pointer_identity(&out->pointer);
 #ifdef SVAL_UPDATER
         // And this build's version, for the master's mismatch check (D17, V).
@@ -697,6 +737,7 @@ static void scanlab_rpc_listener(uint8_t in_buflen, const void *in_data, uint8_t
     // The native touchpad's requests for this half's pad share this RPC
     // (azoteq/multitouch.h): the split message table stays the same.
     if (sval_mt_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return;
+    if (sval_touch_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return; // the touch page
 #endif
 #ifdef SVAL_PERF_STATS
     if (sval_perf_split_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return;
@@ -820,27 +861,27 @@ static bool              motion_read_once = false;
 // Both halves' reports after rotation and invert, before sniper, boost and scroll
 // conversion (keymap_support.c). Counted only while a host app is reading them.
 report_mouse_t pointing_device_task_combined_kb(report_mouse_t left_report, report_mouse_t right_report) {
-#if defined(SVAL_AZOTEQ_MULTITOUCH) && defined(MOUSE_EXTENDED_REPORT)
+#    if defined(SVAL_AZOTEQ_MULTITOUCH) && defined(MOUSE_EXTENDED_REPORT)
     // The other half's pad news counter rides in boot_x (azoteq.c); take it
     // off before anything else sees the report.
     sval_mt_remote_hint((uint8_t)(is_keyboard_left() ? right_report.boot_x : left_report.boot_x));
     left_report.boot_x = right_report.boot_x = 0;
-#endif
+#    endif
     if (motion_read_once && timer_elapsed32(motion_last_read) < SVAL_HOST_ACTIVE_MS) {
         sval_motion_accumulate(&motion_acc[0], left_report.x, left_report.y, left_report.h, left_report.v, left_report.buttons);
         sval_motion_accumulate(&motion_acc[1], right_report.x, right_report.y, right_report.h, right_report.v, right_report.buttons);
     }
-#ifdef SVAL_AZOTEQ_MULTITOUCH
+#    ifdef SVAL_AZOTEQ_MULTITOUCH
     // While the native touchpad has the pads, their mouse output is zero; a
     // hand with a trackball or TrackPoint is never touched.
     if (sval_mt_suppress_hand(0)) left_report = (report_mouse_t){0};
     if (sval_mt_suppress_hand(1)) right_report = (report_mouse_t){0};
-#endif
-#ifdef SVAL_EITHER_HAND
+#    endif
+#    ifdef SVAL_EITHER_HAND
     // As keys (side.c): nothing from a hand whose side is not sound.
     if (!sval_side_row_allowed(0)) left_report = (report_mouse_t){0};
     if (!sval_side_row_allowed(MATRIX_ROWS / 2)) right_report = (report_mouse_t){0};
-#endif
+#    endif
     return pointing_device_task_combined_user(left_report, right_report);
 }
 
@@ -936,6 +977,7 @@ void housekeeping_task_kb(void) {
 #    else
     sval_mt_task();
 #    endif
+    sval_touch_task();
 #endif
     sval_pointer_probe_task();
 #ifdef SVAL_EITHER_HAND
@@ -977,7 +1019,8 @@ void housekeeping_task_kb(void) {
 #endif
             rpcout.debounce_mode = sval_debounce_sync_byte(sval_optical_debounce_on());
             rpcout.pad_gestures  = sval_pad_sync_byte(pad_gestures);
-            presence_rsp_t rpcin  = {0};
+            rpcout.pad_tuning    = sval_pad_tune_sync_word(pad_tuning);
+            presence_rsp_t rpcin = {0};
             if (transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin)) {
                 if (rpcin.magic[0] == SVAL_PRESENCE_RSP_MAGIC0 && rpcin.magic[1] == SVAL_PRESENCE_RSP_MAGIC1 && (rpcin.pointer.flags & SVAL_POINTER_REPORTED)) {
                     other_pointer = rpcin.pointer;
@@ -1085,7 +1128,7 @@ enum sval_via_value_id {
     // 31: id_thumb_hand (above)
     id_layer0_color = 32,
     // 32-47 are layer colors (id_layer0_color + layer)
-    id_optical_debounce = 48, // toggle: debounce the optical keys (1, the default) or not (0); the thumb Double Down always is
+    id_optical_debounce     = 48, // toggle: debounce the optical keys (1, the default) or not (0); the thumb Double Down always is
     id_automouse_timeout_ms = 49, // u16: auto mouse layer timeout, ms, 100-2000 in 10 ms steps
     id_automouse_no_timeout = 50, // toggle: the auto mouse layer has no timeout (the old "Infinite")
     // The touchpad tap setting (pad_gestures.h), with sval_flag3_pad_gestures:
@@ -1093,6 +1136,10 @@ enum sval_via_value_id {
     id_pad_two_finger = 52, // toggle: a two-finger tap right clicks (1, the default)
     id_pad_hold       = 53, // toggle: press and hold presses the left button (1, the default)
     id_pad_hold_ms    = 54, // u16: the hold time, ms, nearest of sval_pad_hold_ms (300, the default)
+    // The touchpad tuning (pad_gestures.h), with sval_flag3_pad_tuning:
+    id_pad_dead_zone    = 55, // u16: the dead zone, 0.01 mm, nearest of sval_pad_dead_zone_mm100 (80, the default)
+    id_pad_tap_ms       = 56, // u16: the tap time, ms, nearest of sval_pad_tap_ms (150, the default)
+    id_pad_scroll_start = 57, // u16: the scroll distance, 0.01 mm; 0 (or the build's own) is the build's own
 };
 
 void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
@@ -1227,6 +1274,19 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                 case id_pad_hold_ms:
                     pad_gestures_set(sval_pad_with_hold_ms(pad_gestures, value_data[0] | (value_data[1] << 8)));
                     break;
+                case id_pad_dead_zone:
+                    pad_tuning_set(sval_pad_tune_with_dead_zone(pad_tuning, value_data[0] | (value_data[1] << 8)));
+                    break;
+                case id_pad_tap_ms:
+                    pad_tuning_set(sval_pad_tune_with_tap_ms(pad_tuning, value_data[0] | (value_data[1] << 8)));
+                    break;
+                case id_pad_scroll_start: {
+                    // The build's own distance, as it reads back, is the build's own.
+                    uint16_t mm = value_data[0] | (value_data[1] << 8);
+                    if (mm == sval_pad_scroll_build_mm100()) mm = 0;
+                    pad_tuning_set(sval_pad_tune_with_scroll(pad_tuning, mm));
+                    break;
+                }
                 // Before this, the four idle toggles above id_idle_long_nap fell
                 // into id_optical_debounce: they changed the debounce mode, not their bit.
                 case id_idle_pointer_rest:
@@ -1376,6 +1436,15 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     uint16_t ms   = sval_pad_hold_time_ms(pad_gestures);
                     value_data[0] = ms & 0xFF;
                     value_data[1] = ms >> 8;
+                    break;
+                }
+                case id_pad_dead_zone:
+                case id_pad_tap_ms:
+                case id_pad_scroll_start: {
+                    uint16_t v = *value_id == id_pad_dead_zone ? sval_pad_dead_zone(pad_tuning) : *value_id == id_pad_tap_ms ? sval_pad_tap_time_ms(pad_tuning) : sval_pad_scroll_start(pad_tuning);
+                    if (*value_id == id_pad_scroll_start && v == 0) v = sval_pad_scroll_build_mm100();
+                    value_data[0] = v & 0xFF;
+                    value_data[1] = v >> 8;
                     break;
                 }
                 default:

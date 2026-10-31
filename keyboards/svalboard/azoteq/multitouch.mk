@@ -10,6 +10,8 @@ ifeq ($(strip $(SVAL_NATIVE_PTP)),yes)
   # Fast mode: one read of every contact is 45 bytes.
   OPT_DEFS += -DI2C1_CLOCK_SPEED=400000
   SRC += azoteq/multitouch.c azoteq/ptp.c
+  # The touch page of Sval 0x2D (docs/protocol.md "Touchpad touch").
+  SRC += azoteq/touch_stream.c pad_touch.c
   ifeq ($(strip $(SVAL_PTP_KEY_BUTTONS)),yes)
     OPT_DEFS += -DSVAL_PTP_KEY_BUTTONS=1
   endif

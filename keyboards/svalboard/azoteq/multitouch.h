@@ -20,5 +20,10 @@ void    sval_mt_remote_hint(uint8_t hint);              // USB half: the other h
 bool    sval_mt_suppress_hand(uint8_t pad);             // this hand's pad mouse must be zero
 bool    sval_mt_os_touchpad(uint8_t pad);               // the OS drives this hand's pad
 
+// The touch page of 0x2D (touch_stream.c).
+void sval_touch_sample(const uint8_t *raw, bool valid); // one pad read, as sval_mt_sample
+bool sval_touch_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint8_t *out);
+void sval_touch_task(void); // USB half, housekeeping
+
 // svalboard.c: hands whose pointing module is an Azoteq pad (bit 0 left, bit 1 right).
 uint8_t sval_pad_hands(void);
