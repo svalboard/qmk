@@ -5,6 +5,9 @@ Run: python3 -m unittest discover -s tests/sval_storage -v
 The production file is compiled with QMK and the EEPROM mocked. It covers the
 leader timeout: the reset stored 0, because LEADER_TIMEOUT is the live variable
 (post_config.h), and a timeout of 0 ends every sequence 1 ms after it starts.
+It also covers the mouse key values: the wheel delay and interval are applied,
+every value is held at the limit of the 8-bit variable it is applied to (a
+stored 256 used to wrap to 0), and the one-time wheel interval migration.
 """
 import pathlib
 import re
@@ -65,7 +68,7 @@ void eeconfig_update_keymap(keymap_config_t *k) { (void)k; }
 void clear_keyboard(void) {}
 bool get_chordal_hold_default(keyrecord_t *a, keyrecord_t *b) { (void)a; (void)b; return true; }
 bool is_flow_tap_key(uint16_t k) { (void)k; return true; }
-uint8_t mk_delay, mk_interval, mk_max_speed, mk_time_to_max, mk_wheel_max_speed, mk_wheel_time_to_max;
+uint8_t mk_delay, mk_interval, mk_max_speed, mk_time_to_max, mk_wheel_delay, mk_wheel_interval, mk_wheel_max_speed, mk_wheel_time_to_max;
 static uint16_t autoshift_timeout;
 static bool autoshift_on;
 void set_autoshift_timeout(uint16_t t) { autoshift_timeout = t; }
@@ -79,12 +82,139 @@ TESTS = r'''
 static uint16_t get16(uint16_t qsid) { uint8_t b[4] = {0}; assert(sval_qmk_settings_get(qsid, b, sizeof b) == 0); return b[0] | b[1] << 8; }
 static uint8_t get8(uint16_t qsid) { uint8_t b[4] = {0}; assert(sval_qmk_settings_get(qsid, b, sizeof b) == 0); return b[0]; }
 static void set16(uint16_t qsid, uint16_t v) { uint8_t b[2] = {v & 0xFF, v >> 8}; assert(sval_qmk_settings_set(qsid, b, 2) == 0); }
+static void set8(uint16_t qsid, uint8_t v) { uint8_t b[1] = {v}; assert(sval_qmk_settings_set(qsid, b, 1) == 0); }
 
 static void boot_with(sval_qmk_settings_t stored) {
     STORED = stored;
     eeprom_writes = 0;
     sval_leader_timeout = 0;
     sval_qmk_settings_init();
+}
+
+/* Mouse keys: the wheel delay and interval are applied (Vial did; this firmware
+   only stored them), with the delays in 10 ms units, and every value is held at
+   the limit of the 8-bit variable it is applied to. */
+static void mouse_keys(void) {
+    sval_qmk_settings_reset();
+    assert(mk_delay == MOUSEKEY_DELAY / 10 && mk_interval == MOUSEKEY_INTERVAL);
+    assert(mk_wheel_delay == MOUSEKEY_WHEEL_DELAY / 10 && mk_wheel_interval == MOUSEKEY_WHEEL_INTERVAL);
+    assert(mk_wheel_max_speed == MOUSEKEY_WHEEL_MAX_SPEED && mk_wheel_time_to_max == MOUSEKEY_WHEEL_TIME_TO_MAX);
+
+    set16(14, 250);
+    assert(mk_wheel_delay == 25 && get16(14) == 250);
+    set16(15, 40);
+    assert(mk_wheel_interval == 40 && get16(15) == 40);
+    set16(15, 0); /* a 0 written with the setting working is kept: the fastest scroll */
+    assert(mk_wheel_interval == 0 && get16(15) == 0);
+
+    /* The edges: the largest value each variable holds is used as is. */
+    set16(9, 2550);
+    set16(10, 255);
+    set16(12, 255);
+    set16(13, 255);
+    set16(14, 2550);
+    set16(15, 255);
+    set16(16, 255);
+    set16(17, 255);
+    assert(mk_delay == 255 && mk_interval == 255 && mk_max_speed == 255 && mk_time_to_max == 255);
+    assert(mk_wheel_delay == 255 && mk_wheel_interval == 255 && mk_wheel_max_speed == 255 && mk_wheel_time_to_max == 255);
+    assert(get16(9) == 2550 && get16(10) == 255 && get16(14) == 2550 && get16(15) == 255);
+
+    /* One past the edge used to wrap: 256 became 0 (every scan), 2560 ms a delay of 0. */
+    set16(9, 2560);
+    set16(10, 256);
+    set16(12, 256);
+    set16(13, 300);
+    set16(14, 10000);
+    set16(15, 256);
+    set16(16, 1000);
+    set16(17, 65535);
+    assert(mk_delay == 255 && mk_interval == 255 && mk_max_speed == 255 && mk_time_to_max == 255);
+    assert(mk_wheel_delay == 255 && mk_wheel_interval == 255 && mk_wheel_max_speed == 255 && mk_wheel_time_to_max == 255);
+    /* and is stored at the limit, so a host reads back what the board uses */
+    assert(get16(9) == 2550 && get16(10) == 255 && get16(12) == 255 && get16(13) == 255);
+    assert(get16(14) == 2550 && get16(15) == 255 && get16(16) == 255 && get16(17) == 255);
+
+    /* A delay is applied in 10 ms units: 2559 ms is 255, not a wrap. */
+    set16(9, 2559);
+    assert(mk_delay == 255);
+    set16(9, 30);
+    assert(mk_delay == 3 && get16(9) == 30);
+
+    /* An old stored value above the limit is held at the limit on boot, once. */
+    sval_qmk_settings_t old = STORED;
+    old.mousekey_interval       = 300; /* used to apply as 44 */
+    old.mousekey_wheel_interval = 256;
+    old.mousekey_delay          = 2600;
+    boot_with(old);
+    assert(eeprom_writes == 1);
+    assert(STORED.mousekey_interval == 255 && STORED.mousekey_wheel_interval == 255 && STORED.mousekey_delay == 2550);
+    assert(mk_interval == 255 && mk_wheel_interval == 255 && mk_delay == 255);
+    old = STORED;
+    boot_with(old);
+    assert(eeprom_writes == 0);
+
+    /* Step size (QSID 11) is the build's MOUSEKEY_MOVE_DELTA: a write has no effect,
+       and a stored value from a layout (8) reads back as the step the board uses. */
+    set16(11, 8 + MOUSEKEY_MOVE_DELTA);
+    assert(get16(11) == MOUSEKEY_MOVE_DELTA);
+    old = STORED;
+    old.mousekey_move_delta = 3;
+    boot_with(old);
+    assert(eeprom_writes == 1 && get16(11) == MOUSEKEY_MOVE_DELTA);
+}
+
+/* Tapping toggle (20) and one-shot tap toggle (5): QMK counts at most 15 taps
+   (tap.count is 4 bits), so a larger count could never be reached. */
+static void tap_counts(void) {
+    sval_qmk_settings_reset();
+    set8(20, 15);
+    set8(5, 15);
+    assert(sval_tapping_toggle() == 15 && sval_oneshot_tap_toggle() == 15);
+    set8(20, 16);
+    set8(5, 50);
+    assert(sval_tapping_toggle() == 15 && sval_oneshot_tap_toggle() == 15);
+    assert(get8(20) == 15 && get8(5) == 15);
+    set8(20, 0);
+    assert(sval_tapping_toggle() == 1); /* 0 is still read as 1 */
+    sval_qmk_settings_set_one_shot(5000, 100); /* Sval 0x0A */
+    assert(sval_oneshot_tap_toggle() == 15 && STORED.osk_tap_toggle == 15);
+    sval_qmk_settings_set_one_shot(5000, 0);   /* 0 still means no lock */
+    assert(sval_oneshot_tap_toggle() == 0);
+    sval_qmk_settings_t old = STORED;
+    old.tapping_toggle = 100;
+    old.osk_tap_toggle = 255;
+    boot_with(old);
+    assert(eeprom_writes == 1 && STORED.tapping_toggle == 15 && STORED.osk_tap_toggle == 15);
+}
+
+/* The one-time migration: a wheel interval of 0 stored by firmware that never
+   applied it becomes the default on the first boot of this firmware; later
+   boots keep a 0. */
+static void wheel_migration(void) {
+    sval_qmk_settings_reset();
+    assert(STORED.migrations & 1); /* a reset needs no migration */
+    sval_qmk_settings_t old = STORED;
+    old.migrations              = 0; /* what earlier firmware left there */
+    old.mousekey_wheel_interval = 0;
+    old.mousekey_wheel_delay    = 0; /* a 0 delay works: kept */
+    old.unused2                 = 0x5A;
+    boot_with(old);
+    assert(eeprom_writes == 1);
+    assert(STORED.mousekey_wheel_interval == MOUSEKEY_WHEEL_INTERVAL && mk_wheel_interval == MOUSEKEY_WHEEL_INTERVAL);
+    assert(STORED.mousekey_wheel_delay == 0 && mk_wheel_delay == 0 && (STORED.migrations & 1) && STORED.unused2 == 0x5A);
+
+    /* After the migration a 0 is a choice and stays, through writes and boots. */
+    set16(15, 0);
+    old = STORED;
+    boot_with(old);
+    assert(eeprom_writes == 0 && STORED.mousekey_wheel_interval == 0 && mk_wheel_interval == 0);
+
+    /* A board whose stored interval isn't 0 keeps it, and is only marked. */
+    old.migrations              = 0;
+    old.mousekey_wheel_interval = 120;
+    boot_with(old);
+    assert(eeprom_writes == 1 && STORED.mousekey_wheel_interval == 120 && mk_wheel_interval == 120 && (STORED.migrations & 1));
 }
 
 int main(void) {
@@ -147,6 +277,10 @@ int main(void) {
     assert(get16(7) == 200);
     set16(6, 0);
     assert(get16(6) == 0); /* one-shot timeout 0 is allowed */
+
+    mouse_keys();
+    tap_counts();
+    wheel_migration();
     printf("qmk settings: ok\n");
     return 0;
 }
@@ -154,7 +288,7 @@ int main(void) {
 
 
 class QmkSettings(unittest.TestCase):
-    def test_leader_and_zero_defaults(self):
+    def test_leader_zero_defaults_and_mouse_key_limits(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory)
             (path / 'test.c').write_text(PRELUDE + defaults() + settings_source() + TESTS)
