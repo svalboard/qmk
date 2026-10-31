@@ -4,4 +4,4 @@
 # the number committed at the previous published release (docs/updater.md,
 # "Versions"). Updater builds report it in INFO and split presence, and
 # make_update.py copies it into each image's manifest. One line, one integer.
-15
+16
