@@ -84,7 +84,7 @@ static void pad_gestures_set(uint8_t s) {
 
 // The touchpad tuning (pad_gestures.h): the dead zone, tap time and scroll
 // distance. Stored in its own four bytes after the tap setting's record, the
-// same way, and 0 is the defaults (a 0.8 mm dead zone).
+// same way, and 0 is the defaults (a 1.2 mm dead zone).
 static uint16_t pad_tuning = 0;
 
 uint16_t sval_pad_tuning(void) {
@@ -1137,7 +1137,7 @@ enum sval_via_value_id {
     id_pad_hold       = 53, // toggle: press and hold presses the left button (1, the default)
     id_pad_hold_ms    = 54, // u16: the hold time, ms, nearest of sval_pad_hold_ms (300, the default)
     // The touchpad tuning (pad_gestures.h), with sval_flag3_pad_tuning:
-    id_pad_dead_zone    = 55, // u16: the dead zone, 0.01 mm, nearest of sval_pad_dead_zone_mm100 (80, the default)
+    id_pad_dead_zone    = 55, // u16: the dead zone, 0.01 mm, nearest of sval_pad_dead_zone_mm100 (120, the default)
     id_pad_tap_ms       = 56, // u16: the tap time, ms, nearest of sval_pad_tap_ms (150, the default)
     id_pad_scroll_start = 57, // u16: the scroll distance, 0.01 mm; 0 (or the build's own) is the build's own
 };

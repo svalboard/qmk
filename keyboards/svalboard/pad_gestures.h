@@ -66,7 +66,7 @@ uint8_t sval_pad_sync_setting(bool present, uint8_t sync_byte, uint8_t current);
 // without it scale it to the pointer DPI), so the firmware converts them from
 // the resolution the chip has. A 16-bit setting: bits 0-3 the dead zone,
 // bits 4-7 the tap time, bits 8-11 the scroll distance, each an index into
-// its table; bits 12-15 zero. 0 is the defaults: a 0.8 mm dead zone, a
+// its table; bits 12-15 zero. 0 is the defaults: a 1.2 mm dead zone, a
 // 150 ms tap time and the build's own scroll distance (50 pixels).
 #define SVAL_PAD_TUNE_CHOICES 16
 #define SVAL_PAD_TUNE_KNOWN 0x0FFF

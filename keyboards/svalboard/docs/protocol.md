@@ -303,13 +303,13 @@ How the touchpad chip (Azoteq IQS5xx) decides a tap or a press and hold, and whe
 
 | Value | Name | Data | Default |
 |---|---|---|---|
-| `55` | `id_pad_dead_zone` | the dead zone, 0.01 mm: a tap or a press and hold is canceled once the finger moves farther than this from where it touched down (the chip's Tap distance, `0x06BB`) | `80` (0.8 mm) |
+| `55` | `id_pad_dead_zone` | the dead zone, 0.01 mm: a tap or a press and hold is canceled once the finger moves farther than this from where it touched down (the chip's Tap distance, `0x06BB`) | `120` (1.2 mm) |
 | `56` | `id_pad_tap_ms` | the tap time, ms: a tap must lift within it; press and hold fires at the tap time plus the hold time (`0x06B9`) | `150` |
 | `57` | `id_pad_scroll_start` | how far two fingers move before they scroll, 0.01 mm (`0x06C8`); `0` is the build's own | the build's own (50 pixels: 1.05 mm on the native touchpad) |
 
 - The dead zone is one of 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2, 1.4, 1.6, 2.0, 2.5, 3.0 or 4.0 mm; the tap time one of 50, 75, 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 500, 600, 800 or 1000 ms; the scroll distance the build's own or one of 0.3, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0 or 10.0 mm. A write takes the nearest (a tie, the smaller). Read it back for the stored value.
 - Reading `57` while it is the build's own gives that distance in 0.01 mm at the resolution in force (`105` on the native touchpad); writing that same number back, or `0`, keeps the build's own.
-- Before this, the dead zone was the driver's 25 pixels in every build: about 0.52 mm on the native touchpad (the release image) and 0.79 mm at 800 cpi. The 0.8 mm default restores the second everywhere. The tap time and the scroll distance keep what every build had.
+- Before this, the dead zone was the driver's 25 pixels in every build: about 0.52 mm on the native touchpad (the release image) and 0.79 mm at 800 cpi. The default is now 1.2 mm in every build: 57 pixels on the native touchpad and about 38 at 800 cpi. The tap time and the scroll distance keep what every build had.
 - A write works at once and reaches the other half the way the tap setting does (the presence ping, a 16-bit word after its byte). `id_custom_save` (`0x09`) stores it. A settings reset sets the defaults again.
 - Stored in four bytes of their own after the tap setting's two (the setting and its complement), so the settings keep their size and layout stamp. Bytes that don't check out read as the defaults.
 

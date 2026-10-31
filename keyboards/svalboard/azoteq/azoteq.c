@@ -128,7 +128,7 @@ static i2c_status_t sval_iqs_write(uint16_t reg, const uint8_t *data, uint16_t l
 // time and the scroll distance, over what the driver's start wrote from the
 // build's defines. Written at every start of the chip (with the glass tuning),
 // on every change, and after the resolution changes (the distances are in its
-// pixels): the dead zone's 0.8 mm default differs from the driver's 25 pixels
+// pixels): the dead zone's 1.2 mm default differs from the driver's 25 pixels
 // in every build, so it is always written.
 static volatile bool azo_gestures_pending = false;
 

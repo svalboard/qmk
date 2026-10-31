@@ -145,13 +145,14 @@ static void test_sync(void) {
     CHECK(sval_pad_sync_setting(false, 0x85, 0x07) == 0x07, "not present: ignores the byte");
 }
 
-// The touchpad tuning: 0 is a 0.8 mm dead zone, a 150 ms tap time and the
+// The touchpad tuning: 0 is a 1.2 mm dead zone, a 150 ms tap time and the
 // build's own scroll distance.
 static void test_tune_defaults(void) {
-    CHECK(sval_pad_dead_zone(0) == 80, "dead zone 0.8 mm by default, got %u", sval_pad_dead_zone(0));
+    CHECK(sval_pad_dead_zone(0) == 120, "dead zone 1.2 mm by default, got %u", sval_pad_dead_zone(0));
     CHECK(sval_pad_tap_time_ms(0) == 150, "tap time 150 ms by default (the driver's 0x96)");
     CHECK(sval_pad_scroll_start(0) == 0, "scroll distance: the build's own by default");
-    CHECK(sval_pad_tune_with_dead_zone(0, 80) == 0, "0.8 mm is the default word");
+    CHECK(sval_pad_tune_with_dead_zone(0, 120) == 0, "1.2 mm is the default word");
+    CHECK(sval_pad_tune_with_dead_zone(0, 80) != 0, "0.8 mm is a choice, not the default");
     CHECK(sval_pad_tune_with_tap_ms(0, 150) == 0, "150 ms is the default word");
     CHECK(sval_pad_tune_with_scroll(0, 0) == 0, "scroll 0 is the build's own");
 }
@@ -187,12 +188,14 @@ static void test_tune_tables(void) {
 
 // The same millimeters in every build: pixels from the resolution in force.
 static void test_tune_pixels(void) {
-    // The native touchpad: 2048 across 43 mm. 0.8 mm is 38 pixels; the
-    // driver's 25 pixels were 0.52 mm.
+    // The native touchpad: 2048 across 43 mm. The 1.2 mm default is 57
+    // pixels, 0.8 mm 38; the driver's 25 pixels were 0.52 mm.
+    CHECK(sval_pad_mm100_to_px(120, 2048, SVAL_PAD_WIDTH_MM100) == 57, "1.2 mm at full resolution: %u", sval_pad_mm100_to_px(120, 2048, SVAL_PAD_WIDTH_MM100));
     CHECK(sval_pad_mm100_to_px(80, 2048, SVAL_PAD_WIDTH_MM100) == 38, "0.8 mm at full resolution: %u", sval_pad_mm100_to_px(80, 2048, SVAL_PAD_WIDTH_MM100));
     CHECK(sval_pad_px_to_mm100(25, 2048, SVAL_PAD_WIDTH_MM100) == 52, "25 px at full resolution: %u", sval_pad_px_to_mm100(25, 2048, SVAL_PAD_WIDTH_MM100));
-    // Without it, at 800 cpi: 800 * 43 / 25.4 = 1354 pixels. 0.8 mm is 25
-    // pixels there, which is what those builds always had.
+    // Without it, at 800 cpi: 800 * 43 / 25.4 = 1354 pixels. 1.2 mm is 38
+    // pixels there; 0.8 mm is 25, which is what those builds always had.
+    CHECK(sval_pad_mm100_to_px(120, 1354, SVAL_PAD_WIDTH_MM100) == 38, "1.2 mm at 800 cpi: %u", sval_pad_mm100_to_px(120, 1354, SVAL_PAD_WIDTH_MM100));
     CHECK(sval_pad_mm100_to_px(80, 1354, SVAL_PAD_WIDTH_MM100) == 25, "0.8 mm at 800 cpi: %u", sval_pad_mm100_to_px(80, 1354, SVAL_PAD_WIDTH_MM100));
     // At 400 cpi (677 pixels) it is 13: still 0.8 mm.
     CHECK(sval_pad_mm100_to_px(80, 677, SVAL_PAD_WIDTH_MM100) == 13, "0.8 mm at 400 cpi");
@@ -209,7 +212,7 @@ static void test_tune_regs(void) {
 
     memcpy(regs, start, sizeof(regs));
     sval_pad_tune_regs_apply(0, 2048, 0x32, regs);
-    CHECK(regs[4] == 0 && regs[5] == 38, "the defaults at full resolution: 38 px, got %u", regs[5]);
+    CHECK(regs[4] == 0 && regs[5] == 57, "the defaults at full resolution: 57 px, got %u", regs[5]);
     CHECK(regs[2] == 0x00 && regs[3] == 0x96, "the default tap time is the start's");
     CHECK(regs[17] == 0 && regs[18] == 0x32, "the build's own scroll distance");
     regs[5] = 0x19;
@@ -217,7 +220,13 @@ static void test_tune_regs(void) {
 
     memcpy(regs, start, sizeof(regs));
     sval_pad_tune_regs_apply(0, 1354, 0x32, regs);
-    CHECK(memcmp(regs, start, sizeof(regs)) == 0, "the defaults at 800 cpi write what those builds always had");
+    CHECK(regs[4] == 0 && regs[5] == 38, "the defaults at 800 cpi: 38 px, got %u", regs[5]);
+    regs[5] = 0x19;
+    CHECK(memcmp(regs, start, sizeof(regs)) == 0, "at 800 cpi too, only the tap distance differs from the start");
+
+    memcpy(regs, start, sizeof(regs));
+    sval_pad_tune_regs_apply(sval_pad_tune_with_dead_zone(0, 80), 1354, 0x32, regs);
+    CHECK(memcmp(regs, start, sizeof(regs)) == 0, "0.8 mm at 800 cpi writes what those builds always had");
 
     memcpy(regs, start, sizeof(regs));
     uint16_t t = sval_pad_tune_with_tap_ms(sval_pad_tune_with_dead_zone(sval_pad_tune_with_scroll(0, 200), 300), 500);
@@ -231,7 +240,7 @@ static void test_tune_regs(void) {
     memcpy(regs, start, sizeof(regs));
     sval_pad_regs_apply(sval_pad_with_hold_ms(0, 500), regs);
     sval_pad_tune_regs_apply(0, 2048, 0x32, regs);
-    CHECK(regs[6] == 0x01 && regs[7] == 0xF4 && regs[5] == 38, "hold and dead zone together");
+    CHECK(regs[6] == 0x01 && regs[7] == 0xF4 && regs[5] == 57, "hold and dead zone together");
 }
 
 static void test_tune_record_sync(void) {
