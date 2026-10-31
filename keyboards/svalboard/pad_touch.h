@@ -49,6 +49,8 @@ typedef struct {
     uint16_t farthest;             // 0.01 mm from the down point, this touch
     uint32_t down_at;              // ms
     uint16_t last_ms;              // how long the last touch lasted
+    uint16_t strength;             // the first finger's touch strength now (0 with no finger)
+    uint8_t  area;                 // and the channels it covers
 } sval_pad_touch_t;
 
 // One pad read: fingers and gesture bytes as the chip reports them
@@ -60,6 +62,13 @@ void sval_pad_touch_sample(sval_pad_touch_t *t, const sval_pad_touch_cfg_t *cfg,
 //   10-11 ms since touch-down (or the last touch's length while up),
 //   12-13 farthest from the down point (0.01 mm), 14-15 tap distance (pixels).
 void sval_pad_touch_pack(sval_pad_touch_t *t, const sval_pad_touch_cfg_t *cfg, uint32_t now_ms, uint8_t out[SVAL_TOUCH_BLOCK_BYTES]);
+
+// The first finger's size from the same read (0x0016 on: strength, 16-bit,
+// and area, the channels it covers); zero while no finger is down.
+void sval_pad_touch_size(sval_pad_touch_t *t, uint8_t fingers, uint16_t strength, uint8_t area);
+// Its 3 bytes in the touch page: strength (16-bit little-endian), area.
+#define SVAL_TOUCH_SIZE_BYTES 3
+void sval_pad_touch_pack_size(const sval_pad_touch_t *t, uint8_t out[SVAL_TOUCH_SIZE_BYTES]);
 
 // A packed block's events ORed into another's, for a block held until a host
 // reads it (the USB half keeps the other half's this way).

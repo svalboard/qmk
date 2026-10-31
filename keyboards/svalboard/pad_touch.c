@@ -97,6 +97,16 @@ void sval_pad_touch_pack(sval_pad_touch_t *t, const sval_pad_touch_cfg_t *cfg, u
     t->events = 0;
 }
 
+void sval_pad_touch_size(sval_pad_touch_t *t, uint8_t fingers, uint16_t strength, uint8_t area) {
+    t->strength = fingers ? strength : 0;
+    t->area     = fingers ? area : 0;
+}
+
+void sval_pad_touch_pack_size(const sval_pad_touch_t *t, uint8_t out[SVAL_TOUCH_SIZE_BYTES]) {
+    put16(out, t->live ? t->strength : 0);
+    out[2] = t->live ? t->area : 0;
+}
+
 void sval_pad_touch_merge(uint8_t held[SVAL_TOUCH_BLOCK_BYTES], const uint8_t fresh[SVAL_TOUCH_BLOCK_BYTES]) {
     const uint8_t events = held[1] | fresh[1];
     memcpy(held, fresh, SVAL_TOUCH_BLOCK_BYTES);

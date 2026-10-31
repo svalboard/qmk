@@ -148,6 +148,21 @@ static void test_hold_and_gestures(void) {
     CHECK(((b[0] & SVAL_TOUCH_FINGERS) >> 4) == 1, "an impossible finger count is ignored");
 }
 
+static void test_size(void) {
+    sval_pad_touch_t t = {0};
+    uint8_t          s[SVAL_TOUCH_SIZE_BYTES];
+    sval_pad_touch_pack_size(&t, s);
+    CHECK(s[0] == 0 && s[1] == 0 && s[2] == 0, "never read: no size");
+    sval_pad_touch_sample(&t, &cfg, true, 1, 0, 0, 500, 500, 0);
+    sval_pad_touch_size(&t, 1, 0x0312, 3);
+    sval_pad_touch_pack_size(&t, s);
+    CHECK(s[0] == 0x12 && s[1] == 0x03 && s[2] == 3, "strength little-endian, then area: %02X %02X %02X", s[0], s[1], s[2]);
+    sval_pad_touch_sample(&t, &cfg, true, 0, 0, 0, 0, 0, 50);
+    sval_pad_touch_size(&t, 0, 0x0312, 3);
+    sval_pad_touch_pack_size(&t, s);
+    CHECK(s[0] == 0 && s[2] == 0, "no finger: no size");
+}
+
 static void test_merge(void) {
     uint8_t held[SVAL_TOUCH_BLOCK_BYTES] = {0}, fresh[SVAL_TOUCH_BLOCK_BYTES] = {0};
     held[0]  = SVAL_TOUCH_VALID | SVAL_TOUCH_DOWN;
@@ -165,6 +180,7 @@ int main(void) {
     test_tap();
     test_drift();
     test_hold_and_gestures();
+    test_size();
     test_merge();
     printf("pad touch: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

@@ -321,14 +321,14 @@ The touch page of `POINTING_MOTION` shows each pad's touch as the chip's tap and
 - Request: `DF 2D <reader> 01` (byte 3 is the page; `0`, or nothing, is the motion page above). Older firmware ignores byte 3 and answers with the motion page (format `1`).
 - It reads and clears the events only. It doesn't clear the motion counts, and it doesn't count as host activity.
 - The board follows the pads only while a host has read this page within the last 1.5 s. The half with USB then fetches the other pad's block over the split link every 16 ms. The first read after a pause starts fresh: a touch already down then shows from the next read.
-- Response: `DF 2D` then 48 bytes. `format` `0` means no data (the half without USB).
+- Response: `DF 2D` then 56 bytes. `format` `0` means no data (the half without USB).
 
 | off | size | field |
 |---|---|---|
 | 0 | 1 | format = `2` |
 | 1 | 1 | bit 0 a tap clicks, bit 1 a two-finger tap right clicks, bit 2 press and hold presses the left button (`Touchpad taps`) |
 | 2 | 1 | ms since the previous touch-page read, up to 255; `0` on the first |
-| 3 | 1 | zero |
+| 3 | 1 | bit 0: bytes 48-55 hold each pad's finger size (firmware before it leaves them zero) |
 | 4 | 2 | the dead zone in force, 0.01 mm |
 | 6 | 2 | the tap time in force, ms |
 | 8 | 2 | the hold time in force, ms |
@@ -337,6 +337,10 @@ The touch page of `POINTING_MOTION` shows each pad's touch as the chip's tap and
 | 14 | 16 | the left pad |
 | 30 | 16 | the right pad |
 | 46 | 2 | the scroll distance in force on the USB half's pad, 0.01 mm |
+| 48 | 3 | the left pad's first finger: touch strength (16-bit little-endian), then area (channels) |
+| 51 | 3 | the right pad's first finger, the same |
+| 54 | 1 | channels across the pad (TPS43: `8`) |
+| 55 | 1 | channels down the pad (TPS43: `7`) |
 
 Each pad:
 
@@ -355,6 +359,7 @@ Each pad:
 - Coordinates are in the chip's own orientation on that pad, as `POINTING_CONTACTS` gives them, in 0.01 mm. While no finger is down, x and y are where the last touch lifted.
 - A single tap is reported as the finger lifts; press and hold at the tap time plus the hold time, while the touch has stayed inside the dead zone. Bit 6 of the events is the firmware's own check: Euclidean distance in the chip's pixels, more than the tap distance, before the tap time ends (or before the hold fires, with press and hold on). The chip doesn't report a cancel, and its datasheet doesn't say how it measures the distance, so a touch near the edge can come out either way.
 - A block that is not valid (no pad on that hand, or the other half is disconnected or has older firmware) is all zero.
+- Finger size: the chip's own numbers for the first finger (datasheet 5.2.4-5.2.5), zero while no finger is down. Touch strength is the sum of the finger's channel deltas: it rises with pressure and contact, and its scale depends on the pad's sensitivity, so it compares touches on one pad rather than measuring anything. Area is how many channels the finger covers. A channel is the pad's width and height divided by bytes 54 and 55 (about 5.4 x 5.7 mm on the TPS43), so area times that is roughly the contact's footprint. Both come from the contact read the native touchpad already makes every cycle: they cost no I2C, and the other half's reply grows by these 3 bytes inside its existing 32-byte split RPC.
 
 ## Scan timing
 

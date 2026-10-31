@@ -22,8 +22,8 @@
 #    include "updater/updater.h"
 #endif
 
-#define SVAL_TOUCH_RPC_OP 0xA8 // [op] -> [op][bit 0 a block][16-byte block]
-#define SVAL_TOUCH_RPC_REPLY (2 + SVAL_TOUCH_BLOCK_BYTES)
+#define SVAL_TOUCH_RPC_OP 0xA8                                                    // [op] -> [op][bit 0 a block][16-byte block]
+#define SVAL_TOUCH_RPC_REPLY (2 + SVAL_TOUCH_BLOCK_BYTES + SVAL_TOUCH_SIZE_BYTES) // [op][bit 0 a block][block][size]
 #ifndef SVAL_TOUCH_FETCH_MS
 #    define SVAL_TOUCH_FETCH_MS 16
 #endif
@@ -31,7 +31,11 @@
 #    define SVAL_HOST_ACTIVE_MS 1500
 #endif
 #define SVAL_TOUCH_PAGE_FORMAT 2
-#define SVAL_TOUCH_PAGE_BYTES 48
+#define SVAL_TOUCH_PAGE_BYTES 56
+// The TPS43's channel grid (IQS572: 2048 x 1792 at 256 pixels a channel), for
+// the area: each channel is about 5.4 x 5.7 mm.
+#define SVAL_TOUCH_CHANNELS_X 8
+#define SVAL_TOUCH_CHANNELS_Y 7
 
 void sval_pad_touch_config(sval_pad_touch_cfg_t *cfg); // azoteq.c
 
@@ -39,7 +43,7 @@ static sval_pad_touch_t local;
 static uint32_t         wanted_until;
 static bool             wanted_once;
 // USB half: the other pad's block, events held until the page is read.
-static uint8_t  remote[SVAL_TOUCH_BLOCK_BYTES];
+static uint8_t  remote[SVAL_TOUCH_BLOCK_BYTES], remote_size[SVAL_TOUCH_SIZE_BYTES];
 static uint32_t fetched_at, remote_at, page_read_at;
 static bool     page_read_once;
 
@@ -64,6 +68,8 @@ void sval_touch_sample(const uint8_t *raw, bool valid) {
     sval_pad_touch_config(&cfg);
     const uint16_t x = (uint16_t)raw[10] << 8 | raw[11], y = (uint16_t)raw[12] << 8 | raw[13];
     sval_pad_touch_sample(&local, &cfg, valid, raw[5], raw[1], raw[2], x, y, timer_read32());
+    // The first finger's strength and area come in the same read: no I2C of its own.
+    if (valid && raw[5] <= 5) sval_pad_touch_size(&local, raw[5], (uint16_t)raw[14] << 8 | raw[15], raw[16]);
 }
 
 // Half without USB: the USB half asks for this pad's block. Runs in the split
@@ -76,6 +82,7 @@ bool sval_touch_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint8_t 
     sval_pad_touch_cfg_t cfg;
     sval_pad_touch_config(&cfg);
     sval_pad_touch_pack(&local, &cfg, timer_read32(), &out[2]);
+    sval_pad_touch_pack_size(&local, &out[2 + SVAL_TOUCH_BLOCK_BYTES]);
     out[1] = (out[2] & SVAL_TOUCH_VALID) ? 1 : 0;
     return true;
 }
@@ -95,6 +102,7 @@ void sval_touch_task(void) {
     if (!transaction_rpc_exec(KEYBOARD_SYNC_B, sizeof(req), req, SVAL_MT_RPC_REPLY, reply)) return;
     if (reply[0] != SVAL_TOUCH_RPC_OP || !(reply[1] & 1)) return; // older firmware answers zeros
     sval_pad_touch_merge(remote, &reply[2]);
+    memcpy(remote_size, &reply[2 + SVAL_TOUCH_BLOCK_BYTES], SVAL_TOUCH_SIZE_BYTES); // older firmware with the page leaves it zero
     remote_at = timer_read32();
 }
 
@@ -121,6 +129,10 @@ void sval_pointing_touch_kb(uint8_t *out, uint8_t length) {
     put16(&out[10], SVAL_PAD_WIDTH_MM100);
     put16(&out[12], SVAL_PAD_HEIGHT_MM100);
     put16(&out[46], sval_pad_scroll_in_force_mm100());
+    // The first finger's size per pad (bytes 48-53), and the channel grid its area counts in.
+    out[3]  = 1; // bit 0: bytes 48-55 hold the finger sizes
+    out[54] = SVAL_TOUCH_CHANNELS_X;
+    out[55] = SVAL_TOUCH_CHANNELS_Y;
 
     const bool           left  = is_keyboard_left();
     uint8_t             *mine  = &out[left ? 14 : 30];
@@ -128,10 +140,12 @@ void sval_pointing_touch_kb(uint8_t *out, uint8_t length) {
     sval_pad_touch_cfg_t cfg;
     sval_pad_touch_config(&cfg);
     sval_pad_touch_pack(&local, &cfg, timer_read32(), mine);
+    sval_pad_touch_pack_size(&local, &out[left ? 48 : 51]);
     if (mine[0] & SVAL_TOUCH_VALID && sval_mt_os_touchpad(left ? 0 : 1)) mine[0] |= SVAL_TOUCH_OS;
     // The other pad's last block, while it is fresh (the link answers).
     if ((remote[0] & SVAL_TOUCH_VALID) && timer_elapsed32(remote_at) < 250) {
         memcpy(other, remote, SVAL_TOUCH_BLOCK_BYTES);
+        memcpy(&out[left ? 51 : 48], remote_size, SVAL_TOUCH_SIZE_BYTES);
         if (sval_mt_os_touchpad(left ? 1 : 0)) other[0] |= SVAL_TOUCH_OS;
     }
     remote[1] = 0; // its events are read
