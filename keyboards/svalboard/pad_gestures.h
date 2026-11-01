@@ -135,6 +135,27 @@ uint8_t sval_pad_palm_record_read(const uint8_t rec[SVAL_PAD_PALM_RECORD_BYTES])
 uint8_t sval_pad_palm_sync_byte(uint8_t palm);
 uint8_t sval_pad_palm_sync_setting(bool present, uint8_t sync_byte, uint8_t current);
 
+// ---------------------------------------------------------------- touchpad mode
+//
+// The touchpad mode (VIA value 59, sval_flag4_pad_mode; native touchpad
+// builds): 0 Automatic, the default: the pads are a touchpad whenever Windows
+// or Linux asks for one (Input Mode 3), and the chip's built-in gestures
+// otherwise (macOS, a BIOS, before the OS asks). 1 Built-in gestures: the
+// pads stay on the chip's gestures even when the OS asks for touchpad mode.
+// The touchpad interface stays, so the OS still lists it; it just never
+// gets contacts.
+#define SVAL_PAD_MODE_AUTO 0
+#define SVAL_PAD_MODE_BUILTIN 1
+#define SVAL_PAD_MODE_RECORD_BYTES 2
+// The byte and its complement, after the palm rejection's record. Two bytes
+// that don't check out, or an unknown mode, read as Automatic.
+void    sval_pad_mode_record_write(uint8_t mode, uint8_t rec[SVAL_PAD_MODE_RECORD_BYTES]);
+uint8_t sval_pad_mode_record_read(const uint8_t rec[SVAL_PAD_MODE_RECORD_BYTES]);
+// Split sync: bit 7 marks a setting.
+#define SVAL_PAD_MODE_SYNC_VALID 0x80
+uint8_t sval_pad_mode_sync_byte(uint8_t mode);
+uint8_t sval_pad_mode_sync_setting(bool present, uint8_t sync_byte, uint8_t current);
+
 // A contact of this area is a palm under this setting.
 static inline bool sval_pad_is_palm(uint8_t palm, uint8_t area) {
     return palm && area > palm;

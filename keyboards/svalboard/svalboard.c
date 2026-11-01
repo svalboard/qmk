@@ -47,6 +47,7 @@ _Static_assert(offsetof(presence_rpc_t, debounce_mode) == 18, "presence ping: th
 _Static_assert(offsetof(presence_rpc_t, pad_gestures) == 19, "presence ping: the tap setting follows the debounce mode");
 _Static_assert(offsetof(presence_rpc_t, pad_tuning) == 20, "presence ping: the touchpad tuning follows the tap setting");
 _Static_assert(offsetof(presence_rpc_t, pad_palm) == 22, "presence ping: the palm rejection follows the touchpad tuning");
+_Static_assert(offsetof(presence_rpc_t, pad_mode) == 23, "presence ping: the touchpad mode follows the palm rejection");
 #endif
 // The debounce mode took the last spare bit of the first byte: the settings
 // keep their size, so a board that updates keeps them and reads it as 0 (on).
@@ -110,6 +111,18 @@ uint8_t sval_pad_palm(void) {
 
 static void pad_palm_set(uint8_t p) {
     pad_palm = sval_pad_palm_clamp(p);
+}
+
+// The touchpad mode (pad_gestures.h): Automatic (0, the default) or built-in
+// gestures (1). Its own two bytes after the palm rejection's record.
+static uint8_t pad_mode = SVAL_PAD_MODE_AUTO;
+
+bool sval_pad_builtin_gestures(void) {
+    return pad_mode == SVAL_PAD_MODE_BUILTIN;
+}
+
+static void pad_mode_set(uint8_t m) {
+    pad_mode = m == SVAL_PAD_MODE_BUILTIN ? SVAL_PAD_MODE_BUILTIN : SVAL_PAD_MODE_AUTO;
 }
 
 // Builds without an Azoteq driver: nothing to write, and no capability.
@@ -250,6 +263,9 @@ _Static_assert(SVALBOARD_PAD_TUNING_OFFSET + SVAL_PAD_TUNE_RECORD_BYTES <= VIA_E
 // The palm rejection's record, after the tuning's.
 #define SVALBOARD_PAD_PALM_OFFSET (SVALBOARD_PAD_TUNING_OFFSET + SVAL_PAD_TUNE_RECORD_BYTES)
 _Static_assert(SVALBOARD_PAD_PALM_OFFSET + SVAL_PAD_PALM_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the palm rejection fits the VIA custom config");
+// The touchpad mode's record, after the palm rejection's.
+#define SVALBOARD_PAD_MODE_OFFSET (SVALBOARD_PAD_PALM_OFFSET + SVAL_PAD_PALM_RECORD_BYTES)
+_Static_assert(SVALBOARD_PAD_MODE_OFFSET + SVAL_PAD_MODE_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the touchpad mode fits the VIA custom config");
 
 #if VIA_ENABLE
 static void svalboard_get_magic(uint8_t *magic) {
@@ -292,6 +308,9 @@ static void pad_gestures_save(void) {
     uint8_t palm[SVAL_PAD_PALM_RECORD_BYTES];
     sval_pad_palm_record_write(pad_palm, palm);
     via_update_custom_config(palm, SVALBOARD_PAD_PALM_OFFSET, SVAL_PAD_PALM_RECORD_BYTES);
+    uint8_t mode[SVAL_PAD_MODE_RECORD_BYTES];
+    sval_pad_mode_record_write(pad_mode, mode);
+    via_update_custom_config(mode, SVALBOARD_PAD_MODE_OFFSET, SVAL_PAD_MODE_RECORD_BYTES);
 }
 
 static void pad_gestures_load(void) {
@@ -304,6 +323,9 @@ static void pad_gestures_load(void) {
     uint8_t palm[SVAL_PAD_PALM_RECORD_BYTES];
     via_read_custom_config(palm, SVALBOARD_PAD_PALM_OFFSET, SVAL_PAD_PALM_RECORD_BYTES);
     pad_palm_set(sval_pad_palm_record_read(palm));
+    uint8_t mode[SVAL_PAD_MODE_RECORD_BYTES];
+    via_read_custom_config(mode, SVALBOARD_PAD_MODE_OFFSET, SVAL_PAD_MODE_RECORD_BYTES);
+    pad_mode_set(sval_pad_mode_record_read(mode));
 }
 
 void write_eeprom_kb(void) {
@@ -405,6 +427,7 @@ void read_eeprom_kb(void) {
         pad_gestures_set(0);
         pad_tuning_set(0);
         pad_palm_set(0);
+        pad_mode_set(SVAL_PAD_MODE_AUTO);
         write_eeprom_kb();
         svalboard_eeprom_set_valid();
     } else {
@@ -574,7 +597,7 @@ uint8_t sval_get_feature_flags3_kb(void) {
 // GET_INFO byte 21 (the fourth feature byte): on native touchpad builds, the
 // touchpad palm rejection (VIA value 58).
 uint8_t sval_get_feature_flags4_kb(void) {
-    return sval_pad_palm_supported() ? sval_flag4_pad_palm : 0;
+    return sval_pad_palm_supported() ? sval_flag4_pad_palm | sval_flag4_pad_mode : 0;
 }
 
 void sval_flicker_latch_kb(uint8_t *data, uint8_t length) {
@@ -744,6 +767,9 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
     // And its palm rejection (RAM only).
     bool has_palm = in_buflen >= offsetof(presence_rpc_t, pad_palm) + 1;
     pad_palm_set(sval_pad_palm_sync_setting(has_palm, has_palm ? in->pad_palm : 0, pad_palm));
+    // And its touchpad mode (RAM only).
+    bool has_mode = in_buflen >= offsetof(presence_rpc_t, pad_mode) + 1;
+    pad_mode_set(sval_pad_mode_sync_setting(has_mode, has_mode ? in->pad_mode : 0, pad_mode));
 #ifdef SVAL_UPDATER
     // The master's updater light (D24), when its ping carries it. Measured to
     // its own byte: the ping has grown past it since.
@@ -1057,6 +1083,7 @@ void housekeeping_task_kb(void) {
             rpcout.pad_gestures  = sval_pad_sync_byte(pad_gestures);
             rpcout.pad_tuning    = sval_pad_tune_sync_word(pad_tuning);
             rpcout.pad_palm      = sval_pad_palm_sync_byte(pad_palm);
+            rpcout.pad_mode      = sval_pad_mode_sync_byte(pad_mode);
             presence_rsp_t rpcin = {0};
             if (transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin)) {
                 if (rpcin.magic[0] == SVAL_PRESENCE_RSP_MAGIC0 && rpcin.magic[1] == SVAL_PRESENCE_RSP_MAGIC1 && (rpcin.pointer.flags & SVAL_POINTER_REPORTED)) {
@@ -1179,6 +1206,8 @@ enum sval_via_value_id {
     id_pad_scroll_start = 57, // u16: the scroll distance, 0.01 mm; 0 (or the build's own) is the build's own
     // The touchpad palm rejection (pad_gestures.h), with sval_flag4_pad_palm:
     id_pad_palm = 58, // u16: a contact with more area than this, in channels, is a palm; 0 (the default) is off
+    // The touchpad mode (pad_gestures.h), with sval_flag4_pad_mode:
+    id_pad_touchpad_mode = 59, // 0 Automatic (the default): a touchpad when the OS asks; 1 built-in gestures always
 };
 
 void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
@@ -1321,6 +1350,9 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     break;
                 case id_pad_palm:
                     pad_palm_set(value_data[0] | (value_data[1] << 8));
+                    break;
+                case id_pad_touchpad_mode:
+                    pad_mode_set(value_data[0]);
                     break;
                 case id_pad_scroll_start: {
                     // The build's own distance, as it reads back, is the build's own.
@@ -1483,6 +1515,9 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                 case id_pad_palm:
                     value_data[0] = pad_palm;
                     value_data[1] = 0;
+                    break;
+                case id_pad_touchpad_mode:
+                    value_data[0] = pad_mode;
                     break;
                 case id_pad_dead_zone:
                 case id_pad_tap_ms:

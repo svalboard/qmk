@@ -326,6 +326,7 @@ static const uint8_t cert[SVAL_PTP_CERT_SIZE] = {
 static volatile uint8_t  f_mode, f_latency, f_switches = 3;
 static volatile bool     f_reset;
 static volatile uint32_t f_rejected; // SET_REPORT values ignored after the data stage
+static bool              host_mode3(void);    // mode 3, unless the touchpad mode keeps the built-in gestures
 
 enum { C_FREE, C_CANDIDATE, C_ACTIVE, C_IGNORED };
 typedef struct {
@@ -948,7 +949,7 @@ void sval_ptp_task(void) {
         if (pads[i].has_valid && pad_has_contacts(i) && now - pads[i].valid_us > stale) sval_ptp_pad_lost(i);
     }
 
-    bool m3 = native && pad_mask && f_mode == 3;
+    bool m3 = native && pad_mask && host_mode3();
     if (mode3 && !m3) hold = true; // the pad mouse resumes once all fingers are up
     mode3    = m3;
     bool out = m3 && !paused && !grabbed && (f_switches & 1);
@@ -1040,12 +1041,21 @@ uint16_t sval_ptp_grab_finger(uint8_t pad, uint16_t *x, uint16_t *y) {
     return g->touch;
 }
 
+// The host asked for touchpad mode (Input Mode 3) and the touchpad mode
+// setting lets it have it. With built-in gestures the host's mode is kept
+// (it reads back what it wrote), but no contacts are reported: the pads stay
+// the chip's mouse, and switching takes effect at once, lifting any contacts
+// the host still has, as when the host leaves mode 3.
+static bool host_mode3(void) {
+    return f_mode == 3 && !sval_builtin_gestures();
+}
+
 bool sval_ptp_wants_frames(void) {
     return pad_mask && (native || hold);
 }
 
 bool sval_ptp_active(void) {
-    return native && pad_mask && f_mode == 3;
+    return native && pad_mask && host_mode3();
 }
 
 bool sval_ptp_reporting(void) {
@@ -1056,7 +1066,7 @@ bool sval_ptp_suppress_mouse(void) {
     // mode3 covers the loop between the host leaving mode 3 and the task
     // setting hold, so the pad mouse never moves under a finger in between.
     if (!pad_mask) return false;
-    return (native && (f_mode == 3 || mode3 || !SVAL_PTP_MOUSE_BEFORE_MODE3)) || hold;
+    return (native && (host_mode3() || mode3 || (!SVAL_PTP_MOUSE_BEFORE_MODE3 && !sval_builtin_gestures()))) || hold;
 }
 
 uint16_t sval_ptp_take_motion(uint8_t pad) {

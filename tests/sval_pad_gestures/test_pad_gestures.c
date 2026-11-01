@@ -287,7 +287,28 @@ static void test_palm(void) {
     CHECK(sval_pad_palm_sync_setting(true, sval_pad_palm_sync_byte(20), 0) == 20, "a threshold travels");
 }
 
+static void test_mode(void) {
+    uint8_t rec[SVAL_PAD_MODE_RECORD_BYTES] = {0, 0};
+    CHECK(sval_pad_mode_record_read(rec) == SVAL_PAD_MODE_AUTO, "never written: Automatic");
+    rec[0] = rec[1] = 0xFF;
+    CHECK(sval_pad_mode_record_read(rec) == SVAL_PAD_MODE_AUTO, "erased flash: Automatic");
+    sval_pad_mode_record_write(SVAL_PAD_MODE_BUILTIN, rec);
+    CHECK(rec[0] == 1 && rec[1] == 0xFE, "the byte and its complement");
+    CHECK(sval_pad_mode_record_read(rec) == SVAL_PAD_MODE_BUILTIN, "reads back");
+    rec[0] = 7;
+    rec[1] = (uint8_t)~7;
+    CHECK(sval_pad_mode_record_read(rec) == SVAL_PAD_MODE_AUTO, "an unknown mode: Automatic");
+    sval_pad_mode_record_write(9, rec);
+    CHECK(rec[0] == SVAL_PAD_MODE_AUTO, "an unknown write stores Automatic");
+    CHECK(sval_pad_mode_sync_byte(SVAL_PAD_MODE_BUILTIN) == 0x81, "sync byte marked");
+    CHECK(sval_pad_mode_sync_setting(false, 0, SVAL_PAD_MODE_BUILTIN) == SVAL_PAD_MODE_BUILTIN, "an older half with USB: keeps its own");
+    CHECK(sval_pad_mode_sync_setting(true, 1, SVAL_PAD_MODE_AUTO) == SVAL_PAD_MODE_AUTO, "an unmarked byte: keeps its own");
+    CHECK(sval_pad_mode_sync_setting(true, 0x81, SVAL_PAD_MODE_AUTO) == SVAL_PAD_MODE_BUILTIN, "built-in travels");
+    CHECK(sval_pad_mode_sync_setting(true, 0x80, SVAL_PAD_MODE_BUILTIN) == SVAL_PAD_MODE_AUTO, "Automatic travels");
+}
+
 int main(void) {
+    test_mode();
     test_palm();
     test_defaults();
     test_switches();

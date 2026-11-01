@@ -60,6 +60,17 @@ enum sval_touch_owner {
 // channels) is a palm, and its Confidence is cleared; 0 is off. On the board
 // it is the saved setting (VIA value 58, svalboard.c); host tests set
 // SVAL_PTP_PALM_AREA to a number or a variable of their own.
+// The touchpad mode: built-in gestures keep the pads on the chip's gestures
+// even when the host writes Input Mode 3 (VIA value 59, svalboard.c). Host
+// tests set SVAL_PTP_BUILTIN to a number or a variable of their own.
+#ifdef SVAL_PTP_BUILTIN
+#    define sval_builtin_gestures() ((bool)(SVAL_PTP_BUILTIN))
+#elif defined(SVAL_PTP_HOST_TEST)
+#    define sval_builtin_gestures() false
+#else
+bool sval_pad_builtin_gestures(void); // svalboard.c
+#    define sval_builtin_gestures() sval_pad_builtin_gestures()
+#endif
 #ifdef SVAL_PTP_PALM_AREA
 #    define sval_palm_area() ((uint8_t)(SVAL_PTP_PALM_AREA))
 #elif defined(SVAL_PTP_HOST_TEST)

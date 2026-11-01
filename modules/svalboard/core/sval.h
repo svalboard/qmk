@@ -140,6 +140,7 @@ enum sval_feature_flags3 {
 // Fourth feature byte, GET_INFO byte 21. Older firmware leaves it zero.
 enum sval_feature_flags4 {
     sval_flag4_pad_palm = (1 << 0), // VIA value 58: the touchpad palm rejection (native touchpad builds)
+    sval_flag4_pad_mode = (1 << 1), // VIA value 59: touchpad mode, Automatic or built-in gestures (native touchpad builds)
 };
 
 // Status byte after the modifiers in the 0x16 reply (sval_flag2_modifier_state).

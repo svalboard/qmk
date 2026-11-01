@@ -320,11 +320,22 @@ A contact larger than a fingertip, such as the heel of a hand resting on a pad, 
 - Discovery: GET_INFO byte 21 (the fourth feature byte), bit 0 (`sval_flag4_pad_palm`, `0x01`). The native touchpad builds set it; they read every contact's area from the chip. Older firmware leaves byte 21 zero.
 - Value `58`, `id_pad_palm`, channel `0`, 16-bit little-endian (the high byte is always 0): a contact whose area is more than this many of the chip's channels is a palm; `0` (the default) is off. Areas are counted in channels as the chip reports them (datasheet 5.2.5): on the TPS43 a channel is about 5.4 x 5.7 mm (31 mm²), so 3 channels is a contact about 11 mm across. A write above 56 (the TPS43's 8 x 7 channels) stores 56. Read it back for the stored value.
 - In touchpad mode (Input Mode 3, Windows and Linux): a palm contact is reported with Confidence clear, in that report and every one after it until it lifts, as the Windows Precision Touchpad rules ask for a contact that isn't a finger. The computer ignores it; the other fingers on the pad carry on.
-- As a mouse (macOS, a BIOS, and Windows or Linux before touchpad mode): while a palm is down the pad's pointer and scroll output stop and its taps don't click, until every finger on that pad lifts. A button held before it (a drag) stays held. This matches what the chip's own palm detect does, so one threshold serves both.
+- With built-in gestures (on a Mac, in a BIOS, before Windows or Linux asks for touchpad mode, or with `Touchpad mode` below set to built-in gestures): while a palm is down the pad's pointer and scroll output stop and its taps don't click, until every finger on that pad lifts. A button held before it (a drag) stays held. This matches what the chip's own palm detect does, so one threshold serves both.
 - The chip's own palm rejection (the `PALM_REJECT` bit, set by the driver in every build, with the chip's stored Palm reject threshold) is unchanged and runs in both modes as before: when it fires, the chip reports no positions for that cycle, and the touchpad reports the pad's contacts once with Confidence clear, then lifts them.
 - The touch pages show it: `Touchpad fingers` byte 1 is the threshold in force, and each finger's area is there to compare against it.
 - A write works at once and reaches the other half in the presence ping (its last byte), as the tap setting does. `id_custom_save` (`0x09`) stores it. A settings reset turns it off.
 - Stored in two bytes of their own after the tuning's four (the value and its complement), so the settings keep their size and layout stamp. Bytes that don't check out read as off. With an older half on USB, the other half keeps its own saved value (off, unless it once ran on USB with another); an older half without USB ignores it.
+
+## Touchpad mode
+
+Whether the pads are a touchpad when Windows or Linux asks for one. Touchpad mode is what the board ships with: the computer gets every contact (a Windows Precision Touchpad) and makes its own taps, scrolling and gestures, with its own touchpad settings. The chip's built-in gestures (tap, two-finger tap and scroll, press and hold, tuned by `Touchpad taps` and `Touchpad tuning`) are the fallback: on a Mac, in a BIOS, and before the computer asks.
+
+- Discovery: GET_INFO byte 21, bit 1 (`sval_flag4_pad_mode`, `0x02`). The native touchpad builds set it.
+- Value `59`, `id_pad_touchpad_mode`, channel `0`, one byte: `0` Automatic (the default, and what every build did before it): touchpad mode whenever the computer writes Input Mode 3. `1` Built-in gestures: the pads stay on the chip's gestures even after the computer writes Input Mode 3. Other values store `0`.
+- With built-in gestures the touchpad interface stays: the computer still lists the touchpad and reads back the Input Mode it wrote, but gets no contacts, and the pads' pointer, scroll and clicks come over the mouse interface as on a Mac. A switch takes effect at once: contacts the computer has are released (as when it leaves touchpad mode), and back in Automatic the pads report again from their next all-up sample.
+- The touch pages follow it: their "the computer has this pad as a touchpad" bits are clear with built-in gestures.
+- A write works at once and reaches the other half in the presence ping (its last byte). `id_custom_save` (`0x09`) stores it. A settings reset sets Automatic.
+- Stored in two bytes of their own after the palm rejection's two (the value and its complement), so the settings keep their size and layout stamp. Bytes that don't check out read as Automatic.
 
 ## Touchpad touch
 

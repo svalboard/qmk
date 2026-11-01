@@ -90,6 +90,8 @@ typedef struct __attribute__((__packed__)) _presence_rpc_t {
     // The touchpad palm rejection (sval_pad_palm_sync_byte(), pad_gestures.h),
     // appended the same way.
     uint8_t pad_palm;
+    // The touchpad mode (sval_pad_mode_sync_byte(), pad_gestures.h), appended the same way.
+    uint8_t pad_mode;
 } presence_rpc_t;
 
 // Which pointing module a half's firmware drives and which one answered, so a host
@@ -201,6 +203,9 @@ bool     sval_pad_touch_supported(void);
 // uses now, 0 off. Native touchpad builds (azoteq/multitouch.c) apply it.
 uint8_t  sval_pad_palm(void);
 bool     sval_pad_palm_supported(void);
+// The touchpad mode (pad_gestures.h): built-in gestures even when the OS asks
+// for a touchpad. Native touchpad builds (azoteq/ptp.c) apply it.
+bool     sval_pad_builtin_gestures(void);
 uint8_t  sval_pad_hands(void);                                                  // hands whose pointing module is an Azoteq pad (bit 0 left, bit 1 right)
 void     sval_scan_timing(uint16_t *pre, uint16_t *post);                       // matrix.c
 uint8_t  sval_pushed_mask(bool thumbs);                                         // matrix.c

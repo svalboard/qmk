@@ -177,6 +177,25 @@ uint16_t sval_pad_tune_sync_setting(bool present, uint16_t sync_word, uint16_t c
     return sync_word & SVAL_PAD_TUNE_KNOWN;
 }
 
+void sval_pad_mode_record_write(uint8_t mode, uint8_t rec[SVAL_PAD_MODE_RECORD_BYTES]) {
+    rec[0] = mode == SVAL_PAD_MODE_BUILTIN ? SVAL_PAD_MODE_BUILTIN : SVAL_PAD_MODE_AUTO;
+    rec[1] = (uint8_t)~rec[0];
+}
+
+uint8_t sval_pad_mode_record_read(const uint8_t rec[SVAL_PAD_MODE_RECORD_BYTES]) {
+    if ((uint8_t)(rec[0] ^ rec[1]) != 0xFF || rec[0] > SVAL_PAD_MODE_BUILTIN) return SVAL_PAD_MODE_AUTO;
+    return rec[0];
+}
+
+uint8_t sval_pad_mode_sync_byte(uint8_t mode) {
+    return SVAL_PAD_MODE_SYNC_VALID | (mode == SVAL_PAD_MODE_BUILTIN ? 1 : 0);
+}
+
+uint8_t sval_pad_mode_sync_setting(bool present, uint8_t sync_byte, uint8_t current) {
+    if (!present || !(sync_byte & SVAL_PAD_MODE_SYNC_VALID)) return current;
+    return (sync_byte & 0x7F) == SVAL_PAD_MODE_BUILTIN ? SVAL_PAD_MODE_BUILTIN : SVAL_PAD_MODE_AUTO;
+}
+
 uint8_t sval_pad_palm_clamp(uint16_t area) {
     return area > SVAL_PAD_PALM_MAX ? SVAL_PAD_PALM_MAX : (uint8_t)area;
 }
