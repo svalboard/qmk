@@ -176,3 +176,26 @@ uint16_t sval_pad_tune_sync_setting(bool present, uint16_t sync_word, uint16_t c
     if (!present || !(sync_word & SVAL_PAD_TUNE_SYNC_VALID)) return current;
     return sync_word & SVAL_PAD_TUNE_KNOWN;
 }
+
+uint8_t sval_pad_palm_clamp(uint16_t area) {
+    return area > SVAL_PAD_PALM_MAX ? SVAL_PAD_PALM_MAX : (uint8_t)area;
+}
+
+void sval_pad_palm_record_write(uint8_t palm, uint8_t rec[SVAL_PAD_PALM_RECORD_BYTES]) {
+    rec[0] = sval_pad_palm_clamp(palm);
+    rec[1] = (uint8_t)~rec[0];
+}
+
+uint8_t sval_pad_palm_record_read(const uint8_t rec[SVAL_PAD_PALM_RECORD_BYTES]) {
+    if ((uint8_t)(rec[0] ^ rec[1]) != 0xFF || rec[0] > SVAL_PAD_PALM_MAX) return 0;
+    return rec[0];
+}
+
+uint8_t sval_pad_palm_sync_byte(uint8_t palm) {
+    return SVAL_PAD_PALM_SYNC_VALID | sval_pad_palm_clamp(palm);
+}
+
+uint8_t sval_pad_palm_sync_setting(bool present, uint8_t sync_byte, uint8_t current) {
+    if (!present || !(sync_byte & SVAL_PAD_PALM_SYNC_VALID)) return current;
+    return sval_pad_palm_clamp(sync_byte & 0x7F);
+}

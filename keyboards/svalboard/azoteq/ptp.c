@@ -665,7 +665,10 @@ void sval_ptp_feed(const uint8_t *f, uint32_t sample_us) {
         const uint8_t *s = f + 16 + 8 * slot;
         uint16_t       x, y;
         map_xy(pad, s, &x, &y);
-        bool       palm_area = SVAL_PTP_PALM_AREA && s[7] > SVAL_PTP_PALM_AREA;
+        // Windows' rule for a contact that isn't a finger: Confidence clear
+        // in this report and every one after, until it lifts.
+        const uint8_t palm_at   = sval_palm_area();
+        bool          palm_area = palm_at && s[7] > palm_at;
         contact_t *c         = find_contact(pad, slot, s[0]);
         if (c) {
             if (c->state == C_IGNORED) { // never reported; tracked only for POINTING_CONTACTS

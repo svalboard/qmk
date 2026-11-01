@@ -56,8 +56,17 @@ enum sval_touch_owner {
 #ifndef SVAL_PTP_HOST_SILENT_US
 #    define SVAL_PTP_HOST_SILENT_US 100000u
 #endif
-#ifndef SVAL_PTP_PALM_AREA
-#    define SVAL_PTP_PALM_AREA 0 // 0 = off; else area above this clears Confidence
+// The palm rejection in force: a contact with more area than this (the chip's
+// channels) is a palm, and its Confidence is cleared; 0 is off. On the board
+// it is the saved setting (VIA value 58, svalboard.c); host tests set
+// SVAL_PTP_PALM_AREA to a number or a variable of their own.
+#ifdef SVAL_PTP_PALM_AREA
+#    define sval_palm_area() ((uint8_t)(SVAL_PTP_PALM_AREA))
+#elif defined(SVAL_PTP_HOST_TEST)
+#    define sval_palm_area() ((uint8_t)0)
+#else
+uint8_t sval_pad_palm(void); // svalboard.c
+#    define sval_palm_area() sval_pad_palm()
 #endif
 #ifndef SVAL_PTP_REMAP_COUNTS
 #    define SVAL_PTP_REMAP_COUNTS 400 // continuity across a stream restart

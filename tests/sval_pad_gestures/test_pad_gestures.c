@@ -265,7 +265,30 @@ static void test_tune_record_sync(void) {
     CHECK(sval_pad_tune_sync_setting(true, sval_pad_tune_sync_word(0), 0x123) == 0, "back to the defaults travels");
 }
 
+static void test_palm(void) {
+    uint8_t rec[SVAL_PAD_PALM_RECORD_BYTES] = {0, 0};
+    CHECK(sval_pad_palm_record_read(rec) == 0, "never written: off");
+    rec[0] = 0xFF;
+    rec[1] = 0xFF;
+    CHECK(sval_pad_palm_record_read(rec) == 0, "erased flash: off");
+    sval_pad_palm_record_write(12, rec);
+    CHECK(rec[0] == 12 && rec[1] == (uint8_t)~12, "the byte and its complement");
+    CHECK(sval_pad_palm_record_read(rec) == 12, "reads back");
+    rec[0] = 200;
+    rec[1] = (uint8_t)~200;
+    CHECK(sval_pad_palm_record_read(rec) == 0, "above the pad's channels: off");
+    CHECK(sval_pad_palm_clamp(300) == SVAL_PAD_PALM_MAX && sval_pad_palm_clamp(7) == 7, "a write is clamped to the channels");
+    CHECK(!sval_pad_is_palm(0, 50), "off: nothing is a palm");
+    CHECK(!sval_pad_is_palm(10, 10) && sval_pad_is_palm(10, 11), "above the threshold is a palm");
+    CHECK(sval_pad_palm_sync_byte(9) == (SVAL_PAD_PALM_SYNC_VALID | 9), "sync byte marked");
+    CHECK(sval_pad_palm_sync_setting(false, 0, 9) == 9, "an older half with USB: keeps its own");
+    CHECK(sval_pad_palm_sync_setting(true, 5, 9) == 9, "an unmarked byte: keeps its own");
+    CHECK(sval_pad_palm_sync_setting(true, sval_pad_palm_sync_byte(0), 9) == 0, "off travels");
+    CHECK(sval_pad_palm_sync_setting(true, sval_pad_palm_sync_byte(20), 0) == 20, "a threshold travels");
+}
+
 int main(void) {
+    test_palm();
     test_defaults();
     test_switches();
     test_hold_time();

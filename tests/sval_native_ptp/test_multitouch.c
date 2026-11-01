@@ -16,6 +16,10 @@
 #define SVAL_PTP_HOST_TEST
 #define SVAL_TOUCH_DEV
 #define SVAL_TOUCH_OWNER_DEFAULT 3
+// The palm rejection threshold (VIA value 58 on the board): off unless a test sets it.
+#include <stdint.h>
+static uint8_t test_palm_at;
+#define SVAL_PTP_PALM_AREA test_palm_at
 #include "../../keyboards/svalboard/azoteq/multitouch.c" // brings mt_test_platform.h
 #include "../../keyboards/svalboard/azoteq/ptp.c"
 
@@ -574,6 +578,42 @@ static void test_pinch_flaky_link(void) {
 #endif
 }
 
+// Palm rejection on the mouse path: latched from the first contact above
+// the threshold until every finger lifts; off by default.
+static void test_palm_latch(void) {
+    uint8_t raw[45];
+    test_palm_at = 0;
+    raw_sample(raw, true, 500, 500);
+    raw[16] = 40; // a big contact
+    sval_mt_sample(raw, true);
+    assert(!sval_mt_palm()); // off: nothing is a palm
+    test_palm_at = 10;
+    raw_sample(raw, true, 500, 500);
+    raw[16] = 8; // a fingertip
+    sval_mt_sample(raw, true);
+    assert(!sval_mt_palm());
+    raw[16] = 11; // it spreads past the threshold
+    sval_mt_sample(raw, true);
+    assert(sval_mt_palm());
+    raw[16] = 6; // and shrinks again: still a palm until it lifts
+    sval_mt_sample(raw, true);
+    assert(sval_mt_palm());
+    sval_mt_sample(raw, false); // a failed read changes nothing
+    assert(sval_mt_palm());
+    raw_sample(raw, false, 0, 0);
+    sval_mt_sample(raw, true);
+    assert(!sval_mt_palm()); // lifted
+    raw_sample(raw, true, 500, 500);
+    raw[16] = 30;
+    sval_mt_sample(raw, true);
+    assert(sval_mt_palm());
+    test_palm_at = 0; // turned off while down: no palm
+    assert(!sval_mt_palm());
+    raw_sample(raw, false, 0, 0);
+    sval_mt_sample(raw, true);
+    puts("  palm rejection: off by default; latched above the threshold until the lift");
+}
+
 int main(void) {
     puts("native PTP split and contact path tests:");
     test_other_half();
@@ -585,6 +625,7 @@ int main(void) {
     test_reinit();
     test_owner();
     test_pinch_flaky_link();
+    test_palm_latch();
     puts("native PTP split and contact path: all passed");
     return 0;
 }

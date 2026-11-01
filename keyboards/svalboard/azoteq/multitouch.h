@@ -19,6 +19,7 @@ uint8_t sval_mt_split_hint(void);                       // half without USB: its
 void    sval_mt_remote_hint(uint8_t hint);              // USB half: the other half's counter
 bool    sval_mt_suppress_hand(uint8_t pad);             // this hand's pad mouse must be zero
 bool    sval_mt_os_touchpad(uint8_t pad);               // the OS drives this hand's pad
+bool    sval_mt_palm(void);                             // this half's pad has a palm down (palm rejection on): its mouse output stops
 
 // The touch page of 0x2D (touch_stream.c).
 void sval_touch_sample(const uint8_t *raw, bool valid); // one pad read, as sval_mt_sample

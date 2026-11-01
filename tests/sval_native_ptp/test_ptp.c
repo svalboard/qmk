@@ -3,7 +3,11 @@
 // Writes every report it "sends" to argv[1], which test_reports.py decodes
 // again with the descriptor's own layout.
 #define SVAL_PTP_HOST_TEST
-#define SVAL_PTP_PALM_AREA 200
+// The palm rejection threshold, a setting on the board (VIA value 58): a
+// variable here, so a test can turn it off and back on.
+#include <stdint.h>
+static uint8_t test_palm_at = 200;
+#define SVAL_PTP_PALM_AREA test_palm_at
 #define SVAL_PTP_KEY_BUTTONS 1
 // Longer than the keepalive, so the keepalive scenario sees a live pad.
 #define SVAL_PTP_STALE_MS 120
@@ -388,6 +392,30 @@ static void test_palm_area(void) {
     run(5000);
     assert(new_reports() == 1 && flags_of(last(), 0) == 0);
     puts("  palm area: Confidence cleared for good, contact still lifts normally");
+}
+
+static void test_palm_setting(void) {
+    start("palm-setting");
+    // Off (the default): a large contact is a finger, Confidence set.
+    test_palm_at = 0;
+    FEED(0, {0, 1, 100, 100, 250});
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 3);
+    up(0);
+    run(5000);
+    new_reports();
+    // A lower threshold, set while running: the same contact is a palm.
+    test_palm_at = 12;
+    FEED(0, {0, 2, 100, 100, 13}, {1, 3, 900, 900, 4});
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 2 && flags_of(last(), 1) == 3); // palm clear, finger kept
+    FEED(0, {0, 2, 100, 100, 12}, {1, 3, 905, 900, 4});
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 2 && flags_of(last(), 1) == 3); // once a palm, always
+    up(0);
+    run(5000);
+    test_palm_at = 200;
+    puts("  palm setting: off keeps every contact; a threshold set at run time clears only the palm's Confidence");
 }
 
 static void test_faults(void) {
@@ -941,6 +969,7 @@ int main(int argc, char **argv) {
     test_scan_time();
     test_palm();
     test_palm_area();
+    test_palm_setting();
     test_faults();
     test_stream_restart();
     test_leave_mode3();

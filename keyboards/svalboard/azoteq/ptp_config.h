@@ -19,7 +19,6 @@
 #    define SVAL_PTP_REMOTE_IDLE_MS 250  // the other pad is quiet: heartbeat (news is fetched at once)
 #    define SVAL_PTP_MIN_FRAME_US 4000   // at most 250 frames a second
 #    define SVAL_PTP_KEEPALIVE_MS 50     // repeat while down (Linux releases after 100 ms)
-#    define SVAL_PTP_PALM_AREA 0         // 0 off; contact area above this is a palm
 #    ifndef SVAL_PTP_KEY_BUTTONS
 #        define SVAL_PTP_KEY_BUTTONS 0 // 1: MS_BTN1/2 are touchpad Buttons 2/3 while it reports
 #    endif

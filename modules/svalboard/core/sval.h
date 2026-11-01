@@ -134,6 +134,12 @@ enum sval_feature_flags3 {
     sval_flag3_pad_gestures  = (1 << 4), // VIA values 51-54: the touchpad tap setting (Azoteq builds)
     sval_flag3_pad_tuning    = (1 << 5), // VIA values 55-57: the touchpad dead zone, tap time and scroll distance (Azoteq builds)
     sval_flag3_pad_touch     = (1 << 6), // 0x2D page 1: each pad's touch, live (native touchpad builds)
+    sval_flag3_pad_fingers   = (1 << 7), // 0x2D page 2: every finger on each pad, and the two-finger rule (native touchpad builds)
+};
+
+// Fourth feature byte, GET_INFO byte 21. Older firmware leaves it zero.
+enum sval_feature_flags4 {
+    sval_flag4_pad_palm = (1 << 0), // VIA value 58: the touchpad palm rejection (native touchpad builds)
 };
 
 // Status byte after the modifiers in the 0x16 reply (sval_flag2_modifier_state).
@@ -393,6 +399,7 @@ void sval_client_packet_kb(uint32_t client_id);
 
 // GET_INFO byte 20 (sval_feature_flags3). Weak, returns 0.
 uint8_t sval_get_feature_flags3_kb(void);
+uint8_t sval_get_feature_flags4_kb(void);
 // TYPING_PAUSE (0x3C): the keyboard handles data after [0xDF] [0x3C] in place:
 // [op] -> [op] [status] [...]. The module's weak default answers status 0xFF.
 void sval_typing_pause_kb(uint8_t *data, uint8_t length);
@@ -419,6 +426,7 @@ void sval_pointing_contacts_kb(uint8_t *out, uint8_t length);
 // POINTING_MOTION page 1 (0x2D with byte 3 = 1): the touch page. The keyboard
 // fills out[0..length-1] (already zeroed); it clears no motion counts.
 void sval_pointing_touch_kb(uint8_t *out, uint8_t length);
+void sval_pointing_fingers_kb(uint8_t *out, uint8_t length);
 
 // SIDE (0x33, SVAL_EITHER_HAND builds only): the keyboard handles data after
 // [0xDF] [0x33] in place: [op] [status] [...].

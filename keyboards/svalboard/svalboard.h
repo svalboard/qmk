@@ -87,6 +87,9 @@ typedef struct __attribute__((__packed__)) _presence_rpc_t {
     // The touchpad tuning (sval_pad_tune_sync_word(), pad_gestures.h), 16-bit,
     // appended the same way.
     uint16_t pad_tuning;
+    // The touchpad palm rejection (sval_pad_palm_sync_byte(), pad_gestures.h),
+    // appended the same way.
+    uint8_t pad_palm;
 } presence_rpc_t;
 
 // Which pointing module a half's firmware drives and which one answered, so a host
@@ -192,8 +195,12 @@ uint16_t sval_pad_tuning(void);
 // build's own, 0.01 mm, at the resolution the chip has.
 uint16_t sval_pad_scroll_in_force_mm100(void);
 uint16_t sval_pad_scroll_build_mm100(void);
-// Native touchpad builds (azoteq/touch_stream.c): the touch page of 0x2D.
+// Native touchpad builds (azoteq/touch_stream.c): the touch and fingers pages of 0x2D.
 bool     sval_pad_touch_supported(void);
+// The touchpad palm rejection (pad_gestures.h): the area threshold this half
+// uses now, 0 off. Native touchpad builds (azoteq/multitouch.c) apply it.
+uint8_t  sval_pad_palm(void);
+bool     sval_pad_palm_supported(void);
 uint8_t  sval_pad_hands(void);                                                  // hands whose pointing module is an Azoteq pad (bit 0 left, bit 1 right)
 void     sval_scan_timing(uint16_t *pre, uint16_t *post);                       // matrix.c
 uint8_t  sval_pushed_mask(bool thumbs);                                         // matrix.c

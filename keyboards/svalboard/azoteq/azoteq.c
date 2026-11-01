@@ -340,7 +340,16 @@ static void azo_gestures_task(void) {
     dprintf("IQS5XX: tap setting %02X %s\n", sval_pad_gestures(), status == I2C_STATUS_SUCCESS ? "written" : "FAILED");
 }
 
+#ifdef SVAL_AZOTEQ_MULTITOUCH
+// Palm rejection on the mouse path (multitouch.c): the buttons held when the palm landed.
+static bool    azo_palm;
+static uint8_t azo_palm_buttons;
+#endif
+
 report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
+#ifdef SVAL_AZOTEQ_MULTITOUCH
+    const uint8_t azo_before = azo_held_buttons;
+#endif
     azo_log_identity();
     azo_gestures_task();
 #ifdef SVAL_AZOTEQ_MULTITOUCH
@@ -386,6 +395,19 @@ report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
     }
 #endif
 
+#ifdef SVAL_AZOTEQ_MULTITOUCH
+    // Palm rejection (VIA value 58): while a palm is down, this pad's mouse
+    // output stops, as the chip's own palm detect stops it, and its taps
+    // don't click. A button held before it (a drag) stays as it was.
+    if (sval_mt_palm()) {
+        if (!azo_palm) azo_palm_buttons = azo_before;
+        azo_palm       = true;
+        mouse_report.x = mouse_report.y = mouse_report.h = mouse_report.v = 0;
+        azo_held_buttons                                                  = azo_palm_buttons;
+    } else {
+        azo_palm = false;
+    }
+#endif
     // Invert V-axis
     mouse_report.v       = -mouse_report.v;
     mouse_report.buttons = azo_held_buttons;

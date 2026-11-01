@@ -175,7 +175,130 @@ static void test_merge(void) {
     CHECK(held[1] == (SVAL_TOUCH_EV_DOWN | SVAL_TOUCH_EV_DRIFT | SVAL_TOUCH_EV_UP), "and keeps the events not yet read");
 }
 
+// A 45-byte read from 0x000C: fingers at pixel positions with an area each,
+// and the gesture bytes.
+typedef struct {
+    uint8_t  slot;
+    uint16_t x, y;
+    uint8_t  area;
+} slot_t;
+
+static void raw_read(uint8_t *raw, uint8_t ge1, uint8_t info1, int n, const slot_t *s) {
+    memset(raw, 0, 45);
+    raw[2] = ge1;
+    raw[4] = info1;
+    raw[5] = (uint8_t)n;
+    for (int i = 0; i < n; i++) {
+        uint8_t *p = raw + 10 + 7 * s[i].slot;
+        p[0]       = s[i].x >> 8;
+        p[1]       = s[i].x & 0xFF;
+        p[2]       = s[i].y >> 8;
+        p[3]       = s[i].y & 0xFF;
+        p[5]       = 50; // strength
+        p[6]       = s[i].area;
+    }
+}
+
+static uint32_t pos(const uint8_t *p) {
+    return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16;
+}
+
+static void test_fingers(void) {
+    sval_pad_fingers_t f = {0};
+    uint8_t            raw[45], b[SVAL_FINGERS_BLOCK_BYTES];
+    sval_pad_fingers_pack(&f, &cfg, 0, b);
+    CHECK(b[0] == 0, "never read: not valid");
+    raw_read(raw, 0, 0, 0, NULL);
+    sval_pad_fingers_sample(&f, &cfg, false, raw, 0);
+    sval_pad_fingers_pack(&f, &cfg, 0, b);
+    CHECK(b[0] == 0, "a failed read changes nothing");
+
+    // Three fingers: every slot's position (0.02 mm) and area.
+    const slot_t three[3] = {{0, 1024, 896, 3}, {1, 512, 448, 4}, {3, 2047, 1791, 12}};
+    raw_read(raw, 0, 0, 3, three);
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 100);
+    sval_pad_fingers_pack(&f, &cfg, 100, b);
+    CHECK(b[0] == SVAL_FINGERS_VALID, "valid, no two-finger touch (%02X)", b[0]);
+    CHECK(b[1] == 0x0B, "slots 0, 1 and 3 (%02X)", b[1]);
+    CHECK((pos(b + 2) & 0xFFF) == 1075 && (pos(b + 2) >> 12) == 1000, "slot 0 at the middle, 0.02 mm: %u %u", pos(b + 2) & 0xFFF, pos(b + 2) >> 12);
+    CHECK(b[5] == 3 && b[9] == 4 && b[17] == 12, "areas %u %u %u", b[5], b[9], b[17]);
+    CHECK(pos(b + 10) == 0 && b[13] == 0, "an empty slot is zero");
+    CHECK((pos(b + 14) & 0xFFF) == 2149 && (pos(b + 14) >> 12) == 1999, "slot 3 at the far corner: %u %u", pos(b + 14) & 0xFFF, pos(b + 14) >> 12);
+    CHECK(pos(b + 18) == 0, "slot 4 empty");
+
+    // The chip's palm and too-many flags (0x0011 bits 1, 2) pass through.
+    raw_read(raw, 0, 0x06, 0, NULL);
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 110);
+    sval_pad_fingers_pack(&f, &cfg, 110, b);
+    CHECK(b[0] == (SVAL_FINGERS_VALID | SVAL_FINGERS_PALM | SVAL_FINGERS_TOO_MANY) && b[1] == 0, "palm and too many (%02X)", b[0]);
+}
+
+static void test_two_fingers(void) {
+    sval_pad_fingers_t f = {0};
+    uint8_t            raw[45], b[SVAL_FINGERS_BLOCK_BYTES];
+    // One finger, then a second lands: the two-finger touch starts there.
+    const slot_t one[1] = {{0, 800, 900, 3}};
+    raw_read(raw, 0, 0, 1, one);
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 1000);
+    slot_t two[2] = {{0, 800, 900, 3}, {1, 1200, 900, 3}};
+    raw_read(raw, 0, 0, 2, two);
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 1020);
+    sval_pad_fingers_pack(&f, &cfg, 1020, b);
+    CHECK(b[0] == (SVAL_FINGERS_VALID | SVAL_FINGERS_TWO | SVAL_FINGERS_HAD_TWO), "two fingers: live (%02X)", b[0]);
+    // Centroid 1000, 900 px = 21.0, 20.09 mm = 1050, 1005 in 0.02 mm.
+    CHECK((pos(b + 22) & 0xFFF) == 1050 && (pos(b + 22) >> 12) == 1005, "start centroid %u %u", pos(b + 22) & 0xFFF, pos(b + 22) >> 12);
+    CHECK(b[25] == 0 && b[26] == 0, "no travel yet");
+    // Both move 48 px down (1.07 mm): the average travel is 1.07 mm.
+    two[0].y = two[1].y = 948;
+    raw_read(raw, 0, 0, 2, two);
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 1100);
+    sval_pad_fingers_pack(&f, &cfg, 1100, b);
+    CHECK(b[25] == 21, "average travel 1.07 mm = 21 x 0.05 mm (%u)", b[25]);
+    CHECK(b[26] == 20, "80 ms since the second landed (%u x 4)", b[26]);
+    CHECK(!(b[0] & SVAL_FINGERS_SCROLL), "no scroll yet");
+    // Only one moves on, 96 px from its start: the average is half the sum.
+    two[1].y = 996;
+    raw_read(raw, 0x02, 0, 2, two); // and the chip reports a scroll
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 1120);
+    sval_pad_fingers_pack(&f, &cfg, 1120, b);
+    CHECK(b[25] == 32, "average of 1.07 and 2.14 mm: 1.61 mm = 32 (%u)", b[25]);
+    CHECK(b[0] & SVAL_FINGERS_SCROLL, "the chip's scroll shows");
+    // A third finger ends the two-finger touch; its numbers stay.
+    const slot_t three[3] = {{0, 800, 948, 3}, {1, 1200, 996, 3}, {2, 1600, 400, 3}};
+    raw_read(raw, 0, 0, 3, three);
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 1200);
+    sval_pad_fingers_pack(&f, &cfg, 1200, b);
+    CHECK(!(b[0] & SVAL_FINGERS_TWO) && (b[0] & SVAL_FINGERS_HAD_TWO) && b[25] == 32 && b[26] == 25, "a third finger ends it; the last numbers stay (%02X %u %u)", b[0], b[25], b[26]);
+    // Back to two after a third: the chip needs a new touch first.
+    raw_read(raw, 0, 0, 2, two);
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 1220);
+    sval_pad_fingers_pack(&f, &cfg, 1220, b);
+    CHECK(!(b[0] & SVAL_FINGERS_TWO), "three to two: no new two-finger touch");
+    // All lift; two land again: a new one, scroll cleared.
+    raw_read(raw, 0, 0, 0, NULL);
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 1300);
+    raw_read(raw, 0, 0, 2, two);
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 1400);
+    sval_pad_fingers_pack(&f, &cfg, 1400, b);
+    CHECK((b[0] & SVAL_FINGERS_TWO) && !(b[0] & SVAL_FINGERS_SCROLL) && b[25] == 0, "a fresh two-finger touch (%02X)", b[0]);
+    // Both lift together and the chip reports a two-finger tap: an event, cleared by the read.
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 1480);
+    raw_read(raw, 0x01, 0, 0, NULL);
+    sval_pad_fingers_sample(&f, &cfg, true, raw, 1490);
+    sval_pad_fingers_pack(&f, &cfg, 1490, b);
+    CHECK((b[0] & SVAL_FINGERS_TWO_TAP) && !(b[0] & SVAL_FINGERS_TWO) && b[1] == 0, "two-finger tap at the lift (%02X)", b[0]);
+    CHECK(b[26] == 20, "it lasted 80 ms (%u)", b[26]);
+    sval_pad_fingers_pack(&f, &cfg, 1500, b);
+    CHECK(!(b[0] & SVAL_FINGERS_TWO_TAP), "read once");
+    // The merge keeps a tap not yet read.
+    uint8_t held[SVAL_FINGERS_BLOCK_BYTES] = {SVAL_FINGERS_VALID | SVAL_FINGERS_TWO_TAP}, fresh[SVAL_FINGERS_BLOCK_BYTES] = {SVAL_FINGERS_VALID};
+    sval_pad_fingers_merge(held, fresh);
+    CHECK(held[0] == (SVAL_FINGERS_VALID | SVAL_FINGERS_TWO_TAP), "merge keeps the tap");
+}
+
 int main(void) {
+    test_fingers();
+    test_two_fingers();
     test_idle();
     test_tap();
     test_drift();

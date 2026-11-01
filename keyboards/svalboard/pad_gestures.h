@@ -113,3 +113,29 @@ void sval_pad_tune_regs_apply(uint16_t t, uint16_t xres, uint16_t scroll_build_p
 #define SVAL_PAD_TUNE_SYNC_VALID 0x8000
 uint16_t sval_pad_tune_sync_word(uint16_t t);
 uint16_t sval_pad_tune_sync_setting(bool present, uint16_t sync_word, uint16_t current);
+
+// ---------------------------------------------------------------- palm rejection
+//
+// The touchpad palm rejection (VIA value 58, sval_flag4_pad_palm; native
+// touchpad builds): a contact whose area, in the chip's channels (about
+// 5.4 x 5.7 mm each on the TPS43), is above this is a palm. 0 is off, the
+// default (what every build did before it). One byte, 0-56 (the TPS43 has
+// 8 x 7 channels).
+#define SVAL_PAD_PALM_MAX 56
+uint8_t sval_pad_palm_clamp(uint16_t area);
+
+// Stored after the tuning's record: the byte and its complement. Two bytes
+// that don't check out, or a value above SVAL_PAD_PALM_MAX, read as 0 (off).
+#define SVAL_PAD_PALM_RECORD_BYTES 2
+void    sval_pad_palm_record_write(uint8_t palm, uint8_t rec[SVAL_PAD_PALM_RECORD_BYTES]);
+uint8_t sval_pad_palm_record_read(const uint8_t rec[SVAL_PAD_PALM_RECORD_BYTES]);
+
+// Split sync, as the tap setting's: bit 7 marks a setting.
+#define SVAL_PAD_PALM_SYNC_VALID 0x80
+uint8_t sval_pad_palm_sync_byte(uint8_t palm);
+uint8_t sval_pad_palm_sync_setting(bool present, uint8_t sync_byte, uint8_t current);
+
+// A contact of this area is a palm under this setting.
+static inline bool sval_pad_is_palm(uint8_t palm, uint8_t area) {
+    return palm && area > palm;
+}
