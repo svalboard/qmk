@@ -235,3 +235,21 @@ void sval_pad_fingers_take(uint8_t snap[SVAL_FINGERS_BLOCK_BYTES], uint8_t out[S
     memcpy(out, snap, SVAL_FINGERS_BLOCK_BYTES);
     snap[0] &= (uint8_t)~SVAL_FINGERS_TWO_TAP;
 }
+
+void sval_pad_touch_reply(uint8_t snap[SVAL_TOUCH_BLOCK_BYTES], uint8_t out[SVAL_TOUCH_BLOCK_BYTES], bool fresh) {
+    if (fresh) {
+        memset(snap, 0, SVAL_TOUCH_BLOCK_BYTES);
+        memset(out, 0, SVAL_TOUCH_BLOCK_BYTES);
+        return;
+    }
+    sval_pad_touch_take(snap, out);
+}
+
+void sval_pad_fingers_reply(uint8_t snap[SVAL_FINGERS_BLOCK_BYTES], uint8_t out[SVAL_FINGERS_BLOCK_BYTES], bool fresh) {
+    if (fresh) {
+        memset(snap, 0, SVAL_FINGERS_BLOCK_BYTES);
+        memset(out, 0, SVAL_FINGERS_BLOCK_BYTES);
+        return;
+    }
+    sval_pad_fingers_take(snap, out);
+}

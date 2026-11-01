@@ -34,7 +34,7 @@
 #ifndef SVAL_HOST_ACTIVE_MS
 #    define SVAL_HOST_ACTIVE_MS 1500
 #endif
-#define SVAL_FINGERS_RPC_OP 0xA9                                // [op] -> [op][bit 0 a block][27-byte block]
+#define SVAL_FINGERS_RPC_OP 0xA9                              // [op] -> [op][bit 0 a block][27-byte block]
 #define SVAL_FINGERS_RPC_REPLY (2 + SVAL_FINGERS_BLOCK_BYTES) // 29: fits the 32-byte reply
 _Static_assert(SVAL_TOUCH_RPC_REPLY <= SVAL_MT_RPC_REPLY && SVAL_FINGERS_RPC_REPLY <= SVAL_MT_RPC_REPLY, "the touch replies fit the split RPC");
 #define SVAL_FINGERS_PAGE_FORMAT 1
@@ -154,21 +154,24 @@ void sval_touch_sample(const uint8_t *raw, bool valid) {
 // it copies the snapshot the main loop packed (and takes its events).
 bool sval_touch_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint8_t *out) {
     if (in_len >= 1 && in[0] == SVAL_FINGERS_RPC_OP && out_len >= SVAL_FINGERS_RPC_REPLY) {
+        const bool fresh = !fingers_wanted(); // the first request after a pause: not the old session's snapshot
         want_fingers();
         memset(out, 0, SVAL_FINGERS_RPC_REPLY);
         out[0] = SVAL_FINGERS_RPC_OP;
         osalSysLock();
-        sval_pad_fingers_take(fingers_snap, &out[2]);
+        sval_pad_fingers_reply(fingers_snap, &out[2], fresh);
         osalSysUnlock();
         out[1] = (out[2] & SVAL_FINGERS_VALID) ? 1 : 0;
         return true;
     }
     if (in_len < 1 || in[0] != SVAL_TOUCH_RPC_OP || out_len < SVAL_TOUCH_RPC_REPLY) return false;
+    const bool fresh = !wanted(); // the first request after a pause: not the old session's snapshot
     want();
     memset(out, 0, SVAL_TOUCH_RPC_REPLY);
     out[0] = SVAL_TOUCH_RPC_OP;
     osalSysLock();
-    sval_pad_touch_take(touch_snap, &out[2]);
+    sval_pad_touch_reply(touch_snap, &out[2], fresh);
+    if (fresh) memset(size_snap, 0, sizeof(size_snap));
     memcpy(&out[2 + SVAL_TOUCH_BLOCK_BYTES], size_snap, SVAL_TOUCH_SIZE_BYTES);
     osalSysUnlock();
     out[1] = (out[2] & SVAL_TOUCH_VALID) ? 1 : 0;
@@ -258,8 +261,8 @@ void sval_pointing_fingers_kb(uint8_t *out, uint8_t length) {
     if (length < SVAL_FINGERS_PAGE_BYTES || !is_keyboard_master()) return;
     want_fingers();
     apply_fresh();
-    out[0] = SVAL_FINGERS_PAGE_FORMAT;
-    out[1] = sval_pad_palm();
+    out[0]                     = SVAL_FINGERS_PAGE_FORMAT;
+    out[1]                     = sval_pad_palm();
     const bool           left  = is_keyboard_left();
     uint8_t             *mine  = &out[left ? 2 : 2 + SVAL_FINGERS_BLOCK_BYTES];
     uint8_t             *other = &out[left ? 2 + SVAL_FINGERS_BLOCK_BYTES : 2];

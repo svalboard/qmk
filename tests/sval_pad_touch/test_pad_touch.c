@@ -322,7 +322,28 @@ static void test_snapshot_handoff(void) {
     CHECK(!(fo[0] & SVAL_FINGERS_TWO_TAP), "and goes out once");
 }
 
+// The first request after a pause: the snapshot still holds the previous
+// session (a finger down, its events). The reply is zero, and so is the
+// snapshot after it, until the main loop packs the new session.
+static void test_fresh_reply(void) {
+    uint8_t snap[SVAL_TOUCH_BLOCK_BYTES] = {0}, out[SVAL_TOUCH_BLOCK_BYTES];
+    snap[0]                              = SVAL_TOUCH_VALID | SVAL_TOUCH_DOWN | (1 << 4);
+    snap[1]                              = SVAL_TOUCH_EV_DOWN | SVAL_TOUCH_EV_TAP;
+    sval_pad_touch_reply(snap, out, true);
+    uint8_t any = 0;
+    for (int i = 0; i < SVAL_TOUCH_BLOCK_BYTES; i++)
+        any |= out[i] | snap[i];
+    CHECK(any == 0, "a fresh start answers zero and clears the old session (%02X %02X)", out[0], out[1]);
+    snap[0] = SVAL_TOUCH_VALID;
+    sval_pad_touch_reply(snap, out, false);
+    CHECK(out[0] == SVAL_TOUCH_VALID, "later requests take the snapshot");
+    uint8_t fs[SVAL_FINGERS_BLOCK_BYTES] = {SVAL_FINGERS_VALID | SVAL_FINGERS_TWO_TAP, 0x03}, fo[SVAL_FINGERS_BLOCK_BYTES];
+    sval_pad_fingers_reply(fs, fo, true);
+    CHECK(fo[0] == 0 && fo[1] == 0 && fs[0] == 0 && fs[1] == 0, "fingers: a fresh start answers zero and clears the old session (%02X %02X)", fo[0], fo[1]);
+}
+
 int main(void) {
+    test_fresh_reply();
     test_snapshot_handoff();
     test_fingers();
     test_two_fingers();
