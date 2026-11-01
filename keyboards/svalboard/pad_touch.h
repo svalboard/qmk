@@ -121,3 +121,9 @@ void sval_pad_fingers_pack(sval_pad_fingers_t *f, const sval_pad_touch_cfg_t *cf
 
 // A packed block's two-finger tap ORed into another's (as sval_pad_touch_merge).
 void sval_pad_fingers_merge(uint8_t held[SVAL_FINGERS_BLOCK_BYTES], const uint8_t fresh[SVAL_FINGERS_BLOCK_BYTES]);
+
+// The half without USB answers the split callback from a snapshot the main
+// loop updates (merge, above) under a lock: take copies it out and clears the
+// events it carries, so each event goes out once.
+void sval_pad_touch_take(uint8_t snap[SVAL_TOUCH_BLOCK_BYTES], uint8_t out[SVAL_TOUCH_BLOCK_BYTES]);
+void sval_pad_fingers_take(uint8_t snap[SVAL_FINGERS_BLOCK_BYTES], uint8_t out[SVAL_FINGERS_BLOCK_BYTES]);

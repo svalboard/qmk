@@ -225,3 +225,13 @@ void sval_pad_fingers_merge(uint8_t held[SVAL_FINGERS_BLOCK_BYTES], const uint8_
     memcpy(held, fresh, SVAL_FINGERS_BLOCK_BYTES);
     if (held[0] & SVAL_FINGERS_VALID) held[0] |= tap;
 }
+
+void sval_pad_touch_take(uint8_t snap[SVAL_TOUCH_BLOCK_BYTES], uint8_t out[SVAL_TOUCH_BLOCK_BYTES]) {
+    memcpy(out, snap, SVAL_TOUCH_BLOCK_BYTES);
+    snap[1] = 0;
+}
+
+void sval_pad_fingers_take(uint8_t snap[SVAL_FINGERS_BLOCK_BYTES], uint8_t out[SVAL_FINGERS_BLOCK_BYTES]) {
+    memcpy(out, snap, SVAL_FINGERS_BLOCK_BYTES);
+    snap[0] &= (uint8_t)~SVAL_FINGERS_TWO_TAP;
+}

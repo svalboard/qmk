@@ -13,6 +13,7 @@
 // every SVAL_TOUCH_FETCH_MS while that lasts, and never otherwise. Nothing
 // here changes what the pads report.
 #include "quantum.h"
+#include "hal.h"
 #include "transactions.h"
 #include "transport.h"
 #include "split_util.h"
@@ -59,6 +60,13 @@ static sval_pad_fingers_t fingers;
 static uint32_t           fingers_until, fingers_fetched_at, remote_fingers_at;
 static bool               fingers_once;
 static uint8_t            remote_fingers[SVAL_FINGERS_BLOCK_BYTES];
+// Half without USB: the blocks the split callback answers with, packed in the
+// main loop after each pad read and copied under osalSysLock (as multitouch.c
+// does its snapshot), so a reply never races the pad read. Events stay in
+// them until a reply carries them. A fresh start (the first request after a
+// pause) is applied in the main loop, never from the callback.
+static uint8_t       touch_snap[SVAL_TOUCH_BLOCK_BYTES], size_snap[SVAL_TOUCH_SIZE_BYTES], fingers_snap[SVAL_FINGERS_BLOCK_BYTES];
+static volatile bool fresh_page, fresh_fingers;
 
 bool sval_pad_touch_supported(void) {
     return true;
@@ -68,8 +76,10 @@ static bool wanted(void) {
     return wanted_once && (int32_t)(wanted_until - timer_read32()) > 0;
 }
 
+// A fresh start (no touch from before) is applied by the main loop
+// (apply_fresh), so this is safe from the split callback too.
 static void want(void) {
-    if (!wanted()) memset(&local, 0, sizeof(local)); // a fresh start: no touch from before
+    if (!wanted()) fresh_page = true;
     wanted_until = timer_read32() + SVAL_HOST_ACTIVE_MS;
     wanted_once  = true;
 }
@@ -79,36 +89,77 @@ static bool fingers_wanted(void) {
 }
 
 static void want_fingers(void) {
-    if (!fingers_wanted()) memset(&fingers, 0, sizeof(fingers));
+    if (!fingers_wanted()) fresh_fingers = true;
     fingers_until = timer_read32() + SVAL_HOST_ACTIVE_MS;
     fingers_once  = true;
 }
 
+// Main loop only.
+static void apply_fresh(void) {
+    if (fresh_page) {
+        fresh_page = false;
+        memset(&local, 0, sizeof(local));
+        osalSysLock();
+        memset(touch_snap, 0, sizeof(touch_snap));
+        memset(size_snap, 0, sizeof(size_snap));
+        osalSysUnlock();
+    }
+    if (fresh_fingers) {
+        fresh_fingers = false;
+        memset(&fingers, 0, sizeof(fingers));
+        osalSysLock();
+        memset(fingers_snap, 0, sizeof(fingers_snap));
+        osalSysUnlock();
+    }
+}
+
 // One pad read (multitouch.c): raw is the 45 bytes from register 0x000C.
 void sval_touch_sample(const uint8_t *raw, bool valid) {
+    apply_fresh();
     const bool page = wanted(), all = fingers_wanted();
     if (!page && !all) return;
     sval_pad_touch_cfg_t cfg;
     sval_pad_touch_config(&cfg);
+    const uint32_t now    = timer_read32();
+    const bool     master = is_keyboard_master();
     // Every finger slot is in this same read: no I2C of its own.
-    if (all) sval_pad_fingers_sample(&fingers, &cfg, valid, raw, timer_read32());
+    if (all) {
+        sval_pad_fingers_sample(&fingers, &cfg, valid, raw, now);
+        if (!master) {
+            uint8_t blk[SVAL_FINGERS_BLOCK_BYTES];
+            sval_pad_fingers_pack(&fingers, &cfg, now, blk);
+            osalSysLock();
+            sval_pad_fingers_merge(fingers_snap, blk);
+            osalSysUnlock();
+        }
+    }
     if (!page) return;
     const uint16_t x = (uint16_t)raw[10] << 8 | raw[11], y = (uint16_t)raw[12] << 8 | raw[13];
-    sval_pad_touch_sample(&local, &cfg, valid, raw[5], raw[1], raw[2], x, y, timer_read32());
+    sval_pad_touch_sample(&local, &cfg, valid, raw[5], raw[1], raw[2], x, y, now);
     // The first finger's strength and area come in the same read: no I2C of its own.
     if (valid && raw[5] <= 5) sval_pad_touch_size(&local, raw[5], (uint16_t)raw[14] << 8 | raw[15], raw[16]);
+    if (!master) {
+        uint8_t blk[SVAL_TOUCH_BLOCK_BYTES], size[SVAL_TOUCH_SIZE_BYTES];
+        sval_pad_touch_pack(&local, &cfg, now, blk);
+        sval_pad_touch_pack_size(&local, size);
+        osalSysLock();
+        sval_pad_touch_merge(touch_snap, blk);
+        memcpy(size_snap, size, sizeof(size_snap));
+        osalSysUnlock();
+    }
 }
 
 // Half without USB: the USB half asks for this pad's block. Runs in the split
-// transport's callback: no I2C, no waiting.
+// transport's callback: no I2C, no waiting, and no touching the pad state:
+// it copies the snapshot the main loop packed (and takes its events).
 bool sval_touch_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint8_t *out) {
     if (in_len >= 1 && in[0] == SVAL_FINGERS_RPC_OP && out_len >= SVAL_FINGERS_RPC_REPLY) {
         want_fingers();
         memset(out, 0, SVAL_FINGERS_RPC_REPLY);
         out[0] = SVAL_FINGERS_RPC_OP;
-        sval_pad_touch_cfg_t cfg;
-        sval_pad_touch_config(&cfg);
-        sval_pad_fingers_pack(&fingers, &cfg, timer_read32(), &out[2]);
+        osalSysLock();
+        sval_pad_fingers_take(fingers_snap, &out[2]);
+        osalSysUnlock();
         out[1] = (out[2] & SVAL_FINGERS_VALID) ? 1 : 0;
         return true;
     }
@@ -116,10 +167,10 @@ bool sval_touch_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint8_t 
     want();
     memset(out, 0, SVAL_TOUCH_RPC_REPLY);
     out[0] = SVAL_TOUCH_RPC_OP;
-    sval_pad_touch_cfg_t cfg;
-    sval_pad_touch_config(&cfg);
-    sval_pad_touch_pack(&local, &cfg, timer_read32(), &out[2]);
-    sval_pad_touch_pack_size(&local, &out[2 + SVAL_TOUCH_BLOCK_BYTES]);
+    osalSysLock();
+    sval_pad_touch_take(touch_snap, &out[2]);
+    memcpy(&out[2 + SVAL_TOUCH_BLOCK_BYTES], size_snap, SVAL_TOUCH_SIZE_BYTES);
+    osalSysUnlock();
     out[1] = (out[2] & SVAL_TOUCH_VALID) ? 1 : 0;
     return true;
 }
@@ -165,6 +216,7 @@ static void put16(uint8_t *p, uint16_t v) {
 void sval_pointing_touch_kb(uint8_t *out, uint8_t length) {
     if (length < SVAL_TOUCH_PAGE_BYTES || !is_keyboard_master()) return;
     want();
+    apply_fresh(); // a raw HID request runs in the main loop: start fresh before packing
     const uint8_t  s = sval_pad_gestures();
     const uint16_t t = sval_pad_tuning();
     out[0]           = SVAL_TOUCH_PAGE_FORMAT;
@@ -205,6 +257,7 @@ void sval_pointing_touch_kb(uint8_t *out, uint8_t length) {
 void sval_pointing_fingers_kb(uint8_t *out, uint8_t length) {
     if (length < SVAL_FINGERS_PAGE_BYTES || !is_keyboard_master()) return;
     want_fingers();
+    apply_fresh();
     out[0] = SVAL_FINGERS_PAGE_FORMAT;
     out[1] = sval_pad_palm();
     const bool           left  = is_keyboard_left();

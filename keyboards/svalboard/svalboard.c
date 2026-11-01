@@ -109,8 +109,8 @@ uint8_t sval_pad_palm(void) {
     return pad_palm;
 }
 
-static void pad_palm_set(uint8_t p) {
-    pad_palm = sval_pad_palm_clamp(p);
+static void pad_palm_set(uint16_t p) {
+    pad_palm = sval_pad_palm_clamp(p); // a write above 56 stores 56 (docs/protocol.md)
 }
 
 // The touchpad mode (pad_gestures.h): Automatic (0, the default) or built-in
@@ -1350,7 +1350,7 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     pad_tuning_set(sval_pad_tune_with_tap_ms(pad_tuning, value_data[0] | (value_data[1] << 8)));
                     break;
                 case id_pad_palm:
-                    pad_palm_set(value_data[0] | (value_data[1] << 8));
+                    pad_palm_set(sval_pad_palm_from_value(value_data));
                     break;
                 case id_pad_touchpad_mode:
                     pad_mode_set(value_data[0]);

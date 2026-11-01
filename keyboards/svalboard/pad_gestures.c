@@ -218,3 +218,25 @@ uint8_t sval_pad_palm_sync_setting(bool present, uint8_t sync_byte, uint8_t curr
     if (!present || !(sync_byte & SVAL_PAD_PALM_SYNC_VALID)) return current;
     return sval_pad_palm_clamp(sync_byte & 0x7F);
 }
+
+uint8_t sval_palm_mouse_buttons(sval_palm_mouse_t *s, bool palm_before, bool palm_after, uint8_t before, uint8_t now) {
+    // The latch clears in the all-up read, which is also the read that carries
+    // a tap or a two-finger tap: a palm before or after this read both count.
+    if (!palm_before && !palm_after) {
+        s->on = false;
+        return now;
+    }
+    if (!s->on) {
+        s->on      = true;
+        s->buttons = before;
+    }
+    // Only buttons the driver still holds: a drag ends when the chip ends it.
+    // Sending a button the driver let go would hand it back as "outside" (a
+    // mouse key's), held for good.
+    s->buttons &= now;
+    return s->buttons;
+}
+
+uint8_t sval_pad_palm_from_value(const uint8_t value[2]) {
+    return sval_pad_palm_clamp((uint16_t)(value[0] | (value[1] << 8)));
+}

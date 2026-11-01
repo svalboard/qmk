@@ -160,3 +160,21 @@ uint8_t sval_pad_mode_sync_setting(bool present, uint8_t sync_byte, uint8_t curr
 static inline bool sval_pad_is_palm(uint8_t palm, uint8_t area) {
     return palm && area > palm;
 }
+
+// ---------------------------------------------------------------- palm on the mouse path
+//
+// While a palm is down (palm rejection, multitouch.c), the pad's mouse output
+// stops and its taps don't click (azoteq.c). One pad report: palm_before and
+// palm_after are the palm latch before and after this pad read (the latch
+// clears in the all-up read, the same read that carries a tap, so either
+// counts); before is the buttons going into the read, now the driver's
+// buttons after it. Returns the buttons to send: those held when the palm
+// landed, for as long as the driver still holds them, and nothing new.
+typedef struct {
+    bool    on;      // a palm was down at the last report
+    uint8_t buttons; // the buttons still allowed through
+} sval_palm_mouse_t;
+uint8_t sval_palm_mouse_buttons(sval_palm_mouse_t *s, bool palm_before, bool palm_after, uint8_t before, uint8_t now);
+
+// VIA value 58 as written (16-bit little-endian): the threshold it stores, clamped to SVAL_PAD_PALM_MAX.
+uint8_t sval_pad_palm_from_value(const uint8_t value[2]);

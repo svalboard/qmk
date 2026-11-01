@@ -307,7 +307,83 @@ static void test_mode(void) {
     CHECK(sval_pad_mode_sync_setting(true, 0x80, SVAL_PAD_MODE_BUILTIN) == SVAL_PAD_MODE_AUTO, "Automatic travels");
 }
 
+// The palm on the mouse path, with the Azoteq driver's button ownership in
+// the loop (drivers/sensors/azoteq_iqs5xx.c azoteq_iqs5xx_get_report): a
+// button in the report passed back in that the chip's gesture doesn't own is
+// "outside" (a mouse key) and kept; the gesture's own button follows the chip.
+typedef struct {
+    uint8_t owned, last;
+    sval_palm_mouse_t palm;
+} mouse_t;
+
+static uint8_t driver(mouse_t *m, uint8_t in, uint8_t gesture) {
+    const uint8_t outside = in & ~m->owned;
+    m->owned              = gesture & ~outside;
+    return outside | gesture;
+}
+
+// One report: the chip's gesture button this read, and the palm latch before and after it.
+static uint8_t mouse_report(mouse_t *m, uint8_t gesture, bool palm_before, bool palm_after) {
+    const uint8_t before = m->last;
+    const uint8_t now    = driver(m, m->last, gesture);
+    m->last              = sval_palm_mouse_buttons(&m->palm, palm_before, palm_after, before, now);
+    return m->last;
+}
+
+static void test_palm_mouse(void) {
+    // A tap's one-read click, then a palm on the very next read: released, never stuck.
+    mouse_t m = {0};
+    uint8_t b[6];
+    b[0] = mouse_report(&m, 1, false, false);
+    b[1] = mouse_report(&m, 0, false, true);
+    b[2] = mouse_report(&m, 0, true, true);
+    b[3] = mouse_report(&m, 0, true, false);
+    b[4] = mouse_report(&m, 0, false, false);
+    b[5] = mouse_report(&m, 0, false, false);
+    CHECK(b[0] == 1 && b[1] == 0 && b[2] == 0 && b[3] == 0 && b[4] == 0 && b[5] == 0, "tap then palm: the click ends (%u %u %u %u %u %u)", b[0], b[1], b[2], b[3], b[4], b[5]);
+    // A drag (press and hold), the heel of the hand lands, the drag finger lifts first.
+    m = (mouse_t){0};
+    b[0] = mouse_report(&m, 1, false, false);
+    b[1] = mouse_report(&m, 1, false, true); // the drag goes on under the palm
+    b[2] = mouse_report(&m, 0, true, true);  // the chip ends the hold
+    b[3] = mouse_report(&m, 0, true, true);
+    b[4] = mouse_report(&m, 0, true, false); // all up
+    b[5] = mouse_report(&m, 0, false, false);
+    CHECK(b[1] == 1, "the drag held through the palm landing");
+    CHECK(b[2] == 0 && b[3] == 0 && b[4] == 0 && b[5] == 0, "the drag ends when the chip ends it, never stuck (%u %u %u %u)", b[2], b[3], b[4], b[5]);
+    // A new tap under the palm doesn't click.
+    m = (mouse_t){0};
+    mouse_report(&m, 0, false, true);
+    CHECK(mouse_report(&m, 1, true, true) == 0, "a tap under the palm doesn't click");
+    // A palm brush: the chip reports the tap in the lift read, where the latch clears.
+    m = (mouse_t){0};
+    b[0] = mouse_report(&m, 0, false, true);
+    b[1] = mouse_report(&m, 0, true, true);
+    b[2] = mouse_report(&m, 1, true, false); // lift read: tap, latch now clear
+    b[3] = mouse_report(&m, 0, false, false);
+    CHECK(b[2] == 0 && b[3] == 0, "a palm's own tap at the lift doesn't click (%u %u)", b[2], b[3]);
+    // A palm and a fingertip lifting together: the two-finger tap (right button) doesn't click.
+    m = (mouse_t){0};
+    mouse_report(&m, 0, false, true);
+    CHECK(mouse_report(&m, 2, true, false) == 0, "a palm's two-finger tap doesn't right click");
+    // No palm: taps and drags pass, and a mouse key's button is kept.
+    m = (mouse_t){0};
+    CHECK(mouse_report(&m, 1, false, false) == 1 && mouse_report(&m, 0, false, false) == 0, "no palm: a tap clicks and releases");
+    m = (mouse_t){0};
+    m.last = 4; // a mouse key held (outside the driver)
+    CHECK(mouse_report(&m, 0, false, true) == 4 && mouse_report(&m, 0, true, false) == 4, "a mouse key held across a palm stays");
+}
+
+static void test_palm_via(void) {
+    const uint8_t v256[2] = {0x00, 0x01}, v300[2] = {0x2C, 0x01}, v12[2] = {12, 0};
+    CHECK(sval_pad_palm_from_value(v256) == SVAL_PAD_PALM_MAX, "a write of 256 stores 56, not 0 (%u)", sval_pad_palm_from_value(v256));
+    CHECK(sval_pad_palm_from_value(v300) == SVAL_PAD_PALM_MAX, "a write of 300 stores 56, not 44 (%u)", sval_pad_palm_from_value(v300));
+    CHECK(sval_pad_palm_from_value(v12) == 12, "12 stays 12");
+}
+
 int main(void) {
+    test_palm_mouse();
+    test_palm_via();
     test_mode();
     test_palm();
     test_defaults();

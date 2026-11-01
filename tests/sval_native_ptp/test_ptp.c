@@ -411,7 +411,7 @@ static void test_builtin_gestures(void) {
     assert(!sval_ptp_reporting() && !sval_ptp_active());
     assert(sval_ptp_host_asks()); // what the host asked for stays readable apart from the mode in force
     unsigned lifted = new_reports();
-    assert(lifted <= 1 && (lifted == 0 || (flags_of(last(), 0) & 2) == 0)); // a release: Tip clear
+    assert(lifted == 1 && (flags_of(last(), 0) & 2) == 0 && count_of(last()) == 1); // exactly one release: the contact, Tip clear
     FEED(0, {0, 1, 300, 100, 20});
     run(5000);
     up(0);

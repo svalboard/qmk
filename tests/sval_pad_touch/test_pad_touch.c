@@ -296,7 +296,34 @@ static void test_two_fingers(void) {
     CHECK(held[0] == (SVAL_FINGERS_VALID | SVAL_FINGERS_TWO_TAP), "merge keeps the tap");
 }
 
+// The half without USB: the main loop packs and merges after each pad read;
+// the split callback takes. Events from reads between two replies all go out,
+// once.
+static void test_snapshot_handoff(void) {
+    sval_pad_touch_t t = {0};
+    uint8_t          snap[SVAL_TOUCH_BLOCK_BYTES] = {0}, blk[SVAL_TOUCH_BLOCK_BYTES], out[SVAL_TOUCH_BLOCK_BYTES];
+    sval_pad_touch_sample(&t, &cfg, true, 1, 0, 0, 1024, 896, 100);
+    sval_pad_touch_pack(&t, &cfg, 100, blk);
+    sval_pad_touch_merge(snap, blk);
+    sval_pad_touch_sample(&t, &cfg, true, 0, 0x01, 0, 1024, 896, 160); // lift with a tap
+    sval_pad_touch_pack(&t, &cfg, 160, blk);
+    sval_pad_touch_merge(snap, blk);
+    sval_pad_touch_take(snap, out);
+    CHECK((out[1] & (SVAL_TOUCH_EV_DOWN | SVAL_TOUCH_EV_UP | SVAL_TOUCH_EV_TAP)) == (SVAL_TOUCH_EV_DOWN | SVAL_TOUCH_EV_UP | SVAL_TOUCH_EV_TAP), "both reads' events in one reply (%02X)", out[1]);
+    sval_pad_touch_take(snap, out);
+    CHECK(out[1] == 0 && (out[0] & SVAL_TOUCH_VALID), "taken once; the state stays");
+    uint8_t fs[SVAL_FINGERS_BLOCK_BYTES] = {0}, fb[SVAL_FINGERS_BLOCK_BYTES] = {SVAL_FINGERS_VALID | SVAL_FINGERS_TWO_TAP}, fo[SVAL_FINGERS_BLOCK_BYTES];
+    sval_pad_fingers_merge(fs, fb);
+    fb[0] = SVAL_FINGERS_VALID;
+    sval_pad_fingers_merge(fs, fb); // a later read without the tap keeps it
+    sval_pad_fingers_take(fs, fo);
+    CHECK(fo[0] & SVAL_FINGERS_TWO_TAP, "the two-finger tap survives to the reply");
+    sval_pad_fingers_take(fs, fo);
+    CHECK(!(fo[0] & SVAL_FINGERS_TWO_TAP), "and goes out once");
+}
+
 int main(void) {
+    test_snapshot_handoff();
     test_fingers();
     test_two_fingers();
     test_idle();

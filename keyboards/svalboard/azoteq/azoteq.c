@@ -341,14 +341,14 @@ static void azo_gestures_task(void) {
 }
 
 #ifdef SVAL_AZOTEQ_MULTITOUCH
-// Palm rejection on the mouse path (multitouch.c): the buttons held when the palm landed.
-static bool    azo_palm;
-static uint8_t azo_palm_buttons;
+// Palm rejection on the mouse path (multitouch.c, pad_gestures.h).
+static sval_palm_mouse_t azo_palm;
 #endif
 
 report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
 #ifdef SVAL_AZOTEQ_MULTITOUCH
-    const uint8_t azo_before = azo_held_buttons;
+    const uint8_t azo_before      = azo_held_buttons;
+    const bool    azo_palm_before = sval_mt_palm(); // the read below may clear the latch (all up) in the read that carries a tap
 #endif
     azo_log_identity();
     azo_gestures_task();
@@ -396,17 +396,13 @@ report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
 #endif
 
 #ifdef SVAL_AZOTEQ_MULTITOUCH
-    // Palm rejection (VIA value 58): while a palm is down, this pad's mouse
-    // output stops, as the chip's own palm detect stops it, and its taps
-    // don't click. A button held before it (a drag) stays as it was.
-    if (sval_mt_palm()) {
-        if (!azo_palm) azo_palm_buttons = azo_before;
-        azo_palm       = true;
-        mouse_report.x = mouse_report.y = mouse_report.h = mouse_report.v = 0;
-        azo_held_buttons                                                  = azo_palm_buttons;
-    } else {
-        azo_palm = false;
-    }
+    // Palm rejection (VIA value 58): while a palm is down, and in the read
+    // where it lifts, this pad's mouse output stops, as the chip's own palm
+    // detect stops it, and its taps don't click. A button held before it (a
+    // drag) stays only while the driver still holds it.
+    const bool azo_palm_after = sval_mt_palm();
+    if (azo_palm_before || azo_palm_after) mouse_report.x = mouse_report.y = mouse_report.h = mouse_report.v = 0;
+    azo_held_buttons = sval_palm_mouse_buttons(&azo_palm, azo_palm_before, azo_palm_after, azo_before, azo_held_buttons);
 #endif
     // Invert V-axis
     mouse_report.v       = -mouse_report.v;
