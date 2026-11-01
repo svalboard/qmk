@@ -114,7 +114,8 @@ void     sval_ptp_set_native(bool native);
 void     sval_ptp_set_paused(bool paused);                  // an update is running: no reports
 bool     sval_ptp_wants_frames(void);                       // feed pad frames to sval_ptp_feed()
 bool     sval_ptp_active(void);                             // NATIVE, a pad, Input Mode 3: the OS owns the pads
-bool     sval_ptp_reporting(void);                          // reports are on (mode 3 and the surface switch)
+bool     sval_ptp_reporting(void);                          // reports are on (mode 3 and the surface switch), the mode in force
+bool     sval_ptp_host_asks(void);                          // the host wrote Input Mode 3, whatever the touchpad mode setting
 bool     sval_ptp_suppress_mouse(void);                     // the pads' mouse output must be zero
 bool     sval_ptp_contacts_down(void);                      // a contact is down or still lifting
 uint16_t sval_ptp_take_motion(uint8_t pad);                 // admitted contact motion, counts

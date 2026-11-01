@@ -18,7 +18,8 @@ void    sval_mt_command(uint8_t *data, uint8_t length); // raw HID 0xFC op 0x42 
 uint8_t sval_mt_split_hint(void);                       // half without USB: its pad's news counter, or 0
 void    sval_mt_remote_hint(uint8_t hint);              // USB half: the other half's counter
 bool    sval_mt_suppress_hand(uint8_t pad);             // this hand's pad mouse must be zero
-bool    sval_mt_os_touchpad(uint8_t pad);               // the OS drives this hand's pad
+bool    sval_mt_os_touchpad(uint8_t pad);               // the OS drives this hand's pad (the mode in force)
+bool    sval_mt_os_asks(uint8_t pad);                   // the OS asked for this hand's pad as a touchpad, whatever the setting
 bool    sval_mt_palm(void);                             // this half's pad has a palm down (palm rejection on): its mouse output stops
 
 // The touch page of 0x2D (touch_stream.c).

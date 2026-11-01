@@ -859,6 +859,7 @@ void sval_pointing_hardware_kb(uint8_t *out, uint8_t length) {
     for (uint8_t b = 0; b < 2; b++) {
         sval_pointer_identity_t *id = (sval_pointer_identity_t *)&out[1 + b * sizeof(mine)];
         if ((id->flags & SVAL_POINTER_REPORTED) && sval_mt_os_touchpad((id->flags & SVAL_POINTER_LEFT) ? 0 : 1)) id->flags |= SVAL_POINTER_OS_TOUCHPAD;
+        if ((id->flags & SVAL_POINTER_REPORTED) && sval_mt_os_asks((id->flags & SVAL_POINTER_LEFT) ? 0 : 1)) id->flags |= SVAL_POINTER_OS_ASKS;
     }
 #endif
 }

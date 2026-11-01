@@ -1058,6 +1058,10 @@ bool sval_ptp_active(void) {
     return native && pad_mask && host_mode3();
 }
 
+bool sval_ptp_host_asks(void) {
+    return native && pad_mask && f_mode == 3;
+}
+
 bool sval_ptp_reporting(void) {
     return output;
 }

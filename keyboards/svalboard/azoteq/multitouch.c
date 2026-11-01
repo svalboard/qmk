@@ -473,6 +473,12 @@ void sval_mt_command(uint8_t *data, uint8_t length) {
 }
 #endif
 
+// The OS asked for touchpad mode (Input Mode 3): with built-in gestures set,
+// sval_mt_os_touchpad() is false all the same (Sval 0x2C identity flags).
+bool sval_mt_os_asks(uint8_t pad) {
+    return is_keyboard_master() && (pad_mask & (1u << (pad & 1))) && sval_ptp_host_asks();
+}
+
 bool sval_mt_palm(void) {
     return palm_down && sval_palm_area();
 }
