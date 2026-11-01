@@ -300,7 +300,7 @@ static void test_two_fingers(void) {
 // the split callback takes. Events from reads between two replies all go out,
 // once.
 static void test_snapshot_handoff(void) {
-    sval_pad_touch_t t = {0};
+    sval_pad_touch_t t                            = {0};
     uint8_t          snap[SVAL_TOUCH_BLOCK_BYTES] = {0}, blk[SVAL_TOUCH_BLOCK_BYTES], out[SVAL_TOUCH_BLOCK_BYTES];
     sval_pad_touch_sample(&t, &cfg, true, 1, 0, 0, 1024, 896, 100);
     sval_pad_touch_pack(&t, &cfg, 100, blk);

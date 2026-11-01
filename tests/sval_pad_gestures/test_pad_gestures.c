@@ -312,7 +312,7 @@ static void test_mode(void) {
 // button in the report passed back in that the chip's gesture doesn't own is
 // "outside" (a mouse key) and kept; the gesture's own button follows the chip.
 typedef struct {
-    uint8_t owned, last;
+    uint8_t           owned, last;
     sval_palm_mouse_t palm;
 } mouse_t;
 
@@ -342,7 +342,7 @@ static void test_palm_mouse(void) {
     b[5] = mouse_report(&m, 0, false, false);
     CHECK(b[0] == 1 && b[1] == 0 && b[2] == 0 && b[3] == 0 && b[4] == 0 && b[5] == 0, "tap then palm: the click ends (%u %u %u %u %u %u)", b[0], b[1], b[2], b[3], b[4], b[5]);
     // A drag (press and hold), the heel of the hand lands, the drag finger lifts first.
-    m = (mouse_t){0};
+    m    = (mouse_t){0};
     b[0] = mouse_report(&m, 1, false, false);
     b[1] = mouse_report(&m, 1, false, true); // the drag goes on under the palm
     b[2] = mouse_report(&m, 0, true, true);  // the chip ends the hold
@@ -356,7 +356,7 @@ static void test_palm_mouse(void) {
     mouse_report(&m, 0, false, true);
     CHECK(mouse_report(&m, 1, true, true) == 0, "a tap under the palm doesn't click");
     // A palm brush: the chip reports the tap in the lift read, where the latch clears.
-    m = (mouse_t){0};
+    m    = (mouse_t){0};
     b[0] = mouse_report(&m, 0, false, true);
     b[1] = mouse_report(&m, 0, true, true);
     b[2] = mouse_report(&m, 1, true, false); // lift read: tap, latch now clear
@@ -369,7 +369,7 @@ static void test_palm_mouse(void) {
     // No palm: taps and drags pass, and a mouse key's button is kept.
     m = (mouse_t){0};
     CHECK(mouse_report(&m, 1, false, false) == 1 && mouse_report(&m, 0, false, false) == 0, "no palm: a tap clicks and releases");
-    m = (mouse_t){0};
+    m      = (mouse_t){0};
     m.last = 4; // a mouse key held (outside the driver)
     CHECK(mouse_report(&m, 0, false, true) == 4 && mouse_report(&m, 0, true, false) == 4, "a mouse key held across a palm stays");
 }
