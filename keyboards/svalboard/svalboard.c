@@ -597,7 +597,11 @@ uint8_t sval_get_feature_flags3_kb(void) {
 // GET_INFO byte 21 (the fourth feature byte): on native touchpad builds, the
 // touchpad palm rejection (VIA value 58).
 uint8_t sval_get_feature_flags4_kb(void) {
-    return sval_pad_palm_supported() ? sval_flag4_pad_palm | sval_flag4_pad_mode : 0;
+    uint8_t flags = sval_pad_palm_supported() ? sval_flag4_pad_palm | sval_flag4_pad_mode : 0;
+#ifdef CONSOLE_ENABLE
+    flags |= sval_flag4_debug_console; // 0x3E (debug_console.c)
+#endif
+    return flags;
 }
 
 void sval_flicker_latch_kb(uint8_t *data, uint8_t length) {

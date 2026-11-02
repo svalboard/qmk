@@ -1,12 +1,15 @@
 // Host test for the key-event line on the debug console
 // (keyboards/svalboard/key_log.c): with debug off a key event prints nothing,
 // with debug on the KL: line appears, and turning debug off stops it again.
-// Built and run by util/updater_test/run.sh.
+// Also DEBUG_CONSOLE (Sval 0x3E, keyboards/svalboard/debug_console.c): its
+// ops, replies and refusals, and that it turns the KL: line on and off. Built
+// with and without CONSOLE_ENABLE by util/updater_test/run.sh.
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include "quantum.h"
 #include "../../keyboards/svalboard/key_log.c"
+#include "../../keyboards/svalboard/debug_console.c"
 
 bool        debug_enable;
 static char console[4096];
@@ -75,10 +78,62 @@ static void test_debug_off_again_stops(void) {
     CHECK(on > 0 && console_len == on);
 }
 
+// One 0x3E request as sval.c hands it over: [op] then the rest of a 32-byte report.
+static void command(uint8_t op, uint8_t reply[3]) {
+    uint8_t data[30];
+    memset(data, 0xAA, sizeof(data));
+    data[0] = op;
+    sval_debug_console_kb(data, sizeof(data));
+    memcpy(reply, data, 3);
+}
+
+static void test_command(void) {
+    uint8_t     r[3];
+    keyrecord_t d = key(6, 2, true);
+    debug_enable  = false; // as at power-up
+    command(SVAL_DEBUG_READ, r);
+#ifdef CONSOLE_ENABLE
+    CHECK(r[0] == SVAL_DEBUG_READ && r[1] == SVAL_DEBUG_DONE && r[2] == 0);
+
+    command(SVAL_DEBUG_ON, r);
+    CHECK(r[0] == SVAL_DEBUG_ON && r[1] == SVAL_DEBUG_DONE && r[2] == 1 && debug_enable);
+    command(SVAL_DEBUG_READ, r);
+    CHECK(r[1] == SVAL_DEBUG_DONE && r[2] == 1);
+    reset_console();
+    sval_key_log(0x0004, &d);
+    CHECK(strncmp(console, "KL: ", 4) == 0);
+
+    command(SVAL_DEBUG_OFF, r);
+    CHECK(r[0] == SVAL_DEBUG_OFF && r[1] == SVAL_DEBUG_DONE && r[2] == 0 && !debug_enable);
+    reset_console();
+    sval_key_log(0x0004, &d);
+    CHECK(console_len == 0);
+
+    // An unknown op changes nothing.
+    command(3, r);
+    CHECK(r[0] == 3 && r[1] == SVAL_DEBUG_UNKNOWN_OP && r[2] == 0 && !debug_enable);
+    debug_enable = true;
+    command(0x80, r);
+    CHECK(r[1] == SVAL_DEBUG_UNKNOWN_OP && r[2] == 1 && debug_enable);
+    debug_enable = false;
+#else
+    // No console in the build: refused, and debug stays as it was.
+    CHECK(r[1] == SVAL_DEBUG_NO_CONSOLE && r[2] == 0);
+    command(SVAL_DEBUG_ON, r);
+    CHECK(r[1] == SVAL_DEBUG_NO_CONSOLE && r[2] == 0 && !debug_enable);
+#endif
+
+    // Too short for a reply: only the status, when there is room for it.
+    uint8_t shorter[2] = {SVAL_DEBUG_ON, 0xAA};
+    sval_debug_console_kb(shorter, 2);
+    CHECK(shorter[1] == SVAL_DEBUG_TOO_SHORT && !debug_enable);
+}
+
 int main(void) {
     test_debug_off_prints_nothing();
     test_debug_on_prints_kl();
     test_debug_off_again_stops();
+    test_command();
     printf("key log: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

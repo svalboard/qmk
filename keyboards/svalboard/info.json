@@ -11,7 +11,7 @@
       "bluetooth": false,
       "bootmagic": false,
       "combo": true,
-      "command": true,
+      "command": false,
       "console": true,
       "extrakey": true,
       "fauxclicky": false,

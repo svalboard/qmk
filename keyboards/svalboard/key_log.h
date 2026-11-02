@@ -3,8 +3,8 @@
 
 // Key events on the debug console. Any program on the host can read the
 // console, so nothing is printed unless debug is on (debug_enable): off at
-// every power-up, on only by DB_TOGG or Command (both Shifts + D) until the
-// next power-up or toggle.
+// every power-up, on only when a host asks (Sval 0x3E, debug_console.h) until
+// the next power-up.
 #pragma once
 
 #include <stdint.h>
