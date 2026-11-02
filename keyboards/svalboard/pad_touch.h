@@ -73,3 +73,63 @@ void sval_pad_touch_pack_size(const sval_pad_touch_t *t, uint8_t out[SVAL_TOUCH_
 // A packed block's events ORed into another's, for a block held until a host
 // reads it (the USB half keeps the other half's this way).
 void sval_pad_touch_merge(uint8_t held[SVAL_TOUCH_BLOCK_BYTES], const uint8_t fresh[SVAL_TOUCH_BLOCK_BYTES]);
+
+// ---------------------------------------------------------------- every finger
+//
+// The fingers page of POINTING_MOTION (Sval 0x2D page 2, docs/protocol.md
+// "Touchpad fingers"): every finger the chip reports on one pad, and the
+// chip's two-finger rule as it applies it. From the same 45-byte read as the
+// block above (register 0x000C on: gesture bytes, system info, the finger
+// count, then 7 bytes for each of the 5 finger slots). No I2C of its own.
+
+#define SVAL_FINGERS_MAX 5
+#define SVAL_FINGERS_BLOCK_BYTES 27
+
+// Flags (byte 0 of a fingers block).
+#define SVAL_FINGERS_VALID 0x01    // this pad is read and its block is live
+#define SVAL_FINGERS_OS 0x02       // the computer has this pad as a touchpad (set by the USB half)
+#define SVAL_FINGERS_PALM 0x04     // the chip's own palm detect is on now
+#define SVAL_FINGERS_TOO_MANY 0x08 // the chip has more fingers than it reports
+#define SVAL_FINGERS_TWO 0x10      // a two-finger gesture is live: two fingers, and only two, since the second landed
+#define SVAL_FINGERS_SCROLL 0x20   // the chip reported a scroll during that two-finger touch
+#define SVAL_FINGERS_TWO_TAP 0x40  // the chip reported a two-finger tap since the block was last packed
+#define SVAL_FINGERS_HAD_TWO 0x80  // bytes 22-26 hold a two-finger touch (the live one, or the last)
+
+typedef struct {
+    bool     live, two, had_two, scrolled;
+    uint8_t  prev_n;                                   // fingers at the read before
+    uint8_t  mask, status, events;                     // status: SVAL_FINGERS_PALM | SVAL_FINGERS_TOO_MANY now
+    uint16_t x[SVAL_FINGERS_MAX], y[SVAL_FINGERS_MAX]; // pixels
+    uint8_t  area[SVAL_FINGERS_MAX];
+    uint8_t  two_mask;     // the two slots of the two-finger touch
+    uint16_t sx[2], sy[2]; // where they were when the second landed, pixels
+    uint16_t travel;       // their average travel since, 0.01 mm
+    uint32_t two_at;       // ms
+    uint16_t two_ms;       // how long it has lasted (or lasted)
+} sval_pad_fingers_t;
+
+// One pad read: raw is the 45 bytes from register 0x000C. A failed read changes nothing.
+void sval_pad_fingers_sample(sval_pad_fingers_t *f, const sval_pad_touch_cfg_t *cfg, bool valid, const uint8_t *raw, uint32_t now_ms);
+
+// The 27-byte block (docs/protocol.md), and clears the events:
+//   0 flags, 1 slots down (bits 0-4), 2-21 five slots of 4 bytes
+//   (x | y << 12, 24-bit LE, 0.02 mm; then the area in channels),
+//   22-24 the two-finger start centroid (as a slot's position),
+//   25 the two fingers' average travel since then (0.05 mm, up to 255),
+//   26 ms since the second finger landed, in 4 ms (up to 255).
+void sval_pad_fingers_pack(sval_pad_fingers_t *f, const sval_pad_touch_cfg_t *cfg, uint32_t now_ms, uint8_t out[SVAL_FINGERS_BLOCK_BYTES]);
+
+// A packed block's two-finger tap ORed into another's (as sval_pad_touch_merge).
+void sval_pad_fingers_merge(uint8_t held[SVAL_FINGERS_BLOCK_BYTES], const uint8_t fresh[SVAL_FINGERS_BLOCK_BYTES]);
+
+// The half without USB answers the split callback from a snapshot the main
+// loop updates (merge, above) under a lock: take copies it out and clears the
+// events it carries, so each event goes out once.
+void sval_pad_touch_take(uint8_t snap[SVAL_TOUCH_BLOCK_BYTES], uint8_t out[SVAL_TOUCH_BLOCK_BYTES]);
+void sval_pad_fingers_take(uint8_t snap[SVAL_FINGERS_BLOCK_BYTES], uint8_t out[SVAL_FINGERS_BLOCK_BYTES]);
+
+// The split callback's reply from a snapshot: on the first request after a
+// pause (fresh), the snapshot still holds the previous session (a finger
+// down, old events), so it is cleared and the reply is zero; otherwise take.
+void sval_pad_touch_reply(uint8_t snap[SVAL_TOUCH_BLOCK_BYTES], uint8_t out[SVAL_TOUCH_BLOCK_BYTES], bool fresh);
+void sval_pad_fingers_reply(uint8_t snap[SVAL_FINGERS_BLOCK_BYTES], uint8_t out[SVAL_FINGERS_BLOCK_BYTES], bool fresh);

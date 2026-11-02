@@ -40,6 +40,7 @@ void sval_azoteq_restart(void);
 #endif
 #include "multitouch.h"
 #include "ptp.h"
+#include "../pad_gestures.h"
 #ifdef SVAL_PERF_STATS
 #    include "../perf.h"
 #endif
@@ -61,6 +62,9 @@ void sval_azoteq_restart(void);
 #define MT_EMPTY_REPLIES 3
 
 static uint8_t  ids[5], next_id, last_mask;
+// The palm rejection on the mouse path: a contact above the threshold was
+// seen since the pad last had no finger (sval_mt_palm()).
+static bool palm_down;
 static uint16_t sequence;
 static uint32_t epoch, samples, errors;
 static uint32_t read_timeouts, read_errors, end_timeouts, end_errors, max_read_ms;
@@ -149,6 +153,18 @@ void sval_mt_sample(const uint8_t *raw, bool valid) {
         flags |= 4;
         errors++;
     } else {
+        // Palm rejection (pad_gestures.h): latched from the first contact
+        // above the threshold until every finger lifts, as the chip latches
+        // its own palm detect.
+        if (!raw[5]) {
+            palm_down = false;
+        } else if (raw[5] <= 5) {
+            const uint8_t palm_at = sval_palm_area();
+            for (uint8_t i = 0; i < 5; i++) {
+                const uint8_t *p = raw + 10 + 7 * i;
+                if ((p[4] || p[5]) && sval_pad_is_palm(palm_at, p[6])) palm_down = true;
+            }
+        }
         if (raw[4] & 2) flags |= 1;    // palm
         if (raw[4] & 4) flags |= 2;    // too many fingers
         if (raw[3] & 0x98) flags |= 8; // reset, re-ATI, ATI error
@@ -456,6 +472,20 @@ void sval_mt_command(uint8_t *data, uint8_t length) {
     o[20] = sval_ptp_lost_down(1);
 }
 #endif
+
+// The OS asked for touchpad mode (Input Mode 3): with built-in gestures set,
+// sval_mt_os_touchpad() is false all the same (Sval 0x2C identity flags).
+bool sval_mt_os_asks(uint8_t pad) {
+    return is_keyboard_master() && (pad_mask & (1u << (pad & 1))) && sval_ptp_host_asks();
+}
+
+bool sval_mt_palm(void) {
+    return palm_down && sval_palm_area();
+}
+
+bool sval_pad_palm_supported(void) {
+    return true;
+}
 
 // ------------------------------------------------------------ the task
 

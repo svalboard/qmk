@@ -87,6 +87,11 @@ typedef struct __attribute__((__packed__)) _presence_rpc_t {
     // The touchpad tuning (sval_pad_tune_sync_word(), pad_gestures.h), 16-bit,
     // appended the same way.
     uint16_t pad_tuning;
+    // The touchpad palm rejection (sval_pad_palm_sync_byte(), pad_gestures.h),
+    // appended the same way.
+    uint8_t pad_palm;
+    // The touchpad mode (sval_pad_mode_sync_byte(), pad_gestures.h), appended the same way.
+    uint8_t pad_mode;
 } presence_rpc_t;
 
 // Which pointing module a half's firmware drives and which one answered, so a host
@@ -106,6 +111,7 @@ enum sval_pointer_sensor {
 #define SVAL_POINTER_AUTO 0x08         // the firmware drives whichever module is attached; built_for is the one it chose
 #define SVAL_POINTER_OS_TOUCHPAD 0x10  // the OS drives this pad as a touchpad (native touchpad builds): pointer settings do not apply
 #define SVAL_POINTER_SIDE_UNKNOWN 0x20 // either-hand builds: the half has no side yet, and SVAL_POINTER_LEFT means nothing
+#define SVAL_POINTER_OS_ASKS 0x40      // the OS asked for this pad as a touchpad (Input Mode 3), whether or not the touchpad mode setting lets it (SVAL_POINTER_OS_TOUCHPAD)
 typedef struct __attribute__((__packed__)) {
     uint8_t flags;              // SVAL_POINTER_*
     uint8_t built_for;          // enum sval_pointer_sensor
@@ -192,8 +198,15 @@ uint16_t sval_pad_tuning(void);
 // build's own, 0.01 mm, at the resolution the chip has.
 uint16_t sval_pad_scroll_in_force_mm100(void);
 uint16_t sval_pad_scroll_build_mm100(void);
-// Native touchpad builds (azoteq/touch_stream.c): the touch page of 0x2D.
+// Native touchpad builds (azoteq/touch_stream.c): the touch and fingers pages of 0x2D.
 bool     sval_pad_touch_supported(void);
+// The touchpad palm rejection (pad_gestures.h): the area threshold this half
+// uses now, 0 off. Native touchpad builds (azoteq/multitouch.c) apply it.
+uint8_t  sval_pad_palm(void);
+bool     sval_pad_palm_supported(void);
+// The touchpad mode (pad_gestures.h): built-in gestures even when the OS asks
+// for a touchpad. Native touchpad builds (azoteq/ptp.c) apply it.
+bool     sval_pad_builtin_gestures(void);
 uint8_t  sval_pad_hands(void);                                                  // hands whose pointing module is an Azoteq pad (bit 0 left, bit 1 right)
 void     sval_scan_timing(uint16_t *pre, uint16_t *post);                       // matrix.c
 uint8_t  sval_pushed_mask(bool thumbs);                                         // matrix.c

@@ -3,7 +3,15 @@
 // Writes every report it "sends" to argv[1], which test_reports.py decodes
 // again with the descriptor's own layout.
 #define SVAL_PTP_HOST_TEST
-#define SVAL_PTP_PALM_AREA 200
+// The palm rejection threshold, a setting on the board (VIA value 58): a
+// variable here, so a test can turn it off and back on.
+#include <stdint.h>
+static uint8_t test_palm_at = 200;
+#define SVAL_PTP_PALM_AREA test_palm_at
+// The touchpad mode (VIA value 59): built-in gestures when set.
+#include <stdbool.h>
+static bool test_builtin;
+#define SVAL_PTP_BUILTIN test_builtin
 #define SVAL_PTP_KEY_BUTTONS 1
 // Longer than the keepalive, so the keepalive scenario sees a live pad.
 #define SVAL_PTP_STALE_MS 120
@@ -388,6 +396,67 @@ static void test_palm_area(void) {
     run(5000);
     assert(new_reports() == 1 && flags_of(last(), 0) == 0);
     puts("  palm area: Confidence cleared for good, contact still lifts normally");
+}
+
+static void test_builtin_gestures(void) {
+    start("builtin-gestures");
+    // Automatic: mode 3 reports contacts and the pad mouse is off.
+    FEED(0, {0, 1, 100, 100, 20});
+    run(5000);
+    assert(new_reports() == 1 && sval_ptp_reporting() && sval_ptp_suppress_mouse());
+    // Built-in gestures, set while a finger is down: the contact is lifted
+    // once, then nothing more goes to the host while the host keeps mode 3.
+    test_builtin = true;
+    run(5000);
+    assert(!sval_ptp_reporting() && !sval_ptp_active());
+    assert(sval_ptp_host_asks()); // what the host asked for stays readable apart from the mode in force
+    unsigned lifted = new_reports();
+    assert(lifted == 1 && (flags_of(last(), 0) & 2) == 0 && count_of(last()) == 1); // exactly one release: the contact, Tip clear
+    FEED(0, {0, 1, 300, 100, 20});
+    run(5000);
+    up(0);
+    run(5000);
+    assert(new_reports() == 0);
+    assert(!sval_ptp_suppress_mouse()); // the chip's mouse, taps and scroll work
+    const uint8_t *d = NULL;
+    assert(sval_ptp_get_report(3, 5, &d) == 2 && d[1] == 3); // the host reads back the mode it wrote
+    // Back to Automatic: contacts reach the host again.
+    test_builtin = false;
+    run(5000);
+    up(0); // the pads arm again on an all-up sample, as after any return to mode 3
+    up(1);
+    run(5000);
+    new_reports();
+    FEED(0, {0, 2, 100, 100, 20});
+    run(5000);
+    assert(new_reports() >= 1 && sval_ptp_reporting() && sval_ptp_suppress_mouse());
+    up(0);
+    run(5000);
+    puts("  built-in gestures: mode 3 kept but no contacts; the pad mouse works; back to Automatic reports again");
+}
+
+static void test_palm_setting(void) {
+    start("palm-setting");
+    // Off (the default): a large contact is a finger, Confidence set.
+    test_palm_at = 0;
+    FEED(0, {0, 1, 100, 100, 250});
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 3);
+    up(0);
+    run(5000);
+    new_reports();
+    // A lower threshold, set while running: the same contact is a palm.
+    test_palm_at = 12;
+    FEED(0, {0, 2, 100, 100, 13}, {1, 3, 900, 900, 4});
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 2 && flags_of(last(), 1) == 3); // palm clear, finger kept
+    FEED(0, {0, 2, 100, 100, 12}, {1, 3, 905, 900, 4});
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 2 && flags_of(last(), 1) == 3); // once a palm, always
+    up(0);
+    run(5000);
+    test_palm_at = 200;
+    puts("  palm setting: off keeps every contact; a threshold set at run time clears only the palm's Confidence");
 }
 
 static void test_faults(void) {
@@ -941,6 +1010,8 @@ int main(int argc, char **argv) {
     test_scan_time();
     test_palm();
     test_palm_area();
+    test_palm_setting();
+    test_builtin_gestures();
     test_faults();
     test_stream_restart();
     test_leave_mode3();

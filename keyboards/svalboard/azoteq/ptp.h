@@ -56,8 +56,28 @@ enum sval_touch_owner {
 #ifndef SVAL_PTP_HOST_SILENT_US
 #    define SVAL_PTP_HOST_SILENT_US 100000u
 #endif
-#ifndef SVAL_PTP_PALM_AREA
-#    define SVAL_PTP_PALM_AREA 0 // 0 = off; else area above this clears Confidence
+// The palm rejection in force: a contact with more area than this (the chip's
+// channels) is a palm, and its Confidence is cleared; 0 is off. On the board
+// it is the saved setting (VIA value 58, svalboard.c); host tests set
+// SVAL_PTP_PALM_AREA to a number or a variable of their own.
+// The touchpad mode: built-in gestures keep the pads on the chip's gestures
+// even when the host writes Input Mode 3 (VIA value 59, svalboard.c). Host
+// tests set SVAL_PTP_BUILTIN to a number or a variable of their own.
+#ifdef SVAL_PTP_BUILTIN
+#    define sval_builtin_gestures() ((bool)(SVAL_PTP_BUILTIN))
+#elif defined(SVAL_PTP_HOST_TEST)
+#    define sval_builtin_gestures() false
+#else
+bool sval_pad_builtin_gestures(void); // svalboard.c
+#    define sval_builtin_gestures() sval_pad_builtin_gestures()
+#endif
+#ifdef SVAL_PTP_PALM_AREA
+#    define sval_palm_area() ((uint8_t)(SVAL_PTP_PALM_AREA))
+#elif defined(SVAL_PTP_HOST_TEST)
+#    define sval_palm_area() ((uint8_t)0)
+#else
+uint8_t sval_pad_palm(void); // svalboard.c
+#    define sval_palm_area() sval_pad_palm()
 #endif
 #ifndef SVAL_PTP_REMAP_COUNTS
 #    define SVAL_PTP_REMAP_COUNTS 400 // continuity across a stream restart
@@ -94,7 +114,8 @@ void     sval_ptp_set_native(bool native);
 void     sval_ptp_set_paused(bool paused);                  // an update is running: no reports
 bool     sval_ptp_wants_frames(void);                       // feed pad frames to sval_ptp_feed()
 bool     sval_ptp_active(void);                             // NATIVE, a pad, Input Mode 3: the OS owns the pads
-bool     sval_ptp_reporting(void);                          // reports are on (mode 3 and the surface switch)
+bool     sval_ptp_reporting(void);                          // reports are on (mode 3 and the surface switch), the mode in force
+bool     sval_ptp_host_asks(void);                          // the host wrote Input Mode 3, whatever the touchpad mode setting
 bool     sval_ptp_suppress_mouse(void);                     // the pads' mouse output must be zero
 bool     sval_ptp_contacts_down(void);                      // a contact is down or still lifting
 uint16_t sval_ptp_take_motion(uint8_t pad);                 // admitted contact motion, counts
