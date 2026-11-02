@@ -88,11 +88,11 @@ static void command(uint8_t op, uint8_t reply[3]) {
 }
 
 static void test_command(void) {
-    uint8_t     r[3];
-    keyrecord_t d = key(6, 2, true);
-    debug_enable  = false; // as at power-up
+    uint8_t r[3];
+    debug_enable = false; // as at power-up
     command(SVAL_DEBUG_READ, r);
 #ifdef CONSOLE_ENABLE
+    keyrecord_t d = key(6, 2, true);
     CHECK(r[0] == SVAL_DEBUG_READ && r[1] == SVAL_DEBUG_DONE && r[2] == 0);
 
     command(SVAL_DEBUG_ON, r);
