@@ -256,6 +256,23 @@ Combos can have names on the board, like layers, tap dances and macros: one name
 - Both need the 64-byte report (34 bytes after `3D`); a client-wrapped 32-byte report is answered with status `3`.
 - A host that reads both ops on a schedule keeps a running count per switch; a switch's presses since the last read are its changes, halved, rounded up when it was up at the last read and down when it was down.
 
+## Debug console
+
+`DEBUG_CONSOLE` (`0x3E`) turns QMK's debug flag (`debug_enable`) on or off, and reads it. The firmware prints key events on the QMK debug console (usage page `0xFF31`) only while the flag is on, and any program on the computer can read that console. Keybard's Settings show it as "Debug console".
+
+- Discovery: GET_INFO byte 21 (the fourth feature byte), bit 2 (`sval_flag4_debug_console`, `0x04`). Builds with the console (`CONSOLE_ENABLE`, every Svalboard build) set it. Older firmware leaves it zero, and answers `0x3E` with the command byte `0xFF` (unknown command).
+- Request: `DF 3E <op>`: `0` off, `1` on, `2` read. Any client may send it.
+- Never saved: debug is off at every power-up, and stays as set until the next power-up or `0x3E`. The half with USB sets its own flag; only that half's console reaches the computer.
+- Response: `DF 3E` then:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | op, echoed |
+| 1 | 1 | status: `0` done, `1` unknown op (nothing changed), `2` the build has no console (nothing changed), `3` report too short, `0xFF` the keyboard has no handler for it (the module's default; nothing changed) |
+| 2 | 1 | the flag now: `0` off, `1` on |
+
+- While on, each key event prints one line, `KL: kc: 0x<keycode>, col: <c>, row: <r>, pressed: <0|1>, time: <ms>, int: <0|1>, count: <n>`, as do the firmware's other debug lines.
+
 ## Debounce mode
 
 The optical keys have a saved debounce mode; Keybard's Scan Lab switches it. The thumb Double Down, the one mechanical switch, is debounced in both modes: 5 ms per key, deferred (a change is reported once it has held for 5 ms).

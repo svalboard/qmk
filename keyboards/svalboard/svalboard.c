@@ -547,12 +547,12 @@ int16_t get_right_dpi() {
 }
 
 void set_left_dpi(uint8_t index) {
-    uprintf("LDPI: %d %d\n", index, dpi_choices[index]);
+    dprintf("LDPI: %d %d\n", index, dpi_choices[index]);
     pointing_device_set_cpi_on_side(true, dpi_choices[index]);
 }
 
 void set_right_dpi(uint8_t index) {
-    uprintf("RDPI: %d %d\n", index, dpi_choices[index]);
+    dprintf("RDPI: %d %d\n", index, dpi_choices[index]);
     pointing_device_set_cpi_on_side(false, dpi_choices[index]);
 }
 
@@ -597,7 +597,11 @@ uint8_t sval_get_feature_flags3_kb(void) {
 // GET_INFO byte 21 (the fourth feature byte): on native touchpad builds, the
 // touchpad palm rejection (VIA value 58).
 uint8_t sval_get_feature_flags4_kb(void) {
-    return sval_pad_palm_supported() ? sval_flag4_pad_palm | sval_flag4_pad_mode : 0;
+    uint8_t flags = sval_pad_palm_supported() ? sval_flag4_pad_palm | sval_flag4_pad_mode : 0;
+#ifdef CONSOLE_ENABLE
+    flags |= sval_flag4_debug_console; // 0x3E (debug_console.c)
+#endif
+    return flags;
 }
 
 void sval_flicker_latch_kb(uint8_t *data, uint8_t length) {
@@ -816,6 +820,13 @@ static void scanlab_rpc_listener(uint8_t in_buflen, const void *in_data, uint8_t
 }
 
 void keyboard_post_init_kb(void) {
+#ifndef DEBUG_MATRIX_SCAN_RATE
+    // Debug off at every power-up, whatever the eeconfig debug byte says: the
+    // debug console prints key events while it is on, and any program on the
+    // host can read the console. Only a host turns it on (Sval 0x3E,
+    // debug_console.c), in RAM. A keymap's keyboard_post_init_user still may.
+    debug_config.raw = 0;
+#endif
     build_reset_post_init(); // the settings were reset in quantum_init()
 #ifdef SVAL_AZOTEQ_MULTITOUCH
     sval_mt_init();

@@ -98,6 +98,7 @@ enum sval_command_id {
     sval_cmd_main_board    = 0x38, // advertised by sval_flag3_main_board
     sval_cmd_typing_pause  = 0x3C, // advertised by sval_flag3_typing_pause
     sval_cmd_flicker_latch = 0x3D, // advertised by sval_flag3_flicker_latch
+    sval_cmd_debug_console = 0x3E, // advertised by sval_flag4_debug_console
     sval_cmd_error         = 0xFF,
 };
 
@@ -139,8 +140,9 @@ enum sval_feature_flags3 {
 
 // Fourth feature byte, GET_INFO byte 21. Older firmware leaves it zero.
 enum sval_feature_flags4 {
-    sval_flag4_pad_palm = (1 << 0), // VIA value 58: the touchpad palm rejection (native touchpad builds)
-    sval_flag4_pad_mode = (1 << 1), // VIA value 59: touchpad mode, Automatic or built-in gestures (native touchpad builds)
+    sval_flag4_pad_palm      = (1 << 0), // VIA value 58: the touchpad palm rejection (native touchpad builds)
+    sval_flag4_pad_mode      = (1 << 1), // VIA value 59: touchpad mode, Automatic or built-in gestures (native touchpad builds)
+    sval_flag4_debug_console = (1 << 2), // 0x3E sets and reads QMK's debug flag (builds with the console)
 };
 
 // Status byte after the modifiers in the 0x16 reply (sval_flag2_modifier_state).
@@ -401,6 +403,9 @@ void sval_client_packet_kb(uint32_t client_id);
 // GET_INFO byte 20 (sval_feature_flags3). Weak, returns 0.
 uint8_t sval_get_feature_flags3_kb(void);
 uint8_t sval_get_feature_flags4_kb(void);
+// DEBUG_CONSOLE (0x3E): data is [op] in, [op] [status] [state] out. Weak,
+// answers status 0xFF.
+void sval_debug_console_kb(uint8_t *data, uint8_t length);
 // TYPING_PAUSE (0x3C): the keyboard handles data after [0xDF] [0x3C] in place:
 // [op] -> [op] [status] [...]. The module's weak default answers status 0xFF.
 void sval_typing_pause_kb(uint8_t *data, uint8_t length);

@@ -899,6 +899,13 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
             break;
         }
 
+        case sval_cmd_debug_console: {
+            // Request:  [0xDF] [0x3E] [op]
+            // Response: [0xDF] [0x3E] [op] [status] [state] (keyboards/svalboard/docs/protocol.md)
+            if (length > 4) sval_debug_console_kb(&data[2], length - 2);
+            break;
+        }
+
 #ifdef SVAL_EITHER_HAND
         case sval_cmd_typing_pause: {
             // Request:  [0xDF] [0x3C] [op]
@@ -1237,6 +1244,11 @@ __attribute__((weak)) uint8_t sval_get_feature_flags3_kb(void) {
 
 __attribute__((weak)) uint8_t sval_get_feature_flags4_kb(void) {
     return 0;
+}
+
+// Without the keyboard's handler: status 0xFF after the echoed op.
+__attribute__((weak)) void sval_debug_console_kb(uint8_t *data, uint8_t length) {
+    data[1] = 0xFF;
 }
 
 // Without the keyboard's handler: status 0xFF after the echoed op.

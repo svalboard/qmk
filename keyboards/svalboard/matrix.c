@@ -250,7 +250,7 @@ void matrix_read_cols_on_row(matrix_row_t current_matrix[], uint8_t current_row)
 }
 
 void matrix_init_custom(void) {
-    print("matrix_init_custom\n");
+    dprint("matrix_init_custom\n");
     unselect_rows();
     for (uint8_t col = 0; col < MATRIX_COLS; col++) {
         pin_t pin = col_pins[col];
