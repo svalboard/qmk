@@ -32,7 +32,7 @@ static int checks, failures;
     } while (0)
 
 static keyrecord_t key(uint8_t row, uint8_t col, bool pressed) {
-    keyrecord_t r = {0};
+    keyrecord_t r   = {0};
     r.event.key.row = row;
     r.event.key.col = col;
     r.event.pressed = pressed;
@@ -69,8 +69,8 @@ static void test_debug_off_again_stops(void) {
     debug_enable  = true;
     keyrecord_t d = key(1, 3, true);
     sval_key_log(0x0005, &d);
-    int on        = console_len;
-    debug_enable  = false;
+    int on       = console_len;
+    debug_enable = false;
     sval_key_log(0x0005, &d);
     CHECK(on > 0 && console_len == on);
 }
