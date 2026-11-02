@@ -268,7 +268,7 @@ Combos can have names on the board, like layers, tap dances and macros: one name
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 1 | op, echoed |
-| 1 | 1 | status: `0` done, `1` unknown op (nothing changed), `2` the build has no console (nothing changed), `3` report too short |
+| 1 | 1 | status: `0` done, `1` unknown op (nothing changed), `2` the build has no console (nothing changed), `3` report too short, `0xFF` the keyboard has no handler for it (the module's default; nothing changed) |
 | 2 | 1 | the flag now: `0` off, `1` on |
 
 - While on, each key event prints one line, `KL: kc: 0x<keycode>, col: <c>, row: <r>, pressed: <0|1>, time: <ms>, int: <0|1>, count: <n>`, as do the firmware's other debug lines.
