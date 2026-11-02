@@ -18,6 +18,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdbool.h>
 #include <stdint.h>
 #include "svalboard.h"
+#include "key_log.h"
 #include "keymap_support.h"
 #include "axis_scale.h"
 #include "caps_word.h"
@@ -580,10 +581,8 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
         return true;
     }
 
-    // If console is enabled, it will print the matrix position and status of each key pressed
-#ifdef CONSOLE_ENABLE
-    uprintf("KL: kc: 0x%04X, col: %2u, row: %2u, pressed: %u, time: %5u, int: %u, count: %u\n", keycode, record->event.key.col, record->event.key.row, record->event.pressed, record->event.time, record->tap.interrupted, record->tap.count);
-#endif
+    // Each key event on the debug console, only while debug is on (key_log.h).
+    sval_key_log(keycode, record);
 
     if (mouse_mode_enabled && layer_state & (1 << MH_AUTO_BUTTONS_LAYER)) {
         // The keycodes below are all that are forced to drop you out of mouse mode.
@@ -621,9 +620,7 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
             // Fall through to switch statement without touching mouse mode state
         } else if (BAD_KEYCODE_CONDITONAL ||
 	    layer_keycode != keycode) {
-#ifdef CONSOLE_ENABLE
-            uprintf("process_record - mh_auto_buttons: off\n");
-#endif
+            dprint("process_record - mh_auto_buttons: off\n");
             if (BAD_KEYCODE_CONDITONAL) {
                 mouse_mode(false);
 	        return false;
@@ -847,9 +844,7 @@ void matrix_scan_kb(void) {
     if ((mh_timeout >= 0) && mouse_mode_enabled && ((int32_t)timer_elapsed(mh_auto_buttons_timer) > mh_timeout) && mouse_keys_pressed == 0 && !velocity_scroll_active()) {
         if (!tp_buttons) {
             mouse_mode(false);
-#if defined CONSOLE_ENABLE
-            print("matrix - mh_auto_buttons: off\n");
-#endif
+            dprint("matrix - mh_auto_buttons: off\n");
         }
     }
 

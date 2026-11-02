@@ -43,6 +43,11 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 "$out/test_pad_touch"
 "$out/test_pad_gestures"
 
+# The key-event line on the debug console (kb/key_log.c): nothing while debug
+# is off, the KL: line while it is on.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$root/tests/sval_key_log/stub" -I"$kb" "$root/tests/sval_key_log/test_key_log.c" -o "$out/test_key_log"
+"$out/test_key_log"
+
 # Settings reset on the first boot of a different firmware build (kb/build_reset.c).
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
     -DBUILD_RESET_HOST_TEST -I"$kb" "$tests/test_build_reset.c" "$kb/build_reset.c" -o "$out/test_build_reset"
