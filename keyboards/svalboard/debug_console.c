@@ -15,7 +15,8 @@ void sval_debug_console_kb(uint8_t *data, uint8_t length) {
     uint8_t       status = SVAL_DEBUG_DONE;
 #ifdef CONSOLE_ENABLE
     if (op == SVAL_DEBUG_OFF || op == SVAL_DEBUG_ON) {
-        // Not saved (no eeconfig write): off again at the next power-up.
+        // RAM only, never eeconfig_update_debug: off again at the next
+        // power-up (keyboard_post_init_kb also clears it).
         debug_enable = op == SVAL_DEBUG_ON;
     } else if (op != SVAL_DEBUG_READ) {
         status = SVAL_DEBUG_UNKNOWN_OP;

@@ -35,6 +35,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define MATRIX_COLS  6
 #define PFET_ROWS
 #define EE_HANDS
+// Warning: DEBUG_MATRIX_SCAN_RATE forces debug on at every boot
+// (quantum/keyboard.c, and keyboard_post_init_kb then leaves it on), so the
+// debug console prints every key event (key_log.c) to any program on the
+// host. Dev builds only.
 //#define DEBUG_MATRIX_SCAN_RATE
 // Svalboard stores its config in VIA custom config area
 // saved_values_t (~54 bytes) + 3 bytes magic = ~60 bytes, round to 100

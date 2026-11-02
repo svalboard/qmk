@@ -61,10 +61,11 @@ static void test_debug_off_prints_nothing(void) {
 static void test_debug_on_prints_kl(void) {
     reset_console();
     debug_enable  = true;
-    keyrecord_t d = key(6, 2, true);
+    keyrecord_t d     = key(6, 2, true);
+    d.tap.interrupted = true;
+    d.tap.count       = 3;
     sval_key_log(0x0004, &d);
-    CHECK(strncmp(console, "KL: kc: 0x0004, col:  2, row:  6, pressed: 1, time:  1234", 56) == 0);
-    CHECK(strchr(console, '\n') == console + console_len - 1);
+    CHECK(strcmp(console, "KL: kc: 0x0004, col:  2, row:  6, pressed: 1, time:  1234, int: 1, count: 3\n") == 0);
 }
 
 static void test_debug_off_again_stops(void) {

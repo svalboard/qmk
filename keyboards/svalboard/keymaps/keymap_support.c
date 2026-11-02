@@ -537,7 +537,7 @@ report_mouse_t pointing_device_task_user(report_mouse_t reportMouse) {
 
 void mh_change_timeouts(void) {
     sval_automouse_step(&global_saved_values.mh_timer_index, &global_saved_values.automouse_10ms);
-    uprintf("mh_timer:%ld\n", (long)sval_automouse_timeout(global_saved_values.mh_timer_index, global_saved_values.automouse_10ms));
+    dprintf("mh_timer:%ld\n", (long)sval_automouse_timeout(global_saved_values.mh_timer_index, global_saved_values.automouse_10ms));
     write_eeprom_kb();
 }
 
