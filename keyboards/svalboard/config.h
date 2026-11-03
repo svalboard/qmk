@@ -281,6 +281,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define USB_MAX_POWER_CONSUMPTION 500
 #define USB_SUSPEND_WAKEUP_DELAY 500
 #define SERIAL_USART_SPEED 1000000
+// The split link's receive on the half with USB goes by DMA, and QMK's own
+// per-scan transactions and the touchpad's snapshot fetch get a 3 ms deadline
+// (the other RPCs, the updater's relay among them, keep the 20 ms one):
+// platforms/chibios/drivers/vendor/RP/RP2040/serial_vendor.c,
+// platforms/chibios/drivers/serial_protocol.c, docs/native-touchpad.md.
+#define SERIAL_PIO_RX_DMA
+#define SERIAL_USART_SHORT_TIMEOUT 3
 
 #define MOUSE_EXTENDED_REPORT
 #define SPLIT_POINTING_ENABLE

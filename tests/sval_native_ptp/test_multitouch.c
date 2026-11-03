@@ -25,6 +25,16 @@ static uint8_t test_palm_at;
 
 // keymaps/keymap_support.c on the board.
 static int velocity_holds, velocity_on;
+// The split link's dev counters (serial_protocol.c, serial_vendor.c, power.c on the board).
+volatile uint8_t  sval_serial_dbg[8];
+volatile uint8_t  sval_serial_slave_dbg[4];
+volatile uint16_t sval_serial_fail_n;
+volatile uint32_t sval_serial_fail_us, sval_serial_ok_max_us;
+volatile uint8_t  sval_serial_fail_hist[6];
+volatile uint16_t sval_rx_stall_ok, sval_rx_stall_fail, sval_rx_full;
+uint8_t           sval_clock_mhz(void) {
+    return 125;
+}
 void       velocity_scroll_dev_hold(bool on) {
     velocity_holds++;
     velocity_on = on;

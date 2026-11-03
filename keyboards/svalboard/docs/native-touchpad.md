@@ -101,6 +101,33 @@ finger that lands later is, so one resting on a pad never takes over. When
 it turns off, the pads arm again on an all-up sample, so a finger still
 down never moves the pointer.
 
+## The split link's receive
+
+The half with USB receives the other half's replies (its pad snapshot, its
+matrix, its pointing report) by DMA from the PIO receive FIFO into a ring
+(`SERIAL_PIO_RX_DMA`, `platforms/chibios/drivers/vendor/RP/RP2040/serial_vendor.c`).
+Before, an interrupt and a thread wake drained the 8-byte FIFO as bytes
+arrived, and an interrupt handler running longer than 8 byte times (80 us at 1
+Mbaud; USB's handler was measured up to about 300 us) overflowed it: the PIO
+state machine stalled, missed bits, and the transaction failed, often only at
+the 20 ms receive timeout, with the main loop blocked meanwhile. On a touchpad
+on the half without USB that showed as pauses of 25 to 50 ms in the pointer;
+on a trackball there, as lost motion.
+
+- The DMA channel runs only while a transaction does: the updater refuses to
+  program or commit flash while any DMA channel is busy.
+- A framing error fails the receive at once.
+- QMK's per-scan transactions and the pad snapshot fetch get a 3 ms deadline
+  (`SERIAL_USART_SHORT_TIMEOUT`); the other RPCs, the updater's relay among
+  them, keep the 20 ms one, because their other end may take time.
+- The half without USB keeps the interrupt receive: a dedicated high-priority
+  thread drains it, and it only receives short requests. It waits 3 ms for
+  the buffer that follows a handshake (the master sends it at once), so the
+  bytes of a transaction the master gave up on are never taken for the next.
+
+Dev builds (`SVAL_TOUCH_DEV`) count failures by stage on both halves (and,
+on the half with USB, their cost) over the dev command (0xFC op 0x42 action 7).
+
 ## Builds
 
 | Flag | Where | Effect |
