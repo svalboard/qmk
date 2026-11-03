@@ -110,6 +110,15 @@ Each hand:
 - A hand that is not valid (no module, the driver didn't start, or the other half is disconnected) has an all-zero block.
 - Touch positions and finger counts are not reported yet: bit 4 and bits 5-6 read `0`.
 
+### Sniper and boost factors
+
+Bytes 53-55: `0x46` (`F`), then the sniper divisor and the boost
+multiplier in force (1 when that key is off, 255 at most), so a host shows the
+real factor instead of guessing it from the keymap. Firmware without them
+leaves byte 53 zero (the reply is zero-filled); a host then shows that sniper
+or boost is on, with no factor. A 32-byte client-wrapped report has no room
+for them.
+
 ### Velocity Scroll
 
 Builds with Velocity Scroll (`SV_VELOCITY_SCROLL`, and its toggle `SV_VELOCITY_SCROLL_TOGGLE`) add a 24-byte block at offsets 29-52, so a host can show it on, the offset from the anchor and the speed it sets, and draw the dead zone and the curve without knowing the build's tunables. Bytes 24-28 are left for the per-reader extension, so the two never overlap.
@@ -139,7 +148,7 @@ Builds with Velocity Scroll (`SV_VELOCITY_SCROLL`, and its toggle `SV_VELOCITY_S
 
 ## Pointing contacts
 
-`POINTING_CONTACTS` (`0x2F`) returns every touch contact down now, each on its own pad, for a live picture of the touchpads. With the native touchpad the computer owns the pads and `POINTING_MOTION` carries no touch positions, so this is how a host app draws the fingers. It is a snapshot: reading clears nothing, so any number of apps can poll it.
+`POINTING_CONTACTS` (`0x2F`) returns every touch contact down now, each on its own pad, for a live picture of the touchpads. With the native touchpad the computer owns the pads and `POINTING_MOTION` carries no touch positions, so this is how a host app draws the fingers. It is a snapshot: reading clears nothing, so any number of apps can poll it. Positions are where each finger is on its pad, also while sniper or boost scales what the computer sees.
 
 - Discovery: GET_INFO byte 19, bit 5 (`sval_flag2_pointing_contacts`, `0x20`). Firmware without the native touchpad leaves it zero.
 - Request: `DF 2F`

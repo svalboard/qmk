@@ -980,6 +980,11 @@ void sval_pointing_motion_kb(uint8_t *out, uint8_t length) {
     }
     out[SVAL_MOTION_AXIS_OFF] = modes.axis_state;
     if (modes.has_vs && length >= SVAL_MOTION_VS_OFF + SVAL_MOTION_VS_LEN) sval_motion_pack_vs(&out[SVAL_MOTION_VS_OFF], &modes.vs);
+    if (modes.sniper_div && length >= SVAL_MOTION_FACTORS_OFF + SVAL_MOTION_FACTORS_LEN) {
+        out[SVAL_MOTION_FACTORS_OFF]     = SVAL_MOTION_FACTORS_MAGIC;
+        out[SVAL_MOTION_FACTORS_OFF + 1] = modes.sniper_div > 255 ? 255 : (uint8_t)modes.sniper_div;
+        out[SVAL_MOTION_FACTORS_OFF + 2] = modes.boost_mult > 255 ? 255 : (uint8_t)modes.boost_mult;
+    }
     memset(motion_acc, 0, sizeof(motion_acc));
 }
 #endif

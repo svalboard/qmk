@@ -81,6 +81,15 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('OK', result.stdout)
 
+    def test_pad_follow_math(self):
+        # pad_follow.c: a grabbed touchpad finger as relative counts at the hand's DPI.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'pad_follow'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'pad_follow_test.c'), str(ROOT / 'keyboards/svalboard/pad_follow.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('OK', result.stdout)
+
     def test_keycodes_are_positions_30_and_31_in_both_keymaps(self):
         for keymap in ('sval', 'blank'):
             data = json.loads((ROOT / f'keyboards/svalboard/keymaps/{keymap}/sval.json').read_text())

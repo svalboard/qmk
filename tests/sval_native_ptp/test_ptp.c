@@ -112,7 +112,7 @@ static void well_formed(const uint8_t *r) {
             assert(r[1 + 6 * i + b] == 0);
     for (int i = 0; i < r[33]; i++) {
         assert((flags_of(r, i) & ~3) == 0 && id_of(r, i) < 16);
-        assert(x_of(r, i) <= SVAL_PTP_XMAX && y_of(r, i) <= SVAL_PTP_YMAX);
+        assert(x_of(r, i) <= SVAL_PTP_OS_XMAX && y_of(r, i) <= SVAL_PTP_OS_YMAX);
         for (int j = 0; j < i; j++)
             assert(id_of(r, i) != id_of(r, j));
     }
@@ -843,7 +843,7 @@ static void test_grab(void) {
     new_reports();
     assert(sval_ptp_grab_ready(0) && sval_ptp_grab_ready(1));
     assert(sval_ptp_grab_finger(0, &x, &y) == 0); // not grabbed
-    sval_ptp_set_grab(true);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_VS, true);
     run(5000);
     assert(new_reports() == 1 && flags_of(last(), 0) == 1 && sval_ptp_suppress_mouse()); // the OS sees a lift
     FEED(0, {0, 1, 110, 205});                                                           // the finger already down is followed at once
@@ -865,7 +865,7 @@ static void test_grab(void) {
     assert(c && c != a && c != b && x == 700);
     flagged(0, 0x02); // palm: that finger is done
     assert(sval_ptp_grab_finger(0, &x, &y) == 0);
-    sval_ptp_set_grab(false);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_VS, false);
     FEED(0, {2, 3, 720, 700});
     run(5000);
     assert(new_reports() == 0 && sval_ptp_grab_finger(0, &x, &y) == 0); // a finger down at release never moves the pointer
@@ -877,6 +877,272 @@ static void test_grab(void) {
     assert(new_reports() == 1 && x_of(last(), 0) == 50); // reports again after all-up
     puts("  grab: OS sees the lift, then nothing; one finger per pad followed; resting fingers never take over");
 }
+
+// Both holders (Velocity Scroll, the scroll key): the
+// pads go back only when the last lets go, and the followed finger is the
+// same from one holder to the next.
+static void test_grab_holders(void) {
+    start("grab-holders");
+    uint16_t x, y;
+    sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, true);
+    run(5000);
+    FEED(0, {0, 1, 100, 200});
+    run(5000);
+    uint16_t a = sval_ptp_grab_finger(0, &x, &y);
+    assert(a && x == 100 && new_reports() == 0);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_VS, true); // a second holder: the same finger
+    FEED(0, {0, 1, 120, 200});
+    assert(sval_ptp_grab_finger(0, &x, &y) == a && x == 120);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, false); // one lets go: still grabbed
+    run(5000);
+    assert(new_reports() == 0 && sval_ptp_grab_holders() == SVAL_PTP_GRAB_VS);
+    FEED(0, {0, 1, 130, 200});
+    assert(sval_ptp_grab_finger(0, &x, &y) == a && x == 130);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_VS, false);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_VS, false); // twice is harmless
+    assert(sval_ptp_grab_holders() == 0);
+    run(5000);
+    // The scroll key held the pads during this grab: the finger still down
+    // comes back to the OS at once (its last sample, 130), then follows.
+    FEED(0, {0, 1, 140, 200});
+    run(5000);
+    assert(new_reports() == 2 && x_of(last(), 0) == SVAL_PTP_OS_XOFF + 140 && sval_ptp_grab_finger(0, &x, &y) == 0);
+    up(0);
+    up(1);
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 0); // its quick lift: Confidence clear, never a tap
+    FEED(0, {0, 2, 50, 50});
+    run(5000);
+    assert(new_reports() == 1 && x_of(last(), 0) == SVAL_PTP_OS_XOFF + 50);
+    // Grabbed by the scroll key while that finger is down: the OS sees it lift
+    // with Confidence clear (never a tap), and it is followed at once.
+    sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, true);
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 0);
+    FEED(0, {0, 2, 60, 50});
+    uint16_t b = sval_ptp_grab_finger(0, &x, &y);
+    assert(b && b != a && x == 60);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, false);
+    run(5000);
+    up(0);
+    up(1);
+    run(5000);
+    new_reports();
+    // Released with no finger down: a tap later is a tap (Confidence kept).
+    sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, true);
+    run(5000);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, false);
+    run(5000);
+    up(0);
+    up(1);
+    run(100000);
+    FEED(0, {0, 5, 400, 400});
+    run(5000);
+    up(0);
+    run(5000);
+    new_reports();
+    assert(count_of(last()) == 1 && flags_of(last(), 0) == 1);
+    puts("  grab holders: the last holder releases; the same finger across holders; the scroll key hands a finger back at once");
+}
+
+
+// Frame: every contact's travel is scaled while the key is on; a finger that
+// lands enters where the first finger's map puts it; a press or a release
+// re-anchors every contact where it is, so nothing already down jumps.
+static void test_frame(void) {
+    start("frame");
+    // Two fingers down before the key: both scaled from the press, no jump.
+    FEED(0, {0, 1, 1000, 800}, {1, 2, 1500, 800});
+    run(5000);
+    new_reports();
+    sval_ptp_set_scale(3, 1);
+    FEED(0, {0, 1, 1000, 800}, {1, 2, 1500, 800});
+    run(5000);
+    assert(new_reports() == 1 && slot_at(last(), 1000, 800) >= 0 && slot_at(last(), 1500, 800) >= 0);
+    FEED(0, {0, 1, 1010, 800}, {1, 2, 1510, 800});
+    run(5000);
+    assert(new_reports() == 1 && slot_at(last(), 1030, 800) >= 0 && slot_at(last(), 1530, 800) >= 0);
+    // The second lifts; a third lands at 1200: placed by the first finger's
+    // map, 1030 + (1200 - 1010) x 3 = 1600.
+    FEED(0, {0, 1, 1010, 800});
+    run(5000);
+    run(5000);
+    new_reports();
+    FEED(0, {0, 1, 1010, 800}, {2, 3, 1200, 800});
+    run(5000);
+    assert(new_reports() == 1 && slot_at(last(), 1030, 800) >= 0 && slot_at(last(), 1600, 800) >= 0);
+    FEED(0, {0, 1, 1020, 800}, {2, 3, 1210, 800});
+    run(5000);
+    assert(new_reports() == 1 && slot_at(last(), 1060, 800) >= 0 && slot_at(last(), 1630, 800) >= 0);
+    // Released mid-stroke: this frame at x3, then 1x where they are.
+    sval_ptp_set_scale(1, 1);
+    FEED(0, {0, 1, 1030, 800}, {2, 3, 1220, 800});
+    run(5000);
+    assert(new_reports() == 1 && slot_at(last(), 1090, 800) >= 0 && slot_at(last(), 1660, 800) >= 0);
+    FEED(0, {0, 1, 1040, 800}, {2, 3, 1230, 800});
+    run(5000);
+    assert(new_reports() == 1 && slot_at(last(), 1100, 800) >= 0 && slot_at(last(), 1670, 800) >= 0);
+    // Pressed again: x3 again from where they are.
+    sval_ptp_set_scale(3, 1);
+    FEED(0, {0, 1, 1050, 800}, {2, 3, 1240, 800});
+    run(5000);
+    assert(new_reports() == 1 && slot_at(last(), 1110, 800) >= 0 && slot_at(last(), 1680, 800) >= 0);
+    FEED(0, {0, 1, 1060, 800}, {2, 3, 1250, 800});
+    run(5000);
+    assert(new_reports() == 1 && slot_at(last(), 1140, 800) >= 0 && slot_at(last(), 1710, 800) >= 0);
+    sval_ptp_set_scale(1, 1);
+    up(0);
+    run(5000);
+    puts("  frame: every contact scaled from the press; a landing finger enters by the first finger's map; release and press re-anchor, no jump");
+}
+
+// Repeated boost strokes: every stroke's first finger starts at its own real
+// position, whatever the stroke before did, so strokes never drift to an edge.
+// A tap shorter than a frame while boost is on and another finger is down
+// (it enters by the first finger's map): its lift goes out exactly where its
+// Tip=1 frame put it, never at its unscaled position.
+static void test_scaled_short_tap(void) {
+    start("scaled-short-tap");
+    sval_ptp_set_scale(3, 1);
+    FEED(0, {0, 1, 1000, 800});
+    run(5000);
+    FEED(0, {0, 1, 1100, 800});
+    run(5000);
+    new_reports();
+    FEED(1, {0, 2, 300, 300});
+    up(1); // appeared and vanished before any frame was built
+    run(5000);
+    assert(new_reports() == 1 && count_of(last()) == 2);
+    // The tap is the contact that is not the first finger (pad 0: 1000 + 100 x 3).
+    int k = x_of(last(), 0) == 1300 ? 1 : 0;
+    uint8_t  tap = id_of(last(), k);
+    uint16_t tx = x_of(last(), k), ty = y_of(last(), k);
+    assert(flags_of(last(), k) == 3 && tx != SVAL_PTP_PAD_STRIDE + 300);
+    run(5000);
+    assert(new_reports() == 1);
+    bool seen = false;
+    for (int i = 0; i < count_of(last()); i++)
+        if (id_of(last(), i) == tap) {
+            seen = true;
+            assert(flags_of(last(), i) == 1 && x_of(last(), i) == tx && y_of(last(), i) == ty);
+        }
+    assert(seen);
+    sval_ptp_set_scale(1, 1);
+    up(0);
+    run(5000);
+    run(5000);
+    puts("  scaled tap shorter than a frame: its lift goes where its Tip=1 frame was");
+}
+
+static void test_repeated_strokes(void) {
+    for (int pass = 0; pass < 1; pass++) {
+        start("strokes");
+        sval_ptp_set_scale(3, 1);
+        for (int k = 0; k < 6; k++) {
+            uint8_t life = (uint8_t)(10 + k);
+            FEED(0, {0, life, 600, 600});
+            run(5000);
+            new_reports();
+            assert(x_of(last(), 0) == 600 && y_of(last(), 0) == 600); // the real position
+            for (int i = 1; i <= 10; i++) {
+                FEED(0, {0, life, (uint16_t)(600 + 20 * i), 600});
+                run(5000);
+            }
+            new_reports();
+            assert(x_of(last(), 0) == 600 + 3 * 200); // x3 from there
+            up(0);
+            run(5000);
+            run(5000);
+        }
+        sval_ptp_set_scale(1, 1);
+    }
+    puts("  repeated boost strokes: each starts at the finger's real position");
+}
+
+// The host app's view (0x2F) shows where the finger really is, on the pad it
+// touches, never the scaled position the OS gets: boost x3 in Frame, a finger
+// moving toward the inner edge of the left pad.
+static void test_view_true_position(void) {
+    start("view-true");
+    sval_ptp_set_scale(3, 1);
+    uint8_t o[SVAL_PTP_CONTACTS_LEN];
+    for (int i = 0; i <= 12; i++) {
+        uint16_t x = (uint16_t)(1400 + 50 * i); // up to 2000, near the inner edge
+        FEED(0, {0, 1, x, 900});
+        run(5000);
+        sval_ptp_contacts(o, sizeof(o));
+        assert(o[3] == 1);
+        uint32_t w = o[5] | (uint32_t)o[6] << 8 | (uint32_t)o[7] << 16;
+        assert(!(o[4] & 0x40));    // the left pad
+        assert((w & 0xFFF) == x);  // its real position
+        assert(((w >> 12) & 0xFFF) == 900);
+    }
+    new_reports();
+    assert(x_of(last(), 0) == 1400 + 3 * 600); // while the OS has it past the gap, on the right pad's part
+    sval_ptp_set_scale(1, 1);
+    up(0);
+    run(5000);
+    puts("  view (0x2F): the finger where it really is, on its own pad, while the OS gets the scaled position");
+}
+
+#if SVAL_PTP_SURFACE_TIMES == 7
+// The surface the OS sees (the firmware's): the pads' descriptor but for the
+// maxima, the same counts per mm, the pads in its center; boost travels past
+// the pads; the grab and the host app's contacts stay on the pads' own
+// coordinates.
+static void test_os_surface(void) {
+    static const uint8_t pads_desc[] = {SVAL_PTP_REPORT_DESCRIPTOR_SIZED(SVAL_PTP_XMAX, SVAL_PTP_PXMAX, SVAL_PTP_YMAX, SVAL_PTP_PYMAX)};
+    static const uint8_t os_desc[]   = {SVAL_PTP_REPORT_DESCRIPTOR};
+    assert(sizeof(pads_desc) == sizeof(os_desc));
+    unsigned diff = 0;
+    for (unsigned i = 0; i < sizeof(pads_desc); i++) {
+        if (pads_desc[i] == os_desc[i]) continue;
+        diff++;
+        assert(i >= 2 && (os_desc[i - 1] == 0x26 || os_desc[i - 1] == 0x46 || os_desc[i - 2] == 0x26 || os_desc[i - 2] == 0x46));
+    }
+    assert(diff > 0 && diff <= 5 * 4 * 2);
+    assert(SVAL_PTP_OS_XMAX == 32003 && SVAL_PTP_OS_YMAX == 12543);
+    assert((uint32_t)(SVAL_PTP_OS_XMAX + 1) * SVAL_PTP_PXMAX == (uint32_t)(SVAL_PTP_XMAX + 1) * SVAL_PTP_OS_PXMAX);
+    assert((uint32_t)(SVAL_PTP_OS_YMAX + 1) * SVAL_PTP_PYMAX == (uint32_t)(SVAL_PTP_YMAX + 1) * SVAL_PTP_OS_PYMAX);
+
+    start("os-surface");
+    FEED(0, {0, 1, 100, 200});
+    run(5000);
+    assert(new_reports() == 1 && x_of(last(), 0) == SVAL_PTP_OS_XOFF + 100 && y_of(last(), 0) == SVAL_PTP_OS_YOFF + 200);
+    uint8_t o[SVAL_PTP_CONTACTS_LEN];
+    sval_ptp_contacts(o, sizeof(o));
+    assert(o[3] == 1 && (ptp_get16(o + 5) & 0xFFF) == 100); // the host app: the pad's own coordinates
+    up(0);
+    run(5000);
+    new_reports();
+    // Boost x3 from near the right pad's right edge: room to travel past the pads.
+    sval_ptp_set_scale(3, 1);
+    FEED(1, {0, 2, 1800, 900});
+    run(5000);
+    FEED(1, {0, 2, 2000, 1500});
+    run(5000);
+    new_reports();
+    assert(x_of(last(), 0) == SVAL_PTP_OS_XOFF + SVAL_PTP_PAD_STRIDE + 1800 + 600 && y_of(last(), 0) == SVAL_PTP_OS_YOFF + 900 + 1800);
+    // Released: 1x from where it is, in the OS's coordinates.
+    sval_ptp_set_scale(1, 1);
+    FEED(1, {0, 2, 2000, 1500});
+    run(5000);
+    FEED(1, {0, 2, 1000, 1500});
+    run(5000);
+    new_reports();
+    assert(x_of(last(), 0) == SVAL_PTP_OS_XOFF + SVAL_PTP_PAD_STRIDE + 1400);
+    up(1);
+    run(5000);
+    // The grab still follows the pad's own coordinates.
+    uint16_t x, y;
+    sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, true);
+    FEED(0, {0, 3, 50, 60});
+    assert(sval_ptp_grab_finger(0, &x, &y) && x == 50 && y == 60);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, false);
+    up(0);
+    puts("  OS surface: maxima only, same counts per mm, pads centered; boost travels past the pads; grab and host contacts on pad coordinates");
+}
+#endif
 
 // Sval POINTING_CONTACTS (0x2F): every contact the computer has, back on its
 // own pad in that pad's counts.
@@ -998,6 +1264,15 @@ static void test_host_contacts_six(void) {
 int main(int argc, char **argv) {
     if (argc > 1) ptp_trace = fopen(argv[1], "w");
     puts("native PTP host tests:");
+#if SVAL_PTP_SURFACE_TIMES == 7
+    // The firmware's surface. The rest run on the pads' area alone
+    // (SVAL_PTP_SURFACE_TIMES 1, util/test_native_ptp.sh): positions as the pads see them.
+    test_os_surface();
+    test_grab_holders();
+    if (ptp_trace) fclose(ptp_trace);
+    printf("native PTP (OS surface): %u reports checked, all passed\n", ptp_sent_count);
+    return 0;
+#endif
     test_features();
     test_negotiation();
     test_one_finger();
@@ -1028,6 +1303,11 @@ int main(int argc, char **argv) {
     test_host_silent();
     test_paused();
     test_grab();
+    test_grab_holders();
+    test_frame();
+    test_scaled_short_tap();
+    test_repeated_strokes();
+    test_view_true_position();
     test_host_contacts();
     test_host_contacts_six();
     fresh("end");

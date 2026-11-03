@@ -6,7 +6,7 @@
 
 #ifdef SVAL_NATIVE_PTP
 #    define SVAL_TOUCH_OWNER_DEFAULT 3 // NATIVE (ptp.h); the dev command can switch it
-#    define SVAL_PTP_GAP_MM 10         // unreachable surface between the pads, 0..50
+#    define SVAL_PTP_GAP_MM 10         // unreachable surface between the pads, 0..12
 #    define SVAL_PTP_FLIP_L_X 0
 #    define SVAL_PTP_FLIP_L_Y 0
 #    define SVAL_PTP_FLIP_R_X 0
