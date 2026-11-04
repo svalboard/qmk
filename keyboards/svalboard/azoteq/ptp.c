@@ -927,7 +927,8 @@ static void scale_update(void) {
             c->rx = clamp_to(x, surf_xmax);
             c->ry = clamp_to(y, surf_ymax);
         }
-        if (c->lift) continue;
+        // Anchored even when it lifts in this frame, so a frame built again
+        // (the endpoint busy) maps it where it was placed.
         anchor(c, x, y, on);
     }
     applied_num = scale_num;

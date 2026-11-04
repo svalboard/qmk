@@ -645,9 +645,9 @@ static const uint8_t *last_contact_report(uint8_t pad, uint16_t *x) {
     for (unsigned i = ptp_sent_count; i-- > 0;) {
         const uint8_t *r = ptp_sent[i];
         for (int k = 0; k < r[33]; k++) {
-            uint16_t rx = (uint16_t)(ptp_get16(r + 3 + 6 * k) - SVAL_PTP_OS_XOFF); // on the pads' area
+            int32_t rx = (int32_t)ptp_get16(r + 3 + 6 * k) - SVAL_PTP_OS_XOFF; // on the pads' area (left of it: negative)
             if ((rx >= SVAL_PTP_PAD_STRIDE) == (pad == 1)) {
-                *x = rx;
+                *x = (uint16_t)rx;
                 return r;
             }
         }
@@ -749,11 +749,11 @@ static bool os_contact(uint8_t pad, uint8_t *id, uint16_t *x) {
     if (!r) return false;
     for (int k = 0; k < r[33]; k++) {
         if (!(r[1 + 6 * k] & 2)) continue;
-        uint16_t rx = (uint16_t)(ptp_get16(r + 3 + 6 * k) - SVAL_PTP_OS_XOFF); // on the pads' area
+        int32_t rx = (int32_t)ptp_get16(r + 3 + 6 * k) - SVAL_PTP_OS_XOFF; // on the pads' area (left of it: negative)
         if ((rx >= SVAL_PTP_PAD_STRIDE) != (pad == 1)) continue;
         if (ptp_get16(r + 5 + 6 * k) - SVAL_PTP_OS_YOFF != 800) continue; // the moving finger, not the resting one
         *id = r[2 + 6 * k];
-        *x  = rx;
+        *x  = (uint16_t)rx;
         return true;
     }
     return false;
