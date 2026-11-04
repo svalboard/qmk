@@ -138,6 +138,7 @@ typedef struct {
     bool             left_scroll, right_scroll, left_automouse, right_automouse;
     bool             has_vs;
     sval_motion_vs_t vs;
+    uint16_t         sniper_div, boost_mult; // the factors in force (0: not reported)
 } sval_pointing_modes_t;
 void sval_pointing_modes(sval_pointing_modes_t *m);
 

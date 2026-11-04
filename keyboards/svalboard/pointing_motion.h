@@ -13,6 +13,13 @@
 #define SVAL_MOTION_LEFT_OFF   3
 #define SVAL_MOTION_RIGHT_OFF  13
 #define SVAL_MOTION_AXIS_OFF   23
+// The sniper and boost factors in force, after the Velocity Scroll block:
+// magic, then the sniper divisor and the boost multiplier (1 when that key is
+// off; 255 at most). Firmware without them leaves the magic 0.
+#define SVAL_MOTION_FACTORS_OFF   53
+#define SVAL_MOTION_FACTORS_LEN   3
+#define SVAL_MOTION_FACTORS_MAGIC 0x46 // 'F'
+
 
 // Global mode bits (reply byte 1).
 #define SVAL_MOTION_SNIPER         0x01 // sniper / precision active

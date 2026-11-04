@@ -22,9 +22,8 @@ static uint8_t test_palm_at;
 #define SVAL_PTP_PALM_AREA test_palm_at
 #include "../../keyboards/svalboard/azoteq/multitouch.c" // brings mt_test_platform.h
 #include "../../keyboards/svalboard/azoteq/ptp.c"
+#include "../../keyboards/svalboard/pad_follow.c"
 
-// keymaps/keymap_support.c on the board.
-static int velocity_holds, velocity_on;
 // The split link's dev counters (serial_protocol.c, serial_vendor.c, power.c on the board).
 volatile uint8_t  sval_serial_dbg[8];
 volatile uint8_t  sval_serial_slave_dbg[4];
@@ -37,6 +36,10 @@ volatile uint32_t sval_rx_awake_us;
 uint8_t sval_clock_mhz(void) {
     return 125;
 }
+
+// keymaps/keymap_support.c on the board.
+static int velocity_holds, velocity_on;
+
 void velocity_scroll_dev_hold(bool on) {
     velocity_holds++;
     velocity_on = on;
@@ -130,7 +133,7 @@ static bool left_down(void) {
     const uint8_t *r = latest();
     if (!r) return false;
     for (int i = 0; i < r[33]; i++)
-        if ((r[1 + 6 * i] & 2) && ptp_get16(r + 3 + 6 * i) < SVAL_PTP_PAD_STRIDE) return true;
+        if ((r[1 + 6 * i] & 2) && ptp_get16(r + 3 + 6 * i) < SVAL_PTP_OS_XOFF + SVAL_PTP_PAD_STRIDE) return true;
     return false;
 }
 
@@ -469,7 +472,7 @@ static void pinch_scan(unsigned from, pinch_result_t *res, bool *left_was, uint8
         uint8_t        cid = 0xFF;
         for (int i = 0; i < r[33] && i < 5; i++) {
             if (!(r[1 + 6 * i] & 2)) continue;
-            if (ptp_get16(r + 3 + 6 * i) < SVAL_PTP_PAD_STRIDE) {
+            if (ptp_get16(r + 3 + 6 * i) < SVAL_PTP_OS_XOFF + SVAL_PTP_PAD_STRIDE) {
                 left = true;
                 cid  = r[2 + 6 * i];
             } else {
@@ -626,6 +629,297 @@ static void test_palm_latch(void) {
     puts("  palm rejection: off by default; latched above the threshold until the lift");
 }
 
+// ------------------------------- a key pressed with a finger already down
+//
+// The normal way to use a modifier: the finger rests on a pad, then the key
+// comes on, then the finger moves. For each holder of the grab (Velocity
+// Scroll as the control, the scroll key) the resting finger is followed at
+// once and its motion comes out of pad_follow with no jump; for sniper and
+// boost the OS keeps the contact and its travel is scaled from where it
+// rested. Both pads: this half's and the other half's.
+static uint16_t finger_x[2], finger_y[2];
+
+static void finger(uint8_t pad, bool down, uint16_t x, uint16_t y) {
+    finger_x[pad] = x;
+    finger_y[pad] = y;
+    if (pad == 1) { // this half (the right): its own read
+        uint8_t raw[45];
+        raw_sample(raw, down, x, y);
+        sval_mt_sample(raw, true);
+    } else {
+        set_peer(down, x, y);
+    }
+}
+// One chip period with the finger where it is (a resting finger still reports).
+static void period(uint8_t pad, bool down) {
+    finger(pad, down, finger_x[pad], finger_y[pad]);
+    run(8);
+}
+
+static const uint8_t *last_contact_report(uint8_t pad, uint16_t *x) {
+    for (unsigned i = ptp_sent_count; i-- > 0;) {
+        const uint8_t *r = ptp_sent[i];
+        for (int k = 0; k < r[33]; k++) {
+            int32_t rx = (int32_t)ptp_get16(r + 3 + 6 * k) - SVAL_PTP_OS_XOFF; // on the pads' area (left of it: negative)
+            if ((rx >= SVAL_PTP_PAD_STRIDE) == (pad == 1)) {
+                *x = (uint16_t)rx;
+                return r;
+            }
+        }
+    }
+    return NULL;
+}
+
+static void key_with_finger_down_grab(uint8_t pad, uint8_t holder, const char *name) {
+    usb_half();
+    sval_pad_follow_t f = {0};
+    int16_t           dx, dy;
+    uint16_t          x, y;
+    finger(pad, true, 1000, 800);
+    for (int i = 0; i < 12; i++)
+        period(pad, true); // resting, reported to the OS
+    assert(sval_ptp_reporting() && sval_ptp_contacts_down());
+    unsigned before = ptp_sent_count;
+    sval_ptp_set_grab(holder, true); // the key comes on
+    long sx = 0, sy = 0;
+    for (int i = 0; i < 12; i++) { // still resting: followed at once, no motion
+        period(pad, true);
+        uint16_t t = sval_ptp_grab_finger(pad, &x, &y);
+        assert(t && x == 1000 && y == 800);
+        sval_pad_follow(&f, t, x, y, x, y, 1210, &dx, &dy);
+        sx += dx;
+        sy += dy;
+    }
+    assert(sx == 0 && sy == 0);
+    for (int i = 1; i <= 10; i++) { // then it moves 200 counts right, 100 down
+        finger(pad, true, (uint16_t)(1000 + 20 * i), (uint16_t)(800 + 10 * i));
+        run(8);
+        uint16_t t = sval_ptp_grab_finger(pad, &x, &y);
+        assert(t);
+        sval_pad_follow(&f, t, x, y, x, y, 1210, &dx, &dy);
+        sx += dx;
+        sy += dy;
+    }
+    assert(sx == 200 && sy == 100);
+    // The OS saw the lift at the grab and nothing after it.
+    unsigned frames = ptp_sent_count - before;
+    assert(frames >= 1 && ptp_sent[ptp_sent_count - 1][33] <= 1 && !(ptp_sent[ptp_sent_count - 1][1] & 2));
+    sval_ptp_set_grab(holder, false);
+    period(pad, false);
+    run(20);
+    printf("  key on with a finger already down, %s, %s pad: followed at once, 200/100 counts out\n", name, pad ? "this" : "the other");
+}
+
+static void key_with_finger_down_scale(uint8_t pad, uint16_t num, uint16_t den, const char *name) {
+    usb_half();
+    uint16_t x0, x;
+    finger(pad, true, 1000, 800);
+    for (int i = 0; i < 12; i++)
+        period(pad, true);
+    assert(last_contact_report(pad, &x0));
+    unsigned before = ptp_sent_count;
+    sval_ptp_set_scale(num, den); // the key comes on
+    for (int i = 0; i < 12; i++)
+        period(pad, true); // resting: frames keep coming, no jump
+    assert(ptp_sent_count > before && last_contact_report(pad, &x) && x == x0);
+    for (int i = 1; i <= 10; i++) {
+        finger(pad, true, (uint16_t)(1000 + 20 * i), 800);
+        run(8);
+    }
+    run(8);
+    assert(last_contact_report(pad, &x) && x == x0 + 200 * num / den);
+    sval_ptp_set_scale(1, 1);
+    period(pad, false);
+    run(20);
+    printf("  key on with a finger already down, %s, %s pad: the resting contact scaled (%u -> %u)\n", name, pad ? "this" : "the other", x0, x);
+}
+
+static void test_key_with_finger_down(void) {
+    for (uint8_t pad = 0; pad < 2; pad++) {
+        key_with_finger_down_grab(pad, SVAL_PTP_GRAB_VS, "Velocity Scroll (control)");
+        key_with_finger_down_grab(pad, SVAL_PTP_GRAB_SCROLL, "scroll key");
+        key_with_finger_down_scale(pad, 1, 2, "sniper");
+        key_with_finger_down_scale(pad, 3, 1, "boost");
+    }
+}
+
+// ------------------------------------------------ keys fluid with motion
+//
+// The scroll key, sniper and boost with fingers down and moving: the key
+// pressed and released mid-stroke changes the speed from the next sample,
+// with no lift, no jump and no stall. The pointer is watched as the host sees
+// it: the OS's contact (frame to frame) while the OS has the pads, the
+// firmware's motion (pad_follow, at the pad's full resolution so counts are
+// 1:1) while grabbed. Velocity Scroll is the control: as before, a finger
+// still down when it ends stays away from the OS until it lifts.
+enum { M_VS, M_SCROLL, M_SCALE };
+static const char *const mode_names[] = {"Velocity Scroll (control)", "scroll key", "sniper/boost"};
+
+typedef struct {
+    bool     has;
+    uint8_t  id;
+    uint16_t x;
+} watch_t;
+
+// The OS contact for this pad in the newest report: its ID and X, or false.
+static bool os_contact(uint8_t pad, uint8_t *id, uint16_t *x) {
+    const uint8_t *r = latest();
+    if (!r) return false;
+    for (int k = 0; k < r[33]; k++) {
+        if (!(r[1 + 6 * k] & 2)) continue;
+        int32_t rx = (int32_t)ptp_get16(r + 3 + 6 * k) - SVAL_PTP_OS_XOFF; // on the pads' area (left of it: negative)
+        if ((rx >= SVAL_PTP_PAD_STRIDE) != (pad == 1)) continue;
+        if (ptp_get16(r + 5 + 6 * k) - SVAL_PTP_OS_YOFF != 800) continue; // the moving finger, not the resting one
+        *id = r[2 + 6 * k];
+        *x  = (uint16_t)rx;
+        return true;
+    }
+    return false;
+}
+
+// The host's pointer motion in X since the last call; fresh: it came from a
+// new OS contact (no motion possible in its first frame).
+static int32_t watch(watch_t *w, uint8_t pad, bool *fresh) {
+    *fresh = false;
+    uint8_t  id;
+    uint16_t ox;
+    if (!os_contact(pad, &id, &ox)) {
+        w->has = false;
+        return 0;
+    }
+    if (!w->has || id != w->id) {
+        *fresh = true;
+        w->has = true;
+        w->id  = id;
+        w->x   = ox;
+        return 0;
+    }
+    int32_t d = (int32_t)ox - w->x;
+    w->x      = ox;
+    return d;
+}
+
+static void key(uint8_t mode, bool on, uint16_t num, uint16_t den) {
+    switch (mode) {
+        case M_VS:
+            sval_ptp_set_grab(SVAL_PTP_GRAB_VS, on);
+            break;
+        case M_SCROLL:
+            sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, on);
+            break;
+        default:
+            sval_ptp_set_scale(on ? num : 1, on ? den : 1);
+            break;
+    }
+}
+
+static bool key_on_at(int i) {
+    return (i >= 8 && i < 18) || (i >= 26 && i < 34);
+}
+
+// One stroke: the finger moves 20 counts each sample; the key goes on, off,
+// on and off mid-stroke. With `two`, a second finger rests on the same pad
+// the whole time. Every sample's motion must be 20 times the factor in force
+// (the old or the new one in the sample of a change); zero only while a
+// scroll holder has the pads, or for the one first frame of a contact handed
+// back to the OS. Anything else (a jump, a stall) fails.
+static int stroke(uint8_t pad, uint8_t mode, uint16_t num, uint16_t den, bool two) {
+    usb_half();
+    if (mode == M_SCALE) sval_ptp_set_scale(1, 1);
+    const int  step = 20, n = 44;
+    const bool scrolls = mode == M_VS || mode == M_SCROLL;
+    watch_t    w       = {0};
+    uint16_t   x       = 300;
+    uint8_t    raw[45];
+    int        handbacks = 0;
+    for (int i = -6; i < n; i++) {
+        bool on = key_on_at(i);
+        if (i >= 0 && on != key_on_at(i - 1)) key(mode, on, num, den);
+        x = (uint16_t)(x + step);
+        if (pad == 1) {
+            raw_sample(raw, true, x, 800);
+            if (two) { // a second finger resting in slot 1 at (1536, 768)
+                raw[5]  = 2;
+                raw[17] = 0x06;
+                raw[18] = 0x00;
+                raw[19] = 0x03;
+                raw[20] = 0x00;
+                raw[22] = 40;
+                raw[23] = 20;
+            }
+            sval_mt_sample(raw, true);
+        } else {
+            set_peer(true, x, 800); // the other half: one finger
+        }
+        run(8);
+        bool    fresh;
+        int32_t d = watch(&w, pad, &fresh);
+        if (i < 0) continue;
+        bool    was    = key_on_at(i - 1);
+        int32_t scaled = step * num / den;
+        int32_t now_w  = scrolls ? (on ? 0 : step) : (on ? scaled : step);
+        int32_t was_w  = scrolls ? (was ? 0 : step) : (was ? scaled : step);
+        if (mode == M_VS && i >= 8) now_w = was_w = 0; // the OS gets the finger back only after it lifts
+        bool ok = d == now_w || d == was_w;
+        if (!ok && fresh && d == 0 && !on && mode == M_SCROLL) {
+            ok = true; // the first frame of the contact handed back
+            handbacks++;
+        }
+        if (!ok) {
+            fprintf(stderr, "FAIL %s %u/%u, %s pad, %s: sample %d, motion %ld, want %ld or %ld\n", mode_names[mode], num, den, pad ? "this" : "the other", two ? "two fingers" : "one finger", i, (long)d, (long)now_w, (long)was_w);
+            assert(0);
+        }
+    }
+    key(mode, false, num, den);
+    if (pad == 1) {
+        raw_sample(raw, false, 0, 0);
+        sval_mt_sample(raw, true);
+    } else {
+        set_peer(false, 0, 0);
+    }
+    run(40);
+    return handbacks;
+}
+
+static void test_fluid(void) {
+    int hb = 0;
+    for (uint8_t pad = 0; pad < 2; pad++)
+        for (uint8_t two = 0; two < (pad == 1 ? 2 : 1); two++) {
+            hb += stroke(pad, M_VS, 1, 1, two);
+            hb += stroke(pad, M_SCROLL, 1, 1, two);
+            hb += stroke(pad, M_SCALE, 1, 2, two); // sniper /2
+            hb += stroke(pad, M_SCALE, 3, 1, two); // boost x3
+        }
+    printf("  keys fluid with motion: scroll key, sniper, boost, both pads, one or two fingers, on/off/on/off mid-stroke: the speed changes from the next sample, no jump, no stall; the scroll key hands a moving finger back to the OS mid-stroke; Velocity Scroll unchanged\n");
+    (void)hb;
+}
+
+// Repeated boost strokes over the split link, lifting for one sample between
+// strokes: each stroke's first report is at the finger's real position.
+static void test_repeated_strokes_remote(void) {
+    for (int pass = 0; pass < 1; pass++) {
+        usb_half();
+        sval_ptp_set_scale(3, 1);
+        for (int k = 0; k < 6; k++) {
+            set_peer(true, 600, 800);
+            run(8);
+            uint8_t  id;
+            uint16_t x;
+            assert(os_contact(0, &id, &x) && x == 600);
+            for (int i = 1; i <= 10; i++) {
+                set_peer(true, (uint16_t)(600 + 20 * i), 800);
+                run(8);
+            }
+            assert(os_contact(0, &id, &x) && x == 600 + 3 * 200);
+            set_peer(false, 0, 0);
+            run(8);
+        }
+        sval_ptp_set_scale(1, 1);
+        run(40);
+    }
+    puts("  repeated boost strokes over the split link, one sample apart: each starts at the real position");
+}
+
 int main(void) {
     puts("native PTP split and contact path tests:");
     test_other_half();
@@ -638,6 +932,9 @@ int main(void) {
     test_owner();
     test_pinch_flaky_link();
     test_palm_latch();
+    test_key_with_finger_down();
+    test_fluid();
+    test_repeated_strokes_remote();
     puts("native PTP split and contact path: all passed");
     return 0;
 }

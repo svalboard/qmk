@@ -40,3 +40,14 @@ void set_mult_axis(axis_scale_t *, uint8_t);
 void mult_div_axis(axis_scale_t *, uint8_t);
 void div_div_axis(axis_scale_t *, uint8_t);
 void set_div_axis(axis_scale_t *, uint8_t);
+
+// The sniper divisor or boost multiplier from the keys held and toggled on:
+// 2^n2 * 3^n3 * 5^n5, clamped to 255, the largest 8-bit factor. Any number
+// of keys gives a factor in 1..255, never a wrapped one.
+static inline uint8_t axis_factor(unsigned n2, unsigned n3, unsigned n5) {
+    uint16_t f = 1;
+    for (unsigned i = 0; i < n2 && f < 255; i++) f *= 2;
+    for (unsigned i = 0; i < n3 && f < 255; i++) f *= 3;
+    for (unsigned i = 0; i < n5 && f < 255; i++) f *= 5;
+    return f > 255 ? 255 : (uint8_t)f;
+}

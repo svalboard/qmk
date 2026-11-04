@@ -1,6 +1,6 @@
 """Check the native touchpad's HID report descriptor and the reports ptp.c packs.
 
-usage: test_descriptor.py <descriptor-hex-file> [<report-trace-file>]
+usage: test_descriptor.py <descriptor-hex-file> [<report-trace-file> ...]
 
 1. Parses the descriptor (our parser in tools/multitouch/ptp_hid.py) and checks
    the usages, report sizes, ranges and the byte layout ptp.c packs.
@@ -100,8 +100,8 @@ def main():
     print("native PTP descriptor tests:")
     check_descriptor(desc)
     cross_check_hidtools(desc)
-    if len(sys.argv) > 2:
-        check_trace(desc, sys.argv[2])
+    for path in sys.argv[2:]:
+        check_trace(desc, path)
     print("native PTP descriptor: all passed")
 
 

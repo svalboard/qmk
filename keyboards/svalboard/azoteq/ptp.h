@@ -48,6 +48,11 @@ enum sval_touch_owner {
 #ifndef SVAL_PTP_MERGE_US
 #    define SVAL_PTP_MERGE_US (SVAL_PTP_PAD_PERIOD_MS * 1000u)
 #endif
+// A finger handed back by the scroll key's grab that lifts
+// within this long goes out with Confidence clear: never a tap.
+#ifndef SVAL_PTP_HANDBACK_TAP_MS
+#    define SVAL_PTP_HANDBACK_TAP_MS 300
+#endif
 #ifndef SVAL_PTP_KEEPALIVE_MS
 #    define SVAL_PTP_KEEPALIVE_MS 50 // repeat while down (Linux releases after 100 ms)
 #endif
@@ -115,22 +120,36 @@ void     sval_ptp_set_paused(bool paused);                  // an update is runn
 bool     sval_ptp_wants_frames(void);                       // feed pad frames to sval_ptp_feed()
 bool     sval_ptp_active(void);                             // NATIVE, a pad, Input Mode 3: the OS owns the pads
 bool     sval_ptp_reporting(void);                          // reports are on (mode 3 and the surface switch), the mode in force
+bool     sval_ptp_os_owns(void);                           // the OS would own the pads now: mode 3, the surface switch on, not paused (grabbed or not)
 bool     sval_ptp_host_asks(void);                          // the host wrote Input Mode 3, whatever the touchpad mode setting
 bool     sval_ptp_suppress_mouse(void);                     // the pads' mouse output must be zero
 bool     sval_ptp_contacts_down(void);                      // a contact is down or still lifting
 uint16_t sval_ptp_take_motion(uint8_t pad);                 // admitted contact motion, counts
 bool     sval_ptp_key_button(uint8_t button, bool pressed); // SVAL_PTP_KEY_BUTTONS
 
-// --- Velocity Scroll (keymaps/keymap_support.c, velocity_scroll.h) ---
-// While grabbed, the touchpad sends nothing (the OS sees every finger lift) and
-// one finger per pad is followed. A finger down at the grab is followed at
-// once; after it lifts, only a finger that lands later is.
-void     sval_ptp_set_grab(bool grab);
+// --- the grab: Velocity Scroll and the scroll key (keymaps/keymap_support.c) ---
+// While any holder grabs, the touchpad sends nothing (the OS sees every finger
+// lift) and one finger per pad is followed. A finger down at the grab is
+// followed at once; after it lifts, only a finger that lands later is. The
+// pads go back when the last holder lets go.
+#define SVAL_PTP_GRAB_VS 1     // Velocity Scroll
+#define SVAL_PTP_GRAB_SCROLL 2 // scroll toggle or hold key
+void     sval_ptp_set_grab(uint8_t holder, bool grab);
+uint8_t  sval_ptp_grab_holders(void);
+
 bool     sval_ptp_grab_ready(uint8_t pad); // this pad's contact frames arrive here
 // The followed finger: its touch serial (never 0; a new one per finger), and
 // its position on the pad (x 0..SVAL_PTP_PAD_X-1, y 0..SVAL_PTP_PAD_Y-1, in the
 // touchpad's orientation). 0: none.
 uint16_t sval_ptp_grab_finger(uint8_t pad, uint16_t *x, uint16_t *y);
+// Where the followed finger was one sample before it was taken (a finger
+// already down), or where it landed: the start of its motion.
+void sval_ptp_grab_origin(uint8_t pad, uint16_t *x0, uint16_t *y0);
+
+// --- sniper and boost while the OS keeps the pads (keymap_support.c) ---
+// num/den 1/1 is off. Every contact's travel is scaled by num/den; a change
+// takes effect from the next frame with no jump. ptp.c has the rules.
+void sval_ptp_set_scale(uint16_t num, uint16_t den);
 
 // --- contacts (multitouch.c) ---
 // One version-1 56-byte pad frame: pad, flags, mask, seq, size, time, epoch,

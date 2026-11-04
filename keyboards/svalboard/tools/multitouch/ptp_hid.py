@@ -173,9 +173,12 @@ def U(page, usage):
     return page << 16 | usage
 
 
-def geometry(gap_mm):
+def geometry(gap_mm, times=7):
+    """The pads' layout, and the surface the OS sees: `times` the pads' area on
+    each axis (ptp_descriptor.h, SVAL_PTP_SURFACE_TIMES), the pads in its center."""
     g = (gap_mm * 2048 * 2 + 43) // (2 * 43)
-    return dict(gap=g, stride=2048 + g, xmax=4095 + g, ymax=1791, pxmax=860 + 10 * gap_mm, pymax=400)
+    pxmax, pymax = 860 + 10 * gap_mm, 400
+    return dict(gap=g, stride=2048 + g, xmax=times * (4096 + g) - 1, ymax=times * 1792 - 1, pxmax=times * pxmax, pymax=times * pymax, xoff=(times - 1) // 2 * (4096 + g), yoff=(times - 1) // 2 * 1792)
 
 
 def check(desc, gap_mm=10):

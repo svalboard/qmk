@@ -113,8 +113,11 @@ class PerfReport(unittest.TestCase):
 class Parser(unittest.TestCase):
     def test_geometry(self):
         g = ptp_hid.geometry(10)
-        self.assertEqual((g["gap"], g["xmax"], g["pxmax"]), (476, 4571, 960))
-        self.assertEqual(ptp_hid.geometry(0)["xmax"], 4095)
+        self.assertEqual((g["gap"], g["xmax"], g["ymax"], g["pxmax"], g["pymax"]), (476, 32003, 12543, 6720, 2800))
+        self.assertEqual((g["xoff"], g["yoff"]), (13716, 5376))
+        g = ptp_hid.geometry(10, times=1)
+        self.assertEqual((g["xmax"], g["ymax"], g["pxmax"], g["xoff"]), (4571, 1791, 960, 0))
+        self.assertEqual(ptp_hid.geometry(0, times=1)["xmax"], 4095)
 
     def test_minimal_descriptor(self):
         # A 1-byte input report: 2 buttons and 6 padding bits.
