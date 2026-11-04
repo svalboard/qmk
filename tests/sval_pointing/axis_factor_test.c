@@ -23,7 +23,8 @@ int main(void) {
     CHECK(axis_factor(40, 40, 40) == 255);
     for (unsigned a = 0; a < 12; a++)
         for (unsigned b = 0; b < 8; b++)
-            for (unsigned c = 0; c < 6; c++) CHECK(axis_factor(a, b, c) >= 1);
+            for (unsigned c = 0; c < 6; c++)
+                CHECK(axis_factor(a, b, c) >= 1);
     printf("OK\n");
     return 0;
 }

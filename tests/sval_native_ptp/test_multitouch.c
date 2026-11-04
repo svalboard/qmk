@@ -27,8 +27,8 @@ static uint8_t test_palm_at;
 // keymaps/keymap_support.c on the board.
 static int velocity_holds, velocity_on;
 void       velocity_scroll_dev_hold(bool on) {
-    velocity_holds++;
-    velocity_on = on;
+          velocity_holds++;
+          velocity_on = on;
 }
 
 // ------------------------------------------------------------- helpers
@@ -624,15 +624,15 @@ static void test_palm_latch(void) {
 // boost the OS keeps the contact and its travel is scaled from where it
 // rested. Both pads: this half's and the other half's.
 static uint16_t finger_x[2], finger_y[2];
-static void finger(uint8_t pad, bool down, uint16_t x, uint16_t y) {
-    finger_x[pad] = x;
-    finger_y[pad] = y;
-    if (pad == 1) { // this half (the right): its own read
+static void     finger(uint8_t pad, bool down, uint16_t x, uint16_t y) {
+        finger_x[pad] = x;
+        finger_y[pad] = y;
+        if (pad == 1) { // this half (the right): its own read
         uint8_t raw[45];
         raw_sample(raw, down, x, y);
         sval_mt_sample(raw, true);
     } else {
-        set_peer(down, x, y);
+            set_peer(down, x, y);
     }
 }
 // One chip period with the finger where it is (a resting finger still reports).
@@ -661,7 +661,8 @@ static void key_with_finger_down_grab(uint8_t pad, uint8_t holder, const char *n
     int16_t           dx, dy;
     uint16_t          x, y;
     finger(pad, true, 1000, 800);
-    for (int i = 0; i < 12; i++) period(pad, true); // resting, reported to the OS
+    for (int i = 0; i < 12; i++)
+        period(pad, true); // resting, reported to the OS
     assert(sval_ptp_reporting() && sval_ptp_contacts_down());
     unsigned before = ptp_sent_count;
     sval_ptp_set_grab(holder, true); // the key comes on
@@ -698,11 +699,13 @@ static void key_with_finger_down_scale(uint8_t pad, uint16_t num, uint16_t den, 
     usb_half();
     uint16_t x0, x;
     finger(pad, true, 1000, 800);
-    for (int i = 0; i < 12; i++) period(pad, true);
+    for (int i = 0; i < 12; i++)
+        period(pad, true);
     assert(last_contact_report(pad, &x0));
     unsigned before = ptp_sent_count;
     sval_ptp_set_scale(num, den); // the key comes on
-    for (int i = 0; i < 12; i++) period(pad, true); // resting: frames keep coming, no jump
+    for (int i = 0; i < 12; i++)
+        period(pad, true); // resting: frames keep coming, no jump
     assert(ptp_sent_count > before && last_contact_report(pad, &x) && x == x0);
     for (int i = 1; i <= 10; i++) {
         finger(pad, true, (uint16_t)(1000 + 20 * i), 800);
@@ -738,9 +741,9 @@ enum { M_VS, M_SCROLL, M_SCALE };
 static const char *const mode_names[] = {"Velocity Scroll (control)", "scroll key", "sniper/boost"};
 
 typedef struct {
-    bool              has;
-    uint8_t           id;
-    uint16_t          x;
+    bool     has;
+    uint8_t  id;
+    uint16_t x;
 } watch_t;
 
 // The OS contact for this pad in the newest report: its ID and X, or false.
@@ -811,7 +814,7 @@ static int stroke(uint8_t pad, uint8_t mode, uint16_t num, uint16_t den, bool tw
     const int  step = 20, n = 44;
     const bool scrolls = mode == M_VS || mode == M_SCROLL;
     watch_t    w       = {0};
-    uint16_t   x          = 300;
+    uint16_t   x       = 300;
     uint8_t    raw[45];
     int        handbacks = 0;
     for (int i = -6; i < n; i++) {

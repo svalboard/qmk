@@ -967,7 +967,6 @@ static void test_grab_holders(void) {
     puts("  grab holders: the last holder releases; the same finger across holders; the scroll key hands a finger back at once; a holder taking over in the same pass continues the grab");
 }
 
-
 // Frame: every contact's travel is scaled while the key is on; a finger that
 // lands enters where the first finger's map puts it; a press or a release
 // re-anchors every contact where it is, so nothing already down jumps.
@@ -1082,7 +1081,7 @@ static void test_scaled_short_tap(void) {
     run(5000);
     assert(new_reports() == 1 && count_of(last()) == 2);
     // The tap is the contact that is not the first finger (pad 0: 1000 + 100 x 3).
-    int k = x_of(last(), 0) == 1300 ? 1 : 0;
+    int      k   = x_of(last(), 0) == 1300 ? 1 : 0;
     uint8_t  tap = id_of(last(), k);
     uint16_t tx = x_of(last(), k), ty = y_of(last(), k);
     assert(flags_of(last(), k) == 3 && tx != SVAL_PTP_PAD_STRIDE + 300);
@@ -1141,8 +1140,8 @@ static void test_view_true_position(void) {
         sval_ptp_contacts(o, sizeof(o));
         assert(o[3] == 1);
         uint32_t w = o[5] | (uint32_t)o[6] << 8 | (uint32_t)o[7] << 16;
-        assert(!(o[4] & 0x40));    // the left pad
-        assert((w & 0xFFF) == x);  // its real position
+        assert(!(o[4] & 0x40));   // the left pad
+        assert((w & 0xFFF) == x); // its real position
         assert(((w >> 12) & 0xFFF) == 900);
     }
     new_reports();
