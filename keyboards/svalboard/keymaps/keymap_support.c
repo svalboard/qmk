@@ -254,10 +254,7 @@ void update_axis_scroll_mode(int32_t h, int32_t v) {
 static uint16_t sniper_div_now = 1, boost_mult_now = 1; // the factors in force
 
 void update_sniper_divisor(void) {
-    uint8_t div = 1;
-    for (uint8_t i = 0; i < sniper_hold_2 + sniper_toggle_2; i++) div *= 2;
-    for (uint8_t i = 0; i < sniper_hold_3 + sniper_toggle_3; i++) div *= 3;
-    for (uint8_t i = 0; i < sniper_hold_5 + sniper_toggle_5; i++) div *= 5;
+    uint8_t div = axis_factor(sniper_hold_2 + sniper_toggle_2, sniper_hold_3 + sniper_toggle_3, sniper_hold_5 + sniper_toggle_5);
     set_div_axis(&sniper_x, div);
     set_div_axis(&sniper_y, div);
     set_div_axis(&sniper_h, div);
@@ -266,15 +263,11 @@ void update_sniper_divisor(void) {
 }
 
 void update_boost_multiplier(void) {
-    uint16_t mult = 1;
-    for (uint8_t i = 0; i < boost_hold_2 + boost_toggle_2; i++) mult *= 2;
-    for (uint8_t i = 0; i < boost_hold_3 + boost_toggle_3; i++) mult *= 3;
-    for (uint8_t i = 0; i < boost_hold_5 + boost_toggle_5; i++) mult *= 5;
-    if (mult > 255) mult = 255;
-    set_mult_axis(&boost_x, (uint8_t)mult);
-    set_mult_axis(&boost_y, (uint8_t)mult);
-    set_mult_axis(&boost_h, (uint8_t)mult);
-    set_mult_axis(&boost_v, (uint8_t)mult);
+    uint8_t mult = axis_factor(boost_hold_2 + boost_toggle_2, boost_hold_3 + boost_toggle_3, boost_hold_5 + boost_toggle_5);
+    set_mult_axis(&boost_x, mult);
+    set_mult_axis(&boost_y, mult);
+    set_mult_axis(&boost_h, mult);
+    set_mult_axis(&boost_v, mult);
     boost_mult_now = mult;
 }
 
