@@ -264,8 +264,13 @@ bool transport_master_if_connected(matrix_row_t master_matrix[], matrix_row_t sl
     } else if (okay && is_disconnected) {
         dprintln("Target connected");
     }
-#    endif // SPLIT_CONNECTION_CHECK_TIMEOUT > 0
     return connected;
+#    else
+    // As stock QMK: with no throttling the check never holds the link down.
+    (void)connected;
+    connection = (split_connection_t){0};
+    return true;
+#    endif // SPLIT_CONNECTION_CHECK_TIMEOUT > 0
 #else
     return true;
 #endif // SPLIT_MAX_CONNECTION_ERRORS > 0

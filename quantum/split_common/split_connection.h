@@ -5,13 +5,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// The split link's disconnection check (split_util.c). The link counts as
-// disconnected after max_errors consecutive failed scans or, with min_ms above
-// 0, once consecutive failures have gone on for min_ms, however many there
-// were. The time keeps the disconnect independent of how long one failed scan
-// takes: with a short receive deadline ten failed scans can pass in a few tens
-// of ms, with retries one can take tens of ms, and a disconnect releases the
-// other half's held keys. One good scan connects again.
+// The split link's disconnection check (split_util.c). With min_ms 0 the link
+// counts as disconnected after max_errors consecutive failed scans (stock
+// QMK). With min_ms above 0 the time replaces the count: it is disconnected
+// once consecutive failures have gone on for min_ms, however many there were
+// (counted from the end of the first failed scan). That keeps the disconnect
+// independent of how long one failed scan takes, from a few ms (a fast
+// failure at a short deadline) to tens of ms (a timeout with retries); a
+// disconnect releases the other half's held keys. One good scan connects again.
 typedef struct {
     uint8_t  errors;       // consecutive failed scans
     bool     failing;      // a run of failures has started

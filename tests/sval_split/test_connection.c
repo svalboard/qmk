@@ -39,8 +39,12 @@ int main(void) {
             assert(stall(s, 250, fail_ms, MIN_MS, &after) && after);
         }
     }
-    // Without the time (min 0, stock QMK): ten 3 ms failures in a 50 ms stall disconnect.
+    // Without the time (min 0, stock QMK): ten failed scans. Fast 3 ms
+    // failures in a 50 ms stall disconnect; timeouts with retries (34 ms) do
+    // not in 50 ms, and do in 400 ms.
     assert(stall(0, 50, 3, 0, &after) && after);
+    assert(!stall(0, 50, 34, 0, &after) && after);
+    assert(stall(0, 400, 34, 0, &after) && after);
     // Exactly at the edge: fires once the failures have gone on for 200 ms.
     split_connection_t c = {0};
     for (uint16_t t = 0; t < 199; t += 3) assert(split_connection_update(&c, false, t, MAX_ERRORS, MIN_MS));
