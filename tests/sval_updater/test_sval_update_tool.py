@@ -550,6 +550,55 @@ def main():
     check("pre-approved by the pair update" in text and "approved by the pair (ARM flags 0x3)" in text, f"pair:\n{text}")
     check(text.count("chord recognized") == 1, f"pair: one chord\n{text}")
     check(len(sessions) == 2, "pair: two sessions")
+
+    # pair where this half refused its install (BUSY, say): it holds ERROR and
+    # never restarted, while the other half took the image. Presence matches
+    # and the fw_version numbers match, but the tool must fail, not report success.
+    class RefusedBoard(FakeBoard):
+        def op(self, op, args=b"", hand=su.HAND_SELF, client=None):
+            st, r = super().op(op, args, hand, client)
+            if op == su.STATUS and hand in (su.HAND_SELF, 1):
+                r = bytes([su.ST_ERROR]) + r[1:11] + bytes([5]) + r[12:]  # ERROR, last error BUSY
+            return st, r
+
+    lib.host_lib_reset(1)
+    lib.host_lib_split(1)
+    su.reopen = lambda serial, timeout: RefusedBoard()
+    board = FakeBoard()
+    sessions = []
+    with contextlib.redirect_stdout(io.StringIO()) as log:
+        try:
+            rc = su.pair(board, Args(), [right, left], sessions)
+            refused = None
+        except su.UpdaterError as e:
+            rc, refused = 1, str(e)
+    check(refused is not None and "did not install its image" in refused and "BUSY" in refused, f"pair with this half's install refused: exit {rc}, error {refused}\n{log.getvalue()}")
+    # this half came back running another build's version string: the install
+    # did not take; a build with no version string of its own is not compared;
+    # the image's own version string is a success. Each case must read page 1.
+    for shown, fails in ((b"other-build", True), (b"", False), (b"right-9", False)):
+        asked = []
+
+        class OtherBuild(FakeBoard):
+            def op(self, op, args=b"", hand=su.HAND_SELF, client=None):
+                if op == su.INFO and bytes(args[:1]) == b"\x01" and hand == su.HAND_SELF:
+                    asked.append(1)
+                    return su.OK, bytes([1]) + struct.pack("<I", 9) + shown.ljust(16, b"\0") + bytes(64)
+                return super().op(op, args, hand, client)
+
+        lib.host_lib_reset(1)
+        lib.host_lib_split(1)
+        su.reopen = lambda serial, timeout: OtherBuild()
+        with contextlib.redirect_stdout(io.StringIO()) as log:
+            try:
+                rc, err = su.pair(FakeBoard(), Args(), [right, left], []), None
+            except su.UpdaterError as e:
+                rc, err = 1, str(e)
+        if fails:
+            check(err is not None and "install did not take" in err and "other-build" in err, f"pair, this half runs another build: exit {rc}, error {err}\n{log.getvalue()}")
+        else:
+            check(rc == 0 and err is None, f"pair, this half reports {shown!r}: exit {rc}, error {err}\n{log.getvalue()}")
+        check(bool(asked), f"pair, {shown!r}: INFO page 1 was read")
     # P4-26: protocol 3 (the same board reporting 3): the chord twice, no PAIR_MANIFEST
     lib.host_lib_reset(1)
     lib.host_lib_split(1)

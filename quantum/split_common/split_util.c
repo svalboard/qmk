@@ -16,6 +16,7 @@
 
 #include "compiler_support.h"
 #include "split_util.h"
+#include "split_connection.h"
 #include "matrix.h"
 #include "keyboard.h"
 #include "timer.h"
@@ -54,7 +55,14 @@
 #    define SPLIT_CONNECTION_CHECK_TIMEOUT 500
 #endif // SPLIT_CONNECTION_CHECK_TIMEOUT
 
-static uint8_t connection_errors = 0;
+// With it above 0, the link counts as disconnected once consecutive failures
+// have gone on this long (ms), in place of SPLIT_MAX_CONNECTION_ERRORS of them
+// (split_connection.h).
+#ifndef SPLIT_MIN_DISCONNECT_MS
+#    define SPLIT_MIN_DISCONNECT_MS 0
+#endif // SPLIT_MIN_DISCONNECT_MS
+
+static split_connection_t connection = {0};
 
 static struct {
     bool master;
@@ -228,7 +236,11 @@ void split_post_init(void) {
 }
 
 bool is_transport_connected(void) {
-    return connection_errors < SPLIT_MAX_CONNECTION_ERRORS;
+#if SPLIT_MAX_CONNECTION_ERRORS > 0
+    return !connection.disconnected;
+#else
+    return true;
+#endif
 }
 
 bool transport_master_if_connected(matrix_row_t master_matrix[], matrix_row_t slave_matrix[]) {
@@ -244,23 +256,22 @@ bool transport_master_if_connected(matrix_row_t master_matrix[], matrix_row_t sl
 
     __attribute__((unused)) bool okay = transport_master(master_matrix, slave_matrix);
 #if SPLIT_MAX_CONNECTION_ERRORS > 0
-    if (!okay) {
-        if (connection_errors < UINT8_MAX) {
-            connection_errors++;
-        }
+    bool connected = split_connection_update(&connection, okay, timer_read(), SPLIT_MAX_CONNECTION_ERRORS, SPLIT_MIN_DISCONNECT_MS);
 #    if SPLIT_CONNECTION_CHECK_TIMEOUT > 0
-        bool connected = is_transport_connected();
-        if (!connected) {
-            connection_check_timer = timer_read();
-            dprintln("Target disconnected, throttling connection attempts");
-        }
-        return connected;
-    } else if (is_disconnected) {
+    if (!connected) {
+        connection_check_timer = timer_read();
+        dprintln("Target disconnected, throttling connection attempts");
+    } else if (okay && is_disconnected) {
         dprintln("Target connected");
-#    endif // SPLIT_CONNECTION_CHECK_TIMEOUT > 0
     }
-
-    connection_errors = 0;
-#endif // SPLIT_MAX_CONNECTION_ERRORS > 0
+    return connected;
+#    else
+    // As stock QMK: with no throttling the check never holds the link down.
+    (void)connected;
+    connection = (split_connection_t){0};
     return true;
+#    endif // SPLIT_CONNECTION_CHECK_TIMEOUT > 0
+#else
+    return true;
+#endif // SPLIT_MAX_CONNECTION_ERRORS > 0
 }
