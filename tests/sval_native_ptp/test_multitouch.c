@@ -33,8 +33,9 @@ volatile uint32_t sval_serial_fail_us, sval_serial_ok_max_us;
 volatile uint8_t  sval_serial_fail_hist[6];
 volatile uint16_t sval_rx_stall_ok, sval_rx_stall_fail, sval_rx_full;
 volatile uint32_t sval_rx_awake_us;
-uint8_t           sval_clock_mhz(void) {
-              return 125;
+
+uint8_t sval_clock_mhz(void) {
+    return 125;
 }
 void velocity_scroll_dev_hold(bool on) {
     velocity_holds++;
