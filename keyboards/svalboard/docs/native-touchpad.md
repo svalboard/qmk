@@ -139,6 +139,41 @@ chip's mouse and these keys work on it as they always have. `POINTING_MOTION`
 multiplier in force, and `POINTING_CONTACTS` (`0x2F`) gives every contact's
 real position on its pad, never the scaled one.
 
+## The split link's receive
+
+The half with USB receives the other half's replies (its pad snapshot, its
+matrix, its pointing report) by DMA from the PIO receive FIFO into a ring
+(`SERIAL_PIO_RX_DMA`, `platforms/chibios/drivers/vendor/RP/RP2040/serial_vendor.c`).
+Before, an interrupt and a thread wake drained the 8-byte FIFO as bytes
+arrived, and an interrupt handler running longer than 8 byte times (80 us at 1
+Mbaud; USB's handler was measured up to about 300 us) overflowed it: the PIO
+state machine stalled, missed bits, and the transaction failed, often only at
+the 20 ms receive timeout, with the main loop blocked meanwhile. On a touchpad
+on the half without USB that showed as pauses of 25 to 50 ms in the pointer;
+on a trackball there, as lost motion.
+
+- The DMA channel runs only while a transaction does: the updater refuses to
+  program or commit flash while any DMA channel is busy.
+- A framing error fails the receive at once.
+- The wait for a reply spins rather than sleeps. On a trackball pair, idle
+  with the default power saving, that keeps the core out of WFI 5.3 % of the
+  time (0.5 % when sleeping), while sleeping costs about 4 % of the scan
+  rate. `SERIAL_PIO_RX_DMA_POLL_US` above 0 makes it sleep.
+- The link counts as disconnected (QMK then releases the other half's held
+  keys) once failures have gone on for 200 ms (`SPLIT_MIN_DISCONNECT_MS`,
+  `quantum/split_common/split_connection.h`), not after ten failed scans,
+  which the short deadline would pass in a few tens of ms.
+- QMK's per-scan transactions and the pad snapshot fetch get a 3 ms deadline
+  (`SERIAL_USART_SHORT_TIMEOUT`); the other RPCs, the updater's relay among
+  them, keep the 20 ms one, because their other end may take time.
+- The half without USB keeps the interrupt receive: a dedicated high-priority
+  thread drains it, and it only receives short requests. It waits 3 ms for
+  the buffer that follows a handshake (the master sends it at once), so the
+  bytes of a transaction the master gave up on are never taken for the next.
+
+Dev builds (`SVAL_TOUCH_DEV`) count failures by stage on both halves (and,
+on the half with USB, their cost) over the dev command (0xFC op 0x42 action 7).
+
 ## Builds
 
 | Flag | Where | Effect |

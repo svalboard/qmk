@@ -1062,6 +1062,25 @@ def pair(dev, args, paths, sessions):
                                f"({s['other_half'] if s else 'no STATUS'}); if the other half does not answer, "
                                "plug USB into it and copy the .uf2")
         mine = decode_info(*dev2.op(INFO))["fw_version"]
+        # This half really installed its image: presence and fw_version alone
+        # can't tell (the other half took its image, and two builds may share a
+        # fw_version), so check this half's state and its version string. A
+        # half that refused to install (say BUSY) never restarts, keeps its old
+        # build and holds ERROR, which would also block it until an ABORT.
+        s2 = decode_status(*dev2.op(STATUS, hand=board))
+        if s2["state"] == "ERROR":
+            raise UpdaterError(f"pair: this ({HANDS[board]}) half did not install its image: it holds ERROR "
+                               f"({s2['last_error']}) and still runs its old firmware, while the other half "
+                               "took the new one. Clear it with abort, then run pair again")
+        st1, r1 = dev2.op(INFO, bytes([1]))
+        if st1 == OK and r1[0] == 1:
+            running = r1[5:21].rstrip(bytes(1))
+            wanted = bytes(this[0][1]["version"]).rstrip(b"\0")
+            # A build with no version string of its own reports none: nothing to compare.
+            if running and running != wanted:
+                raise UpdaterError(f"pair: this ({HANDS[board]}) half runs {running.decode('ascii', 'replace')!r}, "
+                                   f"not the image's {wanted.decode('ascii', 'replace')!r}: its install did not take. "
+                                   "The other half may have the new image")
         st, r = dev2.op(INFO, hand=board ^ 1)
         theirs = decode_info(st, r)["fw_version"] if r[0] != 0xFF else None
         print(f"pair: presence {s['other_half']} after {time.monotonic() - t0:.1f} s; this half fw {mine}, "

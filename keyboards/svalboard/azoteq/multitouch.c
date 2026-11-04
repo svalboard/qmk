@@ -297,10 +297,35 @@ static void unpack_snapshot(const uint8_t *r, uint8_t pad, uint8_t *frame) {
     }
 }
 
+#ifdef SVAL_TOUCH_DEV
+// Dev builds: the split link's failure counters (platforms/chibios/drivers/serial_protocol.c).
+extern volatile uint8_t  sval_serial_dbg[8];
+extern volatile uint8_t  sval_serial_slave_dbg[4];
+extern volatile uint16_t sval_serial_fail_n;
+extern volatile uint32_t sval_serial_fail_us, sval_serial_ok_max_us;
+extern volatile uint8_t  sval_serial_fail_hist[6];
+extern volatile uint16_t sval_rx_stall_ok, sval_rx_stall_fail, sval_rx_full;
+#    ifdef SERIAL_PIO_RX_DMA
+extern volatile uint32_t sval_rx_awake_us;
+#    endif
+uint8_t                  sval_clock_mhz(void); // power.c
+#    define SVAL_MT_RPC_SERIAL 0xAC                // this half's split counters
+#endif
+
 // Half without USB: a request from the USB half (svalboard.c routes the ops
 // here from the Scan Lab RPC). Runs in the split transport's callback: no I2C,
 // no waiting. True when the op was one of these.
 bool sval_mt_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint8_t *out) {
+#ifdef SVAL_TOUCH_DEV
+    if (in_len >= 1 && in[0] == SVAL_MT_RPC_SERIAL && out_len >= 16) {
+        memset(out, 0, out_len);
+        out[0] = SVAL_MT_RPC_SERIAL;
+        for (uint8_t i = 0; i < 8; i++) out[1 + i] = sval_serial_dbg[i];
+        for (uint8_t i = 0; i < 4; i++) out[9 + i] = sval_serial_slave_dbg[i];
+        out[13] = sval_clock_mhz();
+        return true;
+    }
+#endif
     if (in_len < 2 || out_len < SVAL_MT_RPC_REPLY) return false;
     if (in[0] == SVAL_MT_RPC_SNAPSHOT) {
         if (in[1] & 1) { // the USB half reads the news counter
@@ -313,7 +338,24 @@ bool sval_mt_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint8_t *ou
     return false;
 }
 
+#if defined(SERIAL_PIO_RX_DMA)
+extern volatile bool serial_transport_short_rpc; // platforms/chibios/drivers/serial_protocol.c
+#endif
+static bool remote_rpc_exec(const uint8_t *req, uint8_t req_len, uint8_t *reply);
+// The other half answers a snapshot from a copy it already made, so the
+// fetch takes the short split deadline (serial_protocol.c): a failed fetch
+// costs a few ms, not the 20 ms one for RPCs whose other end may take time.
 static bool remote_rpc(const uint8_t *req, uint8_t req_len, uint8_t *reply) {
+#if defined(SERIAL_PIO_RX_DMA)
+    serial_transport_short_rpc = true;
+    bool ok                    = remote_rpc_exec(req, req_len, reply);
+    serial_transport_short_rpc = false;
+    return ok;
+#else
+    return remote_rpc_exec(req, req_len, reply);
+#endif
+}
+static bool remote_rpc_exec(const uint8_t *req, uint8_t req_len, uint8_t *reply) {
     if (mt_updater_busy() || !is_transport_connected()) return false;
 #ifdef SVAL_PERF_STATS
     uint8_t perf_prev = sval_perf_enter(SVAL_PERF_GAP_FETCH);
@@ -442,6 +484,38 @@ static void poll_remote(void) {
 void velocity_scroll_dev_hold(bool on); // keymaps/keymap_support.c
 void sval_mt_command(uint8_t *data, uint8_t length) {
     uint8_t action = data[7], wanted = data[8], status = 0;
+    if (action == 7) {
+        // Split-link counters (both halves): [10..17] this half's master-side
+        // failures by stage, [18..21] its slave-side ones, [22..23] failed
+        // count, [24..27] failed us sum, [28..33] failure-time histogram,
+        // [34..37] longest good transaction us, [38] clock MHz, [40] 1 when
+        // the other half answered, then its [41..48] and [49..52] counters and
+        // [53] clock MHz, [54..59] receive FIFO overflow evidence (this half),
+        // [60..63] time this half spent awake waiting in the DMA receive, us.
+        memset(data + 6, 0, length - 6);
+        data[6] = 0xC2;
+        data[8] = touch_owner;
+        data[9] = 1 | 2 | 4 | 8 | 64; // bit 6: action 7
+        for (uint8_t i = 0; i < 8; i++) data[10 + i] = sval_serial_dbg[i];
+        for (uint8_t i = 0; i < 4; i++) data[18 + i] = sval_serial_slave_dbg[i];
+        put16(data + 22, sval_serial_fail_n);
+        put32(data + 24, sval_serial_fail_us);
+        for (uint8_t i = 0; i < 6; i++) data[28 + i] = sval_serial_fail_hist[i];
+        put32(data + 34, sval_serial_ok_max_us);
+        data[38] = sval_clock_mhz();
+        put16(data + 54, sval_rx_stall_ok);
+        put16(data + 56, sval_rx_stall_fail);
+        put16(data + 58, sval_rx_full);
+#    ifdef SERIAL_PIO_RX_DMA
+        put32(data + 60, sval_rx_awake_us); // [60..63] time awake waiting in the DMA receive, us
+#    endif
+        uint8_t req[2] = {SVAL_MT_RPC_SERIAL, 0}, reply[SVAL_MT_RPC_REPLY] = {0};
+        if (remote_rpc(req, sizeof(req), reply) && reply[0] == SVAL_MT_RPC_SERIAL) {
+            data[40] = 1;
+            memcpy(data + 41, reply + 1, 13);
+        }
+        return;
+    }
     if (action == 2) {
         velocity_scroll_dev_hold(wanted != 0);
     } else if (action == 1 && wanted != touch_owner) {
@@ -458,7 +532,7 @@ void sval_mt_command(uint8_t *data, uint8_t length) {
     data[6] = 0xC2;
     data[7] = status;
     data[8] = touch_owner;
-    data[9] = 1 | 2 | 4 | 8; // bit 0 native touchpad built, bit 1 status v2 (pads, link), bit 2 v3 (lost fingers), bit 3 action 2
+    data[9] = 1 | 2 | 4 | 8 | 64; // bit 0 native touchpad built, bit 1 status v2 (pads, link), bit 2 v3 (lost fingers), bit 3 action 2, bit 6 action 7
     sval_ptp_status(data + 10);
     uint8_t *o = data + 10 + SVAL_PTP_STATUS_SIZE;
     put32(o, samples);
