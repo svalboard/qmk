@@ -942,7 +942,29 @@ static void test_grab_holders(void) {
     run(5000);
     new_reports();
     assert(count_of(last()) == 1 && flags_of(last(), 0) == 1);
-    puts("  grab holders: the last holder releases; the same finger across holders; the scroll key hands a finger back at once");
+    // The scroll key lets go and Velocity Scroll takes over before the task
+    // runs: the same grab goes on, the same finger, nothing back to the OS.
+    sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, true);
+    run(5000);
+    new_reports();
+    FEED(0, {0, 6, 300, 300});
+    run(5000);
+    uint16_t c = sval_ptp_grab_finger(0, &x, &y);
+    assert(c && x == 300);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_SCROLL, false);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_VS, true);
+    run(5000);
+    FEED(0, {0, 6, 310, 300});
+    run(5000);
+    assert(sval_ptp_grab_finger(0, &x, &y) == c && x == 310 && new_reports() == 0);
+    sval_ptp_set_grab(SVAL_PTP_GRAB_VS, false);
+    run(5000);
+    up(0);
+    up(1);
+    run(5000);
+    run(5000);
+    new_reports();
+    puts("  grab holders: the last holder releases; the same finger across holders; the scroll key hands a finger back at once; a holder taking over in the same pass continues the grab");
 }
 
 
@@ -1001,6 +1023,52 @@ static void test_frame(void) {
 // A tap shorter than a frame while boost is on and another finger is down
 // (it enters by the first finger's map): its lift goes out exactly where its
 // Tip=1 frame put it, never at its unscaled position.
+// A finger that lands in the same frame as a key press or release is placed
+// by the first finger's map with the factor from that frame on, whichever
+// side of the first finger it sits in the contact pool.
+static void test_land_on_key_change(void) {
+    for (int press = 0; press < 2; press++)
+        for (int before = 0; before < 2; before++) {
+            start(press ? "land-on-press" : "land-on-release");
+            if (before) {
+                // An earlier contact lifts first, so the new finger takes the
+                // pool slot before the first finger's.
+                FEED(0, {0, 1, 500, 800}, {1, 2, 1000, 800});
+                run(5000);
+                FEED(0, {1, 2, 1000, 800});
+                run(5000);
+                run(5000);
+            } else {
+                FEED(0, {1, 2, 1000, 800});
+                run(5000);
+            }
+            if (!press) sval_ptp_set_scale(3, 1);
+            FEED(0, {1, 2, 1000, 800});
+            run(5000);
+            FEED(0, {1, 2, 1010, 800});
+            run(5000);
+            new_reports();
+            uint16_t a = press ? 1010 : 1030; // the first finger, reported
+            assert(slot_at(last(), a, 800) >= 0);
+            // The key changes and a finger lands at 1200 in the same frame.
+            sval_ptp_set_scale(press ? 3 : 1, 1);
+            FEED(0, {0, 3, 1200, 800}, {1, 2, 1020, 800});
+            run(5000);
+            new_reports();
+            uint16_t a2 = (uint16_t)(press ? a + 10 : a + 30); // this frame at the old factor
+            uint16_t b  = (uint16_t)(a2 + (1200 - 1020) * (press ? 3 : 1));
+            if (slot_at(last(), a2, 800) < 0 || slot_at(last(), b, 800) < 0) {
+                fprintf(stderr, "FAIL land on %s, new finger %s: want %u and %u\n", press ? "press" : "release", before ? "first in the pool" : "after", a2, b);
+                assert(0);
+            }
+            sval_ptp_set_scale(1, 1);
+            up(0);
+            run(5000);
+            run(5000);
+        }
+    puts("  finger landing on a key press or release: placed with the new factor, either pool order");
+}
+
 static void test_scaled_short_tap(void) {
     start("scaled-short-tap");
     sval_ptp_set_scale(3, 1);
@@ -1306,6 +1374,7 @@ int main(int argc, char **argv) {
     test_grab_holders();
     test_frame();
     test_scaled_short_tap();
+    test_land_on_key_change();
     test_repeated_strokes();
     test_view_true_position();
     test_host_contacts();

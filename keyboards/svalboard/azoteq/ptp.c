@@ -415,6 +415,8 @@ static bool     last_frame_ok[2];
 static bool     grabbed;
 static uint8_t  grab_holders; // SVAL_PTP_GRAB_*: who holds the pads
 static bool     handback_pending;
+static bool     grab_scrolled; // the scroll key held the pads during this grab
+static bool     grab_let_go;   // the last holder let go since the last task: a new one continues the grab
 static grab_t   grab[2];
 static uint16_t grab_serial;
 
@@ -891,24 +893,12 @@ static void scale_update(void) {
     bool on      = scale_num != scale_den;
     bool was_on  = applied_num != applied_den;
     bool changed = on && was_on && (scale_num != applied_num || scale_den != applied_den);
+    // The contacts already placed first, so a press or a release has
+    // re-anchored the first finger before a new one is placed by its map.
     for (uint8_t i = 0; i < POOL; i++) {
         contact_t *c = &pool[i];
-        if (c->state != C_ACTIVE) continue;
+        if (c->state != C_ACTIVE || !c->seen) continue;
         int32_t x = (int32_t)c->x + surf_xoff, y = (int32_t)c->y + surf_yoff;
-        if (!c->seen) {
-            // A new contact: where the first finger's map puts it, or at its
-            // real position when it is the first.
-            c->seen = true;
-            if (pivot)
-                map_point(pivot, x, y, applied_num, applied_den, &c->rx, &c->ry);
-            else {
-                c->rx = clamp_to(x, surf_xmax);
-                c->ry = clamp_to(y, surf_ymax);
-            }
-            if (c->lift) continue;
-            anchor(c, x, y, on);
-            continue;
-        }
         uint8_t edge_hit = map_point(c, x, y, applied_num, applied_den, &c->rx, &c->ry);
         // At an edge it slides: that axis is anchored where it stopped, so the
         // other axis keeps moving and turning back moves at once (no dead travel).
@@ -922,6 +912,23 @@ static void scale_update(void) {
         }
         if (c->lift) continue; // its release goes where it was last reported
         if (on != c->scaling || (on && changed)) anchor(c, x, y, on);
+    }
+    // Then the new contacts: where the first finger's map puts them, with the
+    // factor from this frame on (whatever the pool order), or at the real
+    // position for the first finger.
+    for (uint8_t i = 0; i < POOL; i++) {
+        contact_t *c = &pool[i];
+        if (c->state != C_ACTIVE || c->seen) continue;
+        int32_t x = (int32_t)c->x + surf_xoff, y = (int32_t)c->y + surf_yoff;
+        c->seen   = true;
+        if (pivot)
+            map_point(pivot, x, y, scale_num, scale_den, &c->rx, &c->ry);
+        else {
+            c->rx = clamp_to(x, surf_xmax);
+            c->ry = clamp_to(y, surf_ymax);
+        }
+        if (c->lift) continue;
+        anchor(c, x, y, on);
     }
     applied_num = scale_num;
     applied_den = scale_den;
@@ -1145,6 +1152,7 @@ void sval_ptp_task(void) {
         }
         output = out;
     }
+    grab_let_go = false; // from here a new holder starts a new grab
     // The scroll key let go: a finger still down comes back to the OS at
     // once, as a new contact where it is (sval_ptp_set_grab).
     if (handback_pending && !release_pending) {
@@ -1218,15 +1226,17 @@ void sval_ptp_set_paused(bool p) {
 // After Velocity Scroll alone the pads arm again on an all-up sample, so a
 // finger still down never moves the pointer (as before); once the scroll key
 // held them, a finger still down comes back to the OS at once instead, so
-// scrolling turns back into pointing mid-stroke.
-static bool grab_scrolled; // the scroll key held the pads during this grab
-void        sval_ptp_set_grab(uint8_t holder, bool g) {
+// scrolling turns back into pointing mid-stroke. A holder that takes over in
+// the same pass as the last one let go (before the task runs) continues the
+// grab: the same finger, no hand-back.
+void sval_ptp_set_grab(uint8_t holder, bool g) {
     uint8_t h = g ? (uint8_t)(grab_holders | holder) : (uint8_t)(grab_holders & ~holder);
-    if (h && !grabbed) {
+    if (h && !grabbed && !grab_let_go) {
         grab_reset(0);
         grab_reset(1);
         grab_scrolled = false;
     }
+    if (!h && grabbed) grab_let_go = true;
     if (h & SVAL_PTP_GRAB_SCROLL) grab_scrolled = true;
     if (!h && grabbed) handback_pending = grab_scrolled; // the last holder let go
     if (h) handback_pending = false;
@@ -1496,6 +1506,7 @@ void sval_ptp_test_reset(void) {
     grab_holders     = 0;
     handback_pending = false;
     grab_scrolled    = false;
+    grab_let_go      = false;
     scale_num = scale_den = applied_num = applied_den = 1;
     grab_serial  = 0;
     grab_reset(0);

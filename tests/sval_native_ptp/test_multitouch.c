@@ -119,7 +119,7 @@ static bool left_down(void) {
     const uint8_t *r = latest();
     if (!r) return false;
     for (int i = 0; i < r[33]; i++)
-        if ((r[1 + 6 * i] & 2) && ptp_get16(r + 3 + 6 * i) < SVAL_PTP_PAD_STRIDE) return true;
+        if ((r[1 + 6 * i] & 2) && ptp_get16(r + 3 + 6 * i) < SVAL_PTP_OS_XOFF + SVAL_PTP_PAD_STRIDE) return true;
     return false;
 }
 
@@ -458,7 +458,7 @@ static void pinch_scan(unsigned from, pinch_result_t *res, bool *left_was, uint8
         uint8_t        cid = 0xFF;
         for (int i = 0; i < r[33] && i < 5; i++) {
             if (!(r[1 + 6 * i] & 2)) continue;
-            if (ptp_get16(r + 3 + 6 * i) < SVAL_PTP_PAD_STRIDE) {
+            if (ptp_get16(r + 3 + 6 * i) < SVAL_PTP_OS_XOFF + SVAL_PTP_PAD_STRIDE) {
                 left = true;
                 cid  = r[2 + 6 * i];
             } else {
@@ -645,7 +645,7 @@ static const uint8_t *last_contact_report(uint8_t pad, uint16_t *x) {
     for (unsigned i = ptp_sent_count; i-- > 0;) {
         const uint8_t *r = ptp_sent[i];
         for (int k = 0; k < r[33]; k++) {
-            uint16_t rx = ptp_get16(r + 3 + 6 * k);
+            uint16_t rx = (uint16_t)(ptp_get16(r + 3 + 6 * k) - SVAL_PTP_OS_XOFF); // on the pads' area
             if ((rx >= SVAL_PTP_PAD_STRIDE) == (pad == 1)) {
                 *x = rx;
                 return r;
@@ -749,9 +749,9 @@ static bool os_contact(uint8_t pad, uint8_t *id, uint16_t *x) {
     if (!r) return false;
     for (int k = 0; k < r[33]; k++) {
         if (!(r[1 + 6 * k] & 2)) continue;
-        uint16_t rx = ptp_get16(r + 3 + 6 * k);
+        uint16_t rx = (uint16_t)(ptp_get16(r + 3 + 6 * k) - SVAL_PTP_OS_XOFF); // on the pads' area
         if ((rx >= SVAL_PTP_PAD_STRIDE) != (pad == 1)) continue;
-        if (ptp_get16(r + 5 + 6 * k) != 800) continue; // the moving finger, not the resting one
+        if (ptp_get16(r + 5 + 6 * k) - SVAL_PTP_OS_YOFF != 800) continue; // the moving finger, not the resting one
         *id = r[2 + 6 * k];
         *x  = rx;
         return true;

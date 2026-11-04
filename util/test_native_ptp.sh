@@ -26,6 +26,10 @@ export ASAN_OPTIONS=detect_leaks=0
 # The contact path and the split link (multitouch.c with ptp.c).
 "${cc[@]}" -DSVAL_PTP_SURFACE_TIMES=1 -Wno-unused-function $t/test_multitouch.c -o "$work/test_multitouch"
 "$work/test_multitouch"
+# Again on the firmware's surface.
+"${cc[@]}" -Wno-unused-function $t/test_multitouch.c -o "$work/test_multitouch_os"
+"$work/test_multitouch_os" > "$work/multitouch-os.txt" || { cat "$work/multitouch-os.txt"; exit 1; }
+tail -n 1 "$work/multitouch-os.txt" | sed 's/^/(OS surface) /'
 
 # The pad read schedule (pad_schedule.h) against a simulated chip and loop.
 "${cc[@]}" $t/test_schedule.c -o "$work/test_schedule"
