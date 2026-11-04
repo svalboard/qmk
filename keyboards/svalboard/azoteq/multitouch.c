@@ -305,6 +305,9 @@ extern volatile uint16_t sval_serial_fail_n;
 extern volatile uint32_t sval_serial_fail_us, sval_serial_ok_max_us;
 extern volatile uint8_t  sval_serial_fail_hist[6];
 extern volatile uint16_t sval_rx_stall_ok, sval_rx_stall_fail, sval_rx_full;
+#    ifdef SERIAL_PIO_RX_DMA
+extern volatile uint32_t sval_rx_awake_us;
+#    endif
 uint8_t                  sval_clock_mhz(void); // power.c
 #    define SVAL_MT_RPC_SERIAL 0xAC                // this half's split counters
 #endif
@@ -487,7 +490,8 @@ void sval_mt_command(uint8_t *data, uint8_t length) {
         // count, [24..27] failed us sum, [28..33] failure-time histogram,
         // [34..37] longest good transaction us, [38] clock MHz, [40] 1 when
         // the other half answered, then its [41..48] and [49..52] counters and
-        // [53] clock MHz, [54..59] receive FIFO overflow evidence (this half).
+        // [53] clock MHz, [54..59] receive FIFO overflow evidence (this half),
+        // [60..63] time this half spent awake waiting in the DMA receive, us.
         memset(data + 6, 0, length - 6);
         data[6] = 0xC2;
         data[8] = touch_owner;
@@ -502,6 +506,9 @@ void sval_mt_command(uint8_t *data, uint8_t length) {
         put16(data + 54, sval_rx_stall_ok);
         put16(data + 56, sval_rx_stall_fail);
         put16(data + 58, sval_rx_full);
+#    ifdef SERIAL_PIO_RX_DMA
+        put32(data + 60, sval_rx_awake_us); // [60..63] time awake waiting in the DMA receive, us
+#    endif
         uint8_t req[2] = {SVAL_MT_RPC_SERIAL, 0}, reply[SVAL_MT_RPC_REPLY] = {0};
         if (remote_rpc(req, sizeof(req), reply) && reply[0] == SVAL_MT_RPC_SERIAL) {
             data[40] = 1;

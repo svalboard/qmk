@@ -342,23 +342,59 @@ bool sval_serial_rx_stalled(void) {
 }
 #endif
 #if defined(SERIAL_PIO_RX_DMA)
+// The wait for bytes still to come spins by default (0). Above 0, the thread
+// sleeps for the time they take on the wire (at least this long, us) between
+// looks, so the core can wait in WFI while the DMA channel keeps receiving.
+// Measured on a trackball pair, 60 s idle with the default power saving: the
+// spinning wait keeps the core awake 5.3 % of the time, sleeping 0.5 %, but
+// sleeping costs about 4 % of the scan rate (391 to 375 scans/s), from
+// the wake-up latency at the end of each receive.
+#    ifndef SERIAL_PIO_RX_DMA_POLL_US
+#        define SERIAL_PIO_RX_DMA_POLL_US 0
+#    endif
+#    define RX_DMA_BYTE_US ((10U * 1000000U + SERIAL_USART_SPEED - 1U) / SERIAL_USART_SPEED)
+#    ifdef SVAL_TOUCH_DEV
+volatile uint32_t sval_rx_awake_us; // dev builds: time awake in receive_dma (wall time less sleeps)
+#    endif
 // Waits for the bytes the DMA channel has put in the ring, until the
 // transaction's deadline (forever: no deadline). A framing or break error
 // means a byte was lost: fail now, not at the deadline.
 static bool receive_dma(uint8_t* destination, const size_t size, bool forever) {
     size_t   read  = 0U;
-    uint32_t start = timer_hw->timerawl;
+    uint32_t start = timer_hw->timerawl, slept = 0U;
+    bool     ok;
     while (true) {
         uint32_t written = RX_DMA_COUNT - rx_dma->channel->TRANS_COUNT;
-        if (written - rx_ring_read > sizeof(rx_ring)) return false; // the ring overran: bytes lost
+        if (written - rx_ring_read > sizeof(rx_ring)) { // the ring overran: bytes lost
+            ok = false;
+            break;
+        }
         while (rx_ring_read < written && read < size) {
             *destination++ = rx_ring[rx_ring_read++ & 0xFFU];
             read++;
         }
-        if (read == size) return true;
-        if (rx_dma_error) return false;
-        if (!forever && timer_hw->timerawl - start > rx_timeout_ms * 1000U) return false;
+        if (read == size) {
+            ok = true;
+            break;
+        }
+        if (rx_dma_error || (!forever && timer_hw->timerawl - start > rx_timeout_ms * 1000U)) {
+            ok = false;
+            break;
+        }
+#    if SERIAL_PIO_RX_DMA_POLL_US > 0
+        uint32_t us = (uint32_t)(size - read) * RX_DMA_BYTE_US;
+        if (us < SERIAL_PIO_RX_DMA_POLL_US) us = SERIAL_PIO_RX_DMA_POLL_US;
+        uint32_t t = timer_hw->timerawl;
+        chThdSleepMicroseconds(us);
+        slept += timer_hw->timerawl - t;
+#    endif
     }
+#    ifdef SVAL_TOUCH_DEV
+    sval_rx_awake_us += timer_hw->timerawl - start - slept;
+#    else
+    (void)slept;
+#    endif
+    return ok;
 }
 #endif
 

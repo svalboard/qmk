@@ -574,14 +574,17 @@ def main():
     check(refused is not None and "did not install its image" in refused and "BUSY" in refused,
           f"pair with this half's install refused: exit {rc}, error {refused}\n{log.getvalue()}")
     # this half came back running another build's version string: the install
-    # did not take; a build with no version string of its own is not compared
-    for shown, fails in ((b"other-build", True), (b"", False)):
+    # did not take; a build with no version string of its own is not compared;
+    # the image's own version string is a success. Each case must read page 1.
+    for shown, fails in ((b"other-build", True), (b"", False), (b"right-9", False)):
+        asked = []
+
         class OtherBuild(FakeBoard):
             def op(self, op, args=b"", hand=su.HAND_SELF, client=None):
-                st, r = super().op(op, args, hand, client)
-                if op == su.INFO and bytes(args[:1]) == b"\x01" and hand == su.HAND_SELF and st == su.OK and r[0] == 1:
-                    r = bytes(r[:5]) + shown.ljust(16, b"\0") + bytes(r[21:])
-                return st, r
+                if op == su.INFO and bytes(args[:1]) == b"\x01" and hand == su.HAND_SELF:
+                    asked.append(1)
+                    return su.OK, bytes([1]) + struct.pack("<I", 9) + shown.ljust(16, b"\0") + bytes(64)
+                return super().op(op, args, hand, client)
 
         lib.host_lib_reset(1)
         lib.host_lib_split(1)
@@ -594,7 +597,8 @@ def main():
         if fails:
             check(err is not None and "install did not take" in err and "other-build" in err, f"pair, this half runs another build: exit {rc}, error {err}\n{log.getvalue()}")
         else:
-            check(rc == 0 and err is None, f"pair, this half reports no version string: exit {rc}, error {err}\n{log.getvalue()}")
+            check(rc == 0 and err is None, f"pair, this half reports {shown!r}: exit {rc}, error {err}\n{log.getvalue()}")
+        check(bool(asked), f"pair, {shown!r}: INFO page 1 was read")
     # P4-26: protocol 3 (the same board reporting 3): the chord twice, no PAIR_MANIFEST
     lib.host_lib_reset(1)
     lib.host_lib_split(1)

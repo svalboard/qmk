@@ -117,6 +117,10 @@ on a trackball there, as lost motion.
 - The DMA channel runs only while a transaction does: the updater refuses to
   program or commit flash while any DMA channel is busy.
 - A framing error fails the receive at once.
+- The wait for a reply spins rather than sleeps. On a trackball pair, idle
+  with the default power saving, that keeps the core out of WFI 5.3 % of the
+  time (0.5 % when sleeping), while sleeping costs about 4 % of the scan
+  rate. `SERIAL_PIO_RX_DMA_POLL_US` above 0 makes it sleep.
 - The link counts as disconnected (QMK then releases the other half's held
   keys) once failures have gone on for 200 ms (`SPLIT_MIN_DISCONNECT_MS`,
   `quantum/split_common/split_connection.h`), not after ten failed scans,
