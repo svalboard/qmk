@@ -117,6 +117,10 @@ on a trackball there, as lost motion.
 - The DMA channel runs only while a transaction does: the updater refuses to
   program or commit flash while any DMA channel is busy.
 - A framing error fails the receive at once.
+- The link counts as disconnected (QMK then releases the other half's held
+  keys) once failures have gone on for 200 ms (`SPLIT_MIN_DISCONNECT_MS`,
+  `quantum/split_common/split_connection.h`), not after ten failed scans,
+  which the short deadline would pass in a few tens of ms.
 - QMK's per-scan transactions and the pad snapshot fetch get a 3 ms deadline
   (`SERIAL_USART_SHORT_TIMEOUT`); the other RPCs, the updater's relay among
   them, keep the 20 ms one, because their other end may take time.

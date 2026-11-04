@@ -75,6 +75,10 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined
 # The client ID lease (modules/svalboard/core/client_wrapper.c) across the
 # 32-bit timer wrap: the typing pause is tied to one ID.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -I"$root/tests/sval_client_id/stub" -I"$root/modules/svalboard/core"     "$root/tests/sval_client_id/test_client_id.c" -o "$out/test_client_id"
+# The split link's disconnection check (quantum/split_common/split_connection.h):
+# a time on top of the error count, so short receive deadlines never disconnect early.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -I"$root/quantum/split_common"     "$root/tests/sval_split/test_connection.c" -o "$out/test_split_connection"
+"$out/test_split_connection"
 "$out/test_flicker_latch"
 "$out/test_typing_pause"
 "$out/test_client_id"

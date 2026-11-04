@@ -288,6 +288,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // platforms/chibios/drivers/serial_protocol.c, docs/native-touchpad.md.
 #define SERIAL_PIO_RX_DMA
 #define SERIAL_USART_SHORT_TIMEOUT 3
+// With the short deadline, ten failed scans can pass in a few tens of ms: the
+// link counts as disconnected (the other half's held keys released) once
+// failures have gone on for 200 ms instead (quantum/split_common/split_connection.h).
+#define SPLIT_MIN_DISCONNECT_MS 200
 
 #define MOUSE_EXTENDED_REPORT
 #define SPLIT_POINTING_ENABLE
