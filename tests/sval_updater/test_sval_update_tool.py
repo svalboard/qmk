@@ -550,6 +550,7 @@ def main():
     check("pre-approved by the pair update" in text and "approved by the pair (ARM flags 0x3)" in text, f"pair:\n{text}")
     check(text.count("chord recognized") == 1, f"pair: one chord\n{text}")
     check(len(sessions) == 2, "pair: two sessions")
+
     # pair where this half refused its install (BUSY, say): it holds ERROR and
     # never restarted, while the other half took the image. Presence matches
     # and the fw_version numbers match, but the tool must fail, not report success.
@@ -571,8 +572,7 @@ def main():
             refused = None
         except su.UpdaterError as e:
             rc, refused = 1, str(e)
-    check(refused is not None and "did not install its image" in refused and "BUSY" in refused,
-          f"pair with this half's install refused: exit {rc}, error {refused}\n{log.getvalue()}")
+    check(refused is not None and "did not install its image" in refused and "BUSY" in refused, f"pair with this half's install refused: exit {rc}, error {refused}\n{log.getvalue()}")
     # this half came back running another build's version string: the install
     # did not take; a build with no version string of its own is not compared;
     # the image's own version string is a success. Each case must read page 1.

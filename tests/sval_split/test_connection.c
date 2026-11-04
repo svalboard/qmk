@@ -15,7 +15,8 @@ static bool stall(uint16_t start, uint16_t stall_ms, uint16_t fail_ms, uint16_t 
     split_connection_t c     = {0};
     bool               fired = false;
     uint16_t           t     = start;
-    for (int i = 0; i < 20; i++) t = (uint16_t)(t + 1), split_connection_update(&c, true, t, MAX_ERRORS, min_ms);
+    for (int i = 0; i < 20; i++)
+        t = (uint16_t)(t + 1), split_connection_update(&c, true, t, MAX_ERRORS, min_ms);
     uint16_t stall_at = t;
     while ((uint16_t)(t - stall_at) < (uint16_t)(stall_ms + 100)) {
         bool ok = (uint16_t)(t - stall_at) >= stall_ms;
@@ -47,7 +48,8 @@ int main(void) {
     assert(stall(0, 400, 34, 0, &after) && after);
     // Exactly at the edge: fires once the failures have gone on for 200 ms.
     split_connection_t c = {0};
-    for (uint16_t t = 0; t < 199; t += 3) assert(split_connection_update(&c, false, t, MAX_ERRORS, MIN_MS));
+    for (uint16_t t = 0; t < 199; t += 3)
+        assert(split_connection_update(&c, false, t, MAX_ERRORS, MIN_MS));
     assert(!split_connection_update(&c, false, 200, MAX_ERRORS, MIN_MS));
     assert(!split_connection_update(&c, false, 203, MAX_ERRORS, MIN_MS)); // holds
     assert(split_connection_update(&c, true, 204, MAX_ERRORS, MIN_MS));   // one good scan connects
