@@ -26,9 +26,10 @@ static uint8_t test_palm_at;
 
 // keymaps/keymap_support.c on the board.
 static int velocity_holds, velocity_on;
-void       velocity_scroll_dev_hold(bool on) {
-          velocity_holds++;
-          velocity_on = on;
+
+void velocity_scroll_dev_hold(bool on) {
+    velocity_holds++;
+    velocity_on = on;
 }
 
 // ------------------------------------------------------------- helpers
@@ -624,15 +625,16 @@ static void test_palm_latch(void) {
 // boost the OS keeps the contact and its travel is scaled from where it
 // rested. Both pads: this half's and the other half's.
 static uint16_t finger_x[2], finger_y[2];
-static void     finger(uint8_t pad, bool down, uint16_t x, uint16_t y) {
-        finger_x[pad] = x;
-        finger_y[pad] = y;
-        if (pad == 1) { // this half (the right): its own read
+
+static void finger(uint8_t pad, bool down, uint16_t x, uint16_t y) {
+    finger_x[pad] = x;
+    finger_y[pad] = y;
+    if (pad == 1) { // this half (the right): its own read
         uint8_t raw[45];
         raw_sample(raw, down, x, y);
         sval_mt_sample(raw, true);
     } else {
-            set_peer(down, x, y);
+        set_peer(down, x, y);
     }
 }
 // One chip period with the finger where it is (a resting finger still reports).
