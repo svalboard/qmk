@@ -48,6 +48,7 @@ static uint8_t  losses, clears;  // counters since boot
 #endif
 
 void sval_link_paired(void) {
+    bool was_lost = lost;
 #ifdef SVAL_LINK_TEST
     if (lost) {
         last_lost_ms = timer_elapsed32(lost_at);
@@ -56,6 +57,7 @@ void sval_link_paired(void) {
 #endif
     armed = true;
     lost  = false;
+    if (was_lost) sval_link_recovered();
 }
 
 void sval_link_lost(void) {
@@ -144,6 +146,7 @@ bool sval_link_light(void) {
 #ifdef SVAL_LINK_TEST
 #    include "usb_util.h"
 #    include "split_pause.h"
+#    include "updater/update_led.h"
 #    include "hardware/structs/watchdog.h"
 
 // Wire, after [0xDD][client:4][0xFA]: [op] ...; the reply keeps the header and op.
@@ -157,10 +160,11 @@ bool sval_link_light(void) {
 //     restarts it within a few seconds)
 // A status block: flags (bit 0 armed, 1 lost, 2 light now, 3 USB half, 4 cable paired,
 // 5 quiet), ms since the loss:2, the other half's silence when it called its last
-// loss:2, the last loss's length:2, losses, clears.
+// loss:2, the last loss's length:2, losses, clears, 0, then the LED: what it shows
+// (r g b) and what rgblight last asked for (r g b).
 enum { LT_STATUS = 0, LT_PAUSE = 1, LT_SUB_REBOOT = 2, LT_BOOT_AS_SUB = 3 };
 #    define LT_RPC_OP 0xB1 // first byte of the KEYBOARD_SYNC_B request: no Scan Lab, side or flicker op uses it
-#    define LT_STATUS_LEN 10
+#    define LT_STATUS_LEN 16
 #    define LT_SUB_MAGIC 0x5B5B1E7Eu
 #    define LT_SCRATCH 7 // watchdog scratch 7: the boot ROM reads it only with its own magic in scratch 4
 
@@ -182,6 +186,7 @@ static void status_block(uint8_t *b) {
     b[7] = losses;
     b[8] = clears;
     b[9] = 0;
+    update_led_readback(&b[10]); // the LED: shown r g b, rgblight's r g b
 }
 
 void sval_link_test_command(uint8_t *data, uint8_t length) {

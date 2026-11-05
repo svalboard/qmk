@@ -11,6 +11,9 @@
 void sval_link_paired(void);
 // The pairing was lost: the light shows, if a pairing came up since boot.
 void sval_link_lost(void);
+// The pairing came back after a loss (svalboard.c): show the current lighting
+// on both halves at once.
+void sval_link_recovered(void);
 // Told to stop on purpose (a restart, the bootloader): no light, and nothing
 // armed until paired again. The half with USB pairs again only once the link has
 // gone down and up, or after SVAL_LINK_REARM_MS if it never went down.

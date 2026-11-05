@@ -630,6 +630,14 @@ bool sval_rgb_idle_quiesced(void) {
     return rgb_idle_applied == 2 && timer_elapsed32(rgb_last_write_ms) > 5;
 }
 static uint8_t rgb_awake_val     = 0;
+static bool     rgb_woken;
+static uint32_t rgb_woken_at;
+
+// Lights up as an input would, without one: the idle dimming counts from now.
+void sval_rgb_wake(void) {
+    rgb_woken    = true;
+    rgb_woken_at = timer_read32();
+}
 static uint8_t rgb_dim_val       = 0;
 static bool    rgb_awake_enabled = false;
 
@@ -654,6 +662,7 @@ void sval_rgb_idle_task(void) {
         return;
     }
     uint32_t quiet = last_input_activity_elapsed();
+    if (rgb_woken && timer_elapsed32(rgb_woken_at) < quiet) quiet = timer_elapsed32(rgb_woken_at); // sval_rgb_wake()
     uint8_t  want  = 0;
     if (global_saved_values.scan_deep_after_s && quiet > (uint32_t)global_saved_values.scan_deep_after_s * 1000u) {
         want = 2;
@@ -1156,6 +1165,7 @@ void housekeeping_task_kb(void) {
 #endif
                 if (!is_connected) {
                     is_connected = true;
+                    sval_rgb_resync(); // the other half may have restarted (it is powered over the cable)
 #ifdef SVAL_UPDATER
                     // D21: no settings write while an update runs (the other
                     // half reconnects after its commit, while this one may be
@@ -1177,6 +1187,26 @@ void housekeeping_task_kb(void) {
             last_ping = timer_read32();
         }
     }
+}
+
+// QMK sends the other half the lighting state only when something changed
+// (quantum/split_common/transactions.c, PUT_RGBLIGHT). A half that restarted
+// while the link was down never gets the current mode, color or layers that
+// way: mark them all changed, and the next exchange sends them.
+#if defined(RGBLIGHT_ENABLE) && defined(RGBLIGHT_SPLIT)
+extern rgblight_status_t rgblight_status; // quantum/rgblight/rgblight.c
+#endif
+void sval_rgb_resync(void) {
+#if defined(RGBLIGHT_ENABLE) && defined(RGBLIGHT_SPLIT)
+    if (is_keyboard_master()) rgblight_status.change_flags |= RGBLIGHT_STATUS_CHANGE_MODE | RGBLIGHT_STATUS_CHANGE_HSVS | RGBLIGHT_STATUS_CHANGE_LAYERS | RGBLIGHT_STATUS_CHANGE_TIMER;
+#endif
+}
+
+// The link light cleared (link_light.h): show the current state at once on both
+// halves, whatever the idle dimming did meanwhile.
+void sval_link_recovered(void) {
+    sval_rgb_wake();
+    sval_rgb_resync();
 }
 
 void sval_on_reconnect(void) {

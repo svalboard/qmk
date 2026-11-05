@@ -192,6 +192,8 @@ uint8_t sval_thumb_hand(void);
 // bits 4-7 = how many of the 8 pull-up reads were high.
 uint8_t sval_thumb_hand_raw(void);
 bool    sval_other_half_connected(void);
+void    sval_rgb_wake(void);   // light up as an input would (the idle dimming counts from now)
+void    sval_rgb_resync(void); // the half with USB: send the other half the whole lighting state
 // The touchpad tap setting (pad_gestures.h): what this half uses now. The
 // half with USB owns the saved one; the other half uses its presence ping's.
 uint8_t sval_pad_gestures(void);

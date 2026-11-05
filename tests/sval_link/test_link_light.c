@@ -12,6 +12,13 @@ bool     host_master, host_transport_up, host_other_connected, host_usb_configur
 
 #include "link_light.c"
 
+// svalboard.c: repaints and resyncs the lighting when a loss clears.
+static int recovered;
+void       sval_link_recovered(void) {
+    recovered++;
+}
+
+
 static int checks, failures;
 #define CHECK(c)                                                    \
     do {                                                            \
@@ -33,6 +40,7 @@ static void boot(bool master) {
     host_other_connected = false;
     host_usb_configured = master;
     host_updater_active = false;
+    recovered           = 0;
 }
 
 static void run_ms(uint32_t ms) {
@@ -56,6 +64,7 @@ static void test_master(void) {
     host_other_connected = true;
     run_ms(10);
     CHECK(!sval_link_light());
+    CHECK(recovered == 0); // a first pairing is no recovery
     host_transport_up    = false;
     host_other_connected = false;
     run_ms(1);
@@ -68,9 +77,11 @@ static void test_master(void) {
     CHECK(!sval_link_light());
     host_updater_active = false;
     CHECK(sval_link_light());
+    int before        = recovered;
     host_transport_up = true;
     run_ms(1);
     CHECK(!sval_link_light());
+    CHECK(recovered == before + 1); // the lighting is repainted and resent once
     // and it arms again: the next drop shows again
     host_other_connected = true;
     run_ms(1);

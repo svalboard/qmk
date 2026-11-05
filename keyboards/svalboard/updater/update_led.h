@@ -28,3 +28,8 @@ void update_led_show(update_led_mode_t mode);
 // let run rather than stopped), so no DMA is running when the commit starts.
 // The LEDs then keep that color until the reset.
 void update_led_commit_latch(void);
+
+#ifdef SVAL_LINK_TEST
+// Dev builds: [shown r, g, b][rgblight's last r, g, b] for this half's LED.
+void update_led_readback(uint8_t out[6]);
+#endif

@@ -35,16 +35,42 @@
 
 static bool owned;
 
+#ifdef SVAL_LINK_TEST
+// Dev builds (link_light.c): what this half's LED shows, and what rgblight last
+// asked for (each half drives one LED).
+static rgb_t led_wanted, led_shown;
+#    define WANT(r, g, b) (led_wanted = (rgb_t){r, g, b})
+#    define SHOWN(c) (led_shown = (c))
+void update_led_readback(uint8_t out[6]) {
+    out[0] = led_shown.r;
+    out[1] = led_shown.g;
+    out[2] = led_shown.b;
+    out[3] = led_wanted.r;
+    out[4] = led_wanted.g;
+    out[5] = led_wanted.b;
+}
+#else
+#    define WANT(r, g, b)
+#    define SHOWN(c)
+#endif
+
 static void gate_set_color(int index, uint8_t red, uint8_t green, uint8_t blue) {
+    WANT(red, green, blue);
     if (!owned) ws2812_set_color(index, red, green, blue);
 }
 
 static void gate_set_color_all(uint8_t red, uint8_t green, uint8_t blue) {
+    WANT(red, green, blue);
     if (!owned) ws2812_set_color_all(red, green, blue);
 }
 
 static void gate_flush(void) {
-    if (!owned) ws2812_flush();
+    if (!owned) {
+        ws2812_flush();
+#ifdef SVAL_LINK_TEST
+        SHOWN(led_wanted);
+#endif
+    }
 }
 
 const rgblight_driver_t rgblight_driver = {
@@ -108,6 +134,7 @@ void update_led_show(update_led_mode_t mode) {
     if (force || c.r != last.r || c.g != last.g || c.b != last.b) {
         ws2812_set_color_all(c.r, c.g, c.b);
         ws2812_flush();
+        SHOWN(c);
         last       = c;
         last_write = now;
     }
