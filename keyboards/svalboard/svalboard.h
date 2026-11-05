@@ -92,6 +92,10 @@ typedef struct __attribute__((__packed__)) _presence_rpc_t {
     uint8_t pad_palm;
     // The touchpad mode (sval_pad_mode_sync_byte(), pad_gestures.h), appended the same way.
     uint8_t pad_mode;
+    // Link light (link_light.h): 1 while the half with USB is in USB suspend, so
+    // the other half keeps its link light dark too. Appended the same way: from an
+    // older master the slave reads 0.
+    uint8_t link_quiet;
 } presence_rpc_t;
 
 // Which pointing module a half's firmware drives and which one answered, so a host

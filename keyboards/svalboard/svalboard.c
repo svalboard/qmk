@@ -22,6 +22,7 @@
 #include "pointing_motion.h" // after sval.h: needs the generated fragment ids
 #include "identity.h"
 #include "build_reset.h"
+#include "link_light.h"
 #include "nvm_via.h"
 #ifdef SVAL_EITHER_HAND
 #    include "side.h"
@@ -774,6 +775,9 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
     // And its touchpad mode (RAM only).
     bool has_mode = in_buflen >= offsetof(presence_rpc_t, pad_mode) + 1;
     pad_mode_set(sval_pad_mode_sync_setting(has_mode, has_mode ? in->pad_mode : 0, pad_mode));
+    // A ping from the half with USB: the link light's pairing (link_light.h).
+    bool has_quiet = in_buflen >= offsetof(presence_rpc_t, link_quiet) + 1;
+    sval_link_ping_seen(has_quiet && in->link_quiet);
 #ifdef SVAL_UPDATER
     // The master's updater light (D24), when its ping carries it. Measured to
     // its own byte: the ping has grown past it since.
@@ -809,6 +813,9 @@ static void scanlab_rpc_listener(uint8_t in_buflen, const void *in_data, uint8_t
     if (sval_perf_split_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return;
 #endif
     if (sval_flicker_split_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return; // Sval 0x3D for this half
+#ifdef SVAL_LINK_TEST
+    if (sval_link_test_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return; // dev builds: link light tests
+#endif
 #ifdef SVAL_EITHER_HAND
     if (sval_side_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return; // Sval 0x33 for this half
 #endif
@@ -1065,6 +1072,7 @@ void housekeeping_task_kb(void) {
     sval_usb_wake_handler();
     if (is_keyboard_master()) sval_typing_pause_task();
     scanlab_housekeeping();
+    sval_link_task();
 #ifdef SVAL_KEYTEST
     keytest_task();
 #endif
@@ -1101,6 +1109,7 @@ void housekeeping_task_kb(void) {
             rpcout.pad_tuning    = sval_pad_tune_sync_word(pad_tuning);
             rpcout.pad_palm      = sval_pad_palm_sync_byte(pad_palm);
             rpcout.pad_mode      = sval_pad_mode_sync_byte(pad_mode);
+            rpcout.link_quiet    = sval_link_quiet();
             presence_rsp_t rpcin = {0};
             if (transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin)) {
                 if (rpcin.magic[0] == SVAL_PRESENCE_RSP_MAGIC0 && rpcin.magic[1] == SVAL_PRESENCE_RSP_MAGIC1 && (rpcin.pointer.flags & SVAL_POINTER_REPORTED)) {

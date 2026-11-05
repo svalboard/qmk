@@ -50,6 +50,21 @@ VIA_INSECURE = yes
 # debounced in both, 5 ms per key, deferred.
 DEBOUNCE_TYPE = custom
 SRC += debounce_sval.c
+SRC += link_light.c
+
+# Link light tests (link_light.c): a dev-only raw HID protocol (0xFA) that pauses
+# the split link, restarts the other half, or restarts this half as the half
+# without USB. Opt in with -e SVAL_LINK_TEST=yes; needs SVAL_UPDATER (the pause);
+# release builds refuse it.
+ifeq ($(strip $(SVAL_LINK_TEST)), yes)
+  ifeq ($(strip $(SVAL_UPDATE_RELEASE)), yes)
+    $(error SVAL_LINK_TEST cannot be part of a release build)
+  endif
+  ifneq ($(strip $(SVAL_UPDATER)), yes)
+    $(error SVAL_LINK_TEST needs SVAL_UPDATER=yes)
+  endif
+  OPT_DEFS += -DSVAL_LINK_TEST
+endif
 SRC += pad_gestures.c
 
 # On-device action-path tests; opt in with -e SVAL_KEYTEST=yes.

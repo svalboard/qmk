@@ -27,6 +27,7 @@
 #define ERROR_PERIOD_MS 1000  // red, 1 Hz, 50/50 (D24)
 #define FLASH_STEP_MS 75      // white double flash: on, off, on, off (~300 ms, D4)
 #define DONE_STEP_MS 150      // green double flash: on, off, on, off (600 ms)
+#define LINK_PERIOD_MS 500    // amber, 2 Hz, 50/50 (the link light)
 #define RAINBOW_MS_PER_HUE 8  // a full hue turn in about 2 s
 #define MIN_WRITE_MS 20       // at most 50 WS2812 writes a second
 #define WS2812_FRAME_US 30    // one LED: 24 bits at 1.25 us
@@ -73,6 +74,8 @@ static rgb_t color(update_led_mode_t mode, uint32_t t) {
             return (t / DONE_STEP_MS) % 2 == 0 && t < 4 * DONE_STEP_MS ? (rgb_t){0, v, 0} : off;
         case UPDATE_LED_ERROR:
             return t % ERROR_PERIOD_MS < ERROR_PERIOD_MS / 2 ? (rgb_t){v, 0, 0} : off;
+        case UPDATE_LED_LINK:
+            return t % LINK_PERIOD_MS < LINK_PERIOD_MS / 2 ? (rgb_t){v, (uint8_t)(v * 2 / 5), 0} : off;
         default:
             return off;
     }

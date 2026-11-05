@@ -9,6 +9,10 @@
 #include "timer.h"
 #include <string.h>
 
+#ifdef SVAL_LINK_TEST
+extern void sval_link_test_command(uint8_t *data, uint8_t length);
+#endif
+
 #if defined(SVAL_TOUCH_DEV) || defined(SVAL_PERF_STATS)
 // Touchpad dev builds only (keyboards/svalboard/azoteq/multitouch.mk).
 extern void sval_dev_command(uint8_t *data, uint8_t length);
@@ -178,6 +182,12 @@ bool client_wrapper_receive(uint8_t *data, uint8_t length) {
             return true;
         }
 
+#ifdef SVAL_LINK_TEST
+        case 0xFA: // Link light tests (keyboards/svalboard/link_light.c); dev builds only.
+            sval_link_test_command(data, length);
+            host_raw_hid_send(data, length);
+            return true;
+#endif
         case 0xFE: {
             // VIA - strip header, let VIA process, wrap response
             // Guard against integer underflow

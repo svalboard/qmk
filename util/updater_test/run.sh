@@ -79,6 +79,10 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined
 # a time on top of the error count, so short receive deadlines never disconnect early.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -I"$root/quantum/split_common"     "$root/tests/sval_split/test_connection.c" -o "$out/test_split_connection"
 "$out/test_split_connection"
+# The link light's rules (keyboards/svalboard/link_light.c): armed by a pairing,
+# shown on a loss, cleared when it comes back, dark in USB suspend.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -DSVAL_LINK_HOST_TEST -I"$root/tests/sval_link" -I"$root/keyboards/svalboard"     "$root/tests/sval_link/test_link_light.c" -o "$out/test_link_light"
+"$out/test_link_light"
 "$out/test_flicker_latch"
 "$out/test_typing_pause"
 "$out/test_client_id"
