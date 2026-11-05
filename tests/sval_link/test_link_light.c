@@ -15,7 +15,7 @@ bool     host_master, host_transport_up, host_other_connected, host_usb_configur
 // svalboard.c: repaints and resyncs the lighting when a loss clears.
 static int recovered;
 void       sval_link_recovered(void) {
-          recovered++;
+    recovered++;
 }
 
 static int checks, failures;

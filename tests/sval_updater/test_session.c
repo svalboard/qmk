@@ -48,7 +48,7 @@ uint32_t updater_port_random32(void) {
 static bool            sim_slave;
 static update_device_t slave_dev;
 void                   update_device_self(update_device_t *dev) {
-                      *dev = sim_slave ? slave_dev : self_dev;
+    *dev = sim_slave ? slave_dev : self_dev;
 }
 bool updater_port_scan_override(void) {
     return port_scan_override;
@@ -56,7 +56,7 @@ bool updater_port_scan_override(void) {
 static uint8_t port_split_presence; // update_presence_status_t
 static bool    presence_sim;        // presence from the simulated pings (update_split.c) instead
 uint8_t        updater_port_split_presence(void) {
-           return presence_sim ? update_split_presence() : port_split_presence;
+    return presence_sim ? update_split_presence() : port_split_presence;
 }
 #define HOST_STACK_SIZE 0xAE0
 #define HOST_STACK_FREE 0x2A4
@@ -69,12 +69,12 @@ static update_led_mode_t led_now;
 // The link light (link_light.h): updater.c shows it only while it shows nothing itself.
 static bool link_light_on;
 bool        sval_link_light(void) {
-           return link_light_on;
+    return link_light_on;
 }
 static int led_seen; // bit per mode shown
 void       update_led_show(update_led_mode_t mode) {
-          led_now = mode;
-          led_seen |= 1 << mode;
+    led_now = mode;
+    led_seen |= 1 << mode;
 }
 
 // A mock commit, so the COMMITTING path can be tested on its own. The real
@@ -124,13 +124,13 @@ update_status_t update_commit_run(const sval_update_manifest_t *m, uint32_t crc_
 static bool master_marked, slave_marked;
 static int  mark_sets;
 void        updater_port_commit_mark(bool on) {
-           if (on) mark_sets++;
+    if (on) mark_sets++;
     // A mock commit that "reset" returns, which the real one never does.
-           if (!on && (sim_slave ? slave_reset_pending : master_reset_pending)) return;
+    if (!on && (sim_slave ? slave_reset_pending : master_reset_pending)) return;
     if (sim_slave) {
-               slave_marked = on;
+        slave_marked = on;
     } else {
-               master_marked = on;
+        master_marked = on;
     }
 }
 bool updater_port_commit_mark_take(void) {
@@ -227,7 +227,7 @@ bool update_split_port_pause(bool on) {
 static uint8_t master_self[SVAL_UPDATE_MAX_IMAGE];
 static bool    port_master = true; // this half has USB
 bool           updater_port_is_master(void) {
-              return !sim_slave && port_master;
+    return !sim_slave && port_master;
 }
 bool update_split_port_self_read(uint32_t off, uint8_t *dst, uint32_t n) {
     if (off % 4 || n % 4 || off > SVAL_UPDATE_MAX_IMAGE || n > SVAL_UPDATE_MAX_IMAGE - off) return false;
@@ -259,10 +259,10 @@ static bool master_invalidate_fails, slave_invalidate_fails;
 static int  master_reset_mode = -1, slave_reset_mode = -1; // the last mode each half took (D44)
 static bool slave_pre_blank;                               // the other half is a protocol 4 build from before D44: no mode byte
 bool        updater_port_settings_invalidate(uint8_t mode) {
-           if (master_invalidate_fails) return false;
+    if (master_invalidate_fails) return false;
     master_invalidations++;
-           master_reset_mode = mode;
-           return true;
+    master_reset_mode = mode;
+    return true;
 }
 void updater_port_reboot(void) {
     master_soft_resets++;
