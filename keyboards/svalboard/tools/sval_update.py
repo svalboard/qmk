@@ -560,7 +560,7 @@ def decode_crumbs(r):
     if len(r) < 20:
         return {}
     f = r[7]
-    why = [n for b, n in ((1, "power-on/brown-out"), (2, "RUN pin"), (4, "debugger"), (8, "watchdog timer"), (16, "watchdog force")) if f & b] or ["none of POR/RUN/watchdog: software or core reset"]
+    why = [n for b, n in ((1, "power-on/brown-out"), (2, "RUN pin"), (4, "debugger"), (8, "watchdog timer"), (16, "watchdog force (a firmware restart, the updater's commit or a bootloader jump)")) if f & b] or ["none of POR/RUN/watchdog: a core-only reset (firmware before the full-chip restart)"]
     out = dict(last_reset=why)
     if not f & 0x80:
         out["before_reset"] = "no breadcrumbs (first boot, power-on or RUN pin)"

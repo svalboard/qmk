@@ -11,8 +11,9 @@
 // USB plugged in, unable to enumerate, until it is powered off.
 //
 // Everything that restarts the firmware on purpose goes through mcu_reset():
-// soft_reset_keyboard() (a side write, a rename, Scan Lab, the link light's
-// tests) and QMK's split watchdog on the half without USB. Here it resets the
+// soft_reset_keyboard() (a side write, a rename, QK_REBOOT and EE_CLR, OS
+// detection's reset, the updater's own reboots) and QMK's split watchdog on the
+// half without USB. Here it resets the
 // whole chip through the watchdog instead, as a power-up does, except for the
 // oscillators (as the SDK's watchdog_reboot() does) and the watchdog's scratch
 // registers, which the updater's crumbs use. The updater's commit has its own
@@ -22,8 +23,12 @@
 #include "hardware/structs/psm.h"
 
 #define PSM_WDSEL_ALL_BUT_OSC 0x0001FFFCu // everything but ROSC and XOSC (update_commit.c)
+_Static_assert(PSM_WDSEL_ALL_BUT_OSC == (PSM_WDSEL_BITS & ~(PSM_WDSEL_ROSC_BITS | PSM_WDSEL_XOSC_BITS)), "PSM WDSEL: everything but the oscillators");
 
-void mcu_reset(void) {
+// A restart shows as "watchdog force" in the reset reason (WATCHDOG_REASON),
+// as the updater's commit and a bootloader jump do.
+__attribute__((noreturn)) void mcu_reset(void) {
+    __asm volatile("cpsid i" ::: "memory"); // nothing may run between the writes
     // Scratch 4 holds the boot ROM's "start at an address after a watchdog reset"
     // magic; a stale one would send the reset somewhere else.
     watchdog_hw->scratch[4] = 0;
