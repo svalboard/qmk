@@ -50,6 +50,8 @@ VIA_INSECURE = yes
 # debounced in both, 5 ms per key, deferred.
 DEBOUNCE_TYPE = custom
 SRC += debounce_sval.c
+# Every firmware restart is a full chip reset (full_reset.c).
+SRC += full_reset.c
 SRC += pad_gestures.c
 
 # On-device action-path tests; opt in with -e SVAL_KEYTEST=yes.
