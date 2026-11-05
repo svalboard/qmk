@@ -36,10 +36,12 @@
 static bool owned;
 
 #ifdef SVAL_LINK_TEST
-// Dev builds (link_light.c): what this half's LED shows, and what rgblight last
-// asked for (each half drives one LED).
-static rgb_t led_wanted, led_shown;
-#    define WANT(r, g, b) (led_wanted = (rgb_t){r, g, b})
+// Dev builds (link_light.c): what this half's LED shows (the last value sent to
+// it), and what rgblight asked for at its last flush, sent or held back by the
+// gate (each half drives one LED). They differ only while the updater or the link
+// light owns the LED, or when a repaint is missing.
+static rgb_t led_pending, led_wanted, led_shown;
+#    define WANT(r, g, b) (led_pending = (rgb_t){r, g, b})
 #    define SHOWN(c) (led_shown = (c))
 void update_led_readback(uint8_t out[6]) {
     out[0] = led_shown.r;
@@ -55,7 +57,7 @@ void update_led_readback(uint8_t out[6]) {
 #endif
 
 static void gate_set_color(int index, uint8_t red, uint8_t green, uint8_t blue) {
-    WANT(red, green, blue);
+    if (index == 0) WANT(red, green, blue); // this half's own LED (rgblight also passes the other half's, clipped out of range)
     if (!owned) ws2812_set_color(index, red, green, blue);
 }
 
@@ -65,11 +67,12 @@ static void gate_set_color_all(uint8_t red, uint8_t green, uint8_t blue) {
 }
 
 static void gate_flush(void) {
+#ifdef SVAL_LINK_TEST
+    led_wanted = led_pending;
+#endif
     if (!owned) {
         ws2812_flush();
-#ifdef SVAL_LINK_TEST
         SHOWN(led_wanted);
-#endif
     }
 }
 
