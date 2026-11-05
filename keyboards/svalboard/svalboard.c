@@ -755,6 +755,17 @@ void sval_set_active_layer(uint32_t layer, bool save) {
 }
 
 // RPC listener for split keyboard sync
+// The lighting after the halves pair (again). QMK sends the other half the lighting
+// state only when something changed, and that half redraws only on a mode or
+// color change: a layer mask that arrives alone is stored, not shown. A half that
+// restarted may also take the first sync before it is ready. So for a few pings
+// after a pairing the half with USB marks the whole state changed again
+// (sval_rgb_resync), and the other half redraws from what it holds.
+#define SVAL_RGB_SYNC_PINGS 6
+static uint8_t       rgb_resyncs;                     // the half with USB: pings left that resend everything
+static uint8_t       rgb_redraws = SVAL_RGB_SYNC_PINGS; // the other half: pings left that redraw (from boot)
+static volatile bool rgb_redraw_due;
+
 void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
     const presence_rpc_t *in                = (const presence_rpc_t *)in_data;
     sval_ping_turbo                         = in->turbo_scan; // only for a wait of 0 from an older half
@@ -792,6 +803,7 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
         sval_link_stopped();
     else
         sval_link_ping_seen(quiet == SVAL_LINK_QUIET_SUSPEND);
+    if (rgb_redraws) rgb_redraw_due = true; // drawn from housekeeping, not from the link's handler
 #ifdef SVAL_UPDATER
     // The master's updater light (D24), when its ping carries it. Measured to
     // its own byte: the ping has grown past it since.
@@ -1115,6 +1127,11 @@ void housekeeping_task_kb(void) {
     if (is_keyboard_master()) sval_typing_pause_task();
     scanlab_housekeeping();
     sval_link_task();
+    if (rgb_redraw_due) { // the other half, after a ping: draw what the half with USB sent
+        rgb_redraw_due = false;
+        rgb_redraws--;
+        rgblight_set();
+    }
 #ifdef SVAL_KEYTEST
     keytest_task();
 #endif
@@ -1144,6 +1161,10 @@ void housekeeping_task_kb(void) {
 #endif
             presence_rpc_t rpcout;
             presence_fill(&rpcout, sval_link_quiet() ? SVAL_LINK_QUIET_SUSPEND : 0);
+            if (rgb_resyncs) { // a few pings after a pairing: resend the whole lighting state
+                rgb_resyncs--;
+                sval_rgb_resync();
+            }
             presence_rsp_t rpcin = {0};
             if (transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin)) {
                 if (rpcin.magic[0] == SVAL_PRESENCE_RSP_MAGIC0 && rpcin.magic[1] == SVAL_PRESENCE_RSP_MAGIC1 && (rpcin.pointer.flags & SVAL_POINTER_REPORTED)) {
@@ -1166,6 +1187,7 @@ void housekeeping_task_kb(void) {
                 if (!is_connected) {
                     is_connected = true;
                     sval_rgb_resync(); // the other half may have restarted (it is powered over the cable)
+                    rgb_resyncs = SVAL_RGB_SYNC_PINGS;
 #ifdef SVAL_UPDATER
                     // D21: no settings write while an update runs (the other
                     // half reconnects after its commit, while this one may be
@@ -1207,6 +1229,8 @@ void sval_rgb_resync(void) {
 void sval_link_recovered(void) {
     sval_rgb_wake();
     sval_rgb_resync();
+    rgb_resyncs = SVAL_RGB_SYNC_PINGS;
+    rgb_redraws = SVAL_RGB_SYNC_PINGS;
 }
 
 void sval_on_reconnect(void) {
