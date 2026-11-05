@@ -153,8 +153,9 @@ bool sval_link_light(void) {
 //   0 STATUS: [1] this half, [11] the other half over the link (zero when unreachable)
 //   1 PAUSE ms:2 (the half with USB): the split exchange and the pings stop for that
 //     long, without telling the other half, as a broken link would look to it
-//   2 SUB REBOOT (the half with USB): the other half restarts, which the half with
-//     USB sees as a broken link until it is back
+//   2 SUB REBOOT [normal] (the half with USB): the other half restarts, as the half
+//     without USB again (normal 1: as it decides itself), which the half with USB
+//     sees as a broken link until it is back
 //   3 BOOT AS SUB: this half restarts as the half without USB, once (the next
 //     restart is normal again; with no other half answering, the split watchdog
 //     restarts it within a few seconds)
@@ -217,7 +218,7 @@ void sval_link_test_command(uint8_t *data, uint8_t length) {
             pause_until = timer_read32() + (data[7] | (uint32_t)data[8] << 8);
             break;
         case LT_SUB_REBOOT: {
-            uint8_t req[2] = {LT_RPC_OP, LT_SUB_REBOOT};
+            uint8_t req[3] = {LT_RPC_OP, LT_SUB_REBOOT, data[7]}; // [7] 1: back as itself, not as the sub
             uint8_t rsp[2] = {0};
             if (!is_keyboard_master() || !transaction_rpc_exec(KEYBOARD_SYNC_B, sizeof(req), req, sizeof(rsp), rsp) || rsp[0] != LT_RPC_OP) st = 1;
             break;
@@ -241,7 +242,10 @@ bool sval_link_test_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint
     if (in[1] == LT_STATUS && out_len >= LT_STATUS_LEN + 1) {
         status_block(&out[1]);
     } else if (in[1] == LT_SUB_REBOOT) {
-        reboot_pending = true;
+        // Back as the half without USB, as a half powered over the cable would be,
+        // even when a test has its USB plugged in too (unless asked for a normal restart).
+        if (!(in_len >= 3 && in[2] == 1)) watchdog_hw->scratch[LT_SCRATCH] = LT_SUB_MAGIC;
+        reboot_pending                   = true;
         reboot_at      = timer_read32() + 50;
         out[1]         = 0;
     }
