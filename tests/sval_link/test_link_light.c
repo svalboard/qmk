@@ -15,18 +15,17 @@ bool     host_master, host_transport_up, host_other_connected, host_usb_configur
 // svalboard.c: repaints and resyncs the lighting when a loss clears.
 static int recovered;
 void       sval_link_recovered(void) {
-    recovered++;
+          recovered++;
 }
 
-
 static int checks, failures;
-#define CHECK(c)                                                    \
-    do {                                                            \
-        checks++;                                                   \
-        if (!(c)) {                                                 \
-            failures++;                                             \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c);     \
-        }                                                           \
+#define CHECK(c)                                                \
+    do {                                                        \
+        checks++;                                               \
+        if (!(c)) {                                             \
+            failures++;                                         \
+            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); \
+        }                                                       \
     } while (0)
 
 static uint32_t boot_ms = 1000;
@@ -34,13 +33,13 @@ static uint32_t boot_ms = 1000;
 static void boot(bool master) {
     armed = lost = cable_paired = cable_lost = sub_paired = sub_quiet = stop_wait = stop_down = false;
     lost_at = sub_last_ping = stopped_at = 0;
-    host_now_ms         = boot_ms;
-    host_master         = master;
-    host_transport_up   = true; // QMK's check reads connected until 200 ms of failures
-    host_other_connected = false;
-    host_usb_configured = master;
-    host_updater_active = false;
-    recovered           = 0;
+    host_now_ms                          = boot_ms;
+    host_master                          = master;
+    host_transport_up                    = true; // QMK's check reads connected until 200 ms of failures
+    host_other_connected                 = false;
+    host_usb_configured                  = master;
+    host_updater_active                  = false;
+    recovered                            = 0;
 }
 
 static void run_ms(uint32_t ms) {
