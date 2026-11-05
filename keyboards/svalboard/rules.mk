@@ -11,6 +11,8 @@ WS2812_DRIVER   = vendor
 CUSTOM_MATRIX = lite
 
 SRC += key_log.c debug_console.c axis_scale.c sval_timing.c matrix.c mainboard.c scanlab.c power.c identity.c pointing_detect.c pointer_reprobe.c build_reset.c velocity_scroll.c pad_follow.c typing_pause.c flicker_latch.c
+# Every firmware restart is a full chip reset (full_reset.c).
+SRC += full_reset.c
 
 # Settings start at 0x160000; keep firmware below them.
 LDFLAGS += -Wl,-T,keyboards/svalboard/flash_reservation.ld
