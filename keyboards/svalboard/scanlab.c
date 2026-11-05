@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "debounce_sval.h"
 #include "split_util.h"
 #include "split_common/transactions.h"
+#include "link_light.h"
 #include <string.h>
 #if VIA_ENABLE
 #    include "via.h"
@@ -427,9 +428,13 @@ void scanlab_via_command(uint8_t *data, uint8_t length) {
         memset(rsp, 0, sizeof(rsp));
         rsp[0] = 0xFF;
 #endif
-    } else if (!transaction_rpc_exec(KEYBOARD_SYNC_B, sizeof(req), req, sizeof(rsp), rsp)) {
-        memset(rsp, 0, sizeof(rsp));
-        rsp[0] = 0xFF;  // other half did not answer
+    } else {
+        // The other half goes to its bootloader on purpose: no link light for it.
+        if (req[0] == SCANLAB_OP_REBOOT_GO) sval_link_stopped();
+        if (!transaction_rpc_exec(KEYBOARD_SYNC_B, sizeof(req), req, sizeof(rsp), rsp)) {
+            memset(rsp, 0, sizeof(rsp));
+            rsp[0] = 0xFF;  // other half did not answer
+        }
     }
 
     uint8_t room = length > 3 ? length - 3 : 0;

@@ -172,6 +172,7 @@
 #include "update_build_info.h"
 #include "update_gesture.h"
 #include "update_led.h"
+#include "link_light.h"
 #include "update_commit.h"
 #include "update_split.h"
 #include "update_pair.h"   // the boot relay of a pair UF2 (docs/pair-uf2.md)
@@ -1399,7 +1400,8 @@ void updater_task(void) {
         pass_max_state = pass_st;
     }
     lt.shown = led_mode();
-    update_led_show(lt.shown);
+    // The link light (link_light.h) only while the updater shows nothing.
+    update_led_show(lt.shown == UPDATE_LED_NONE && sval_link_light() ? UPDATE_LED_LINK : lt.shown);
     crumb_pass();
 }
 

@@ -66,8 +66,13 @@ uint16_t updater_port_stack_free(uint16_t *size) {
 }
 
 static update_led_mode_t led_now;
-static int               led_seen; // bit per mode shown
-void                     update_led_show(update_led_mode_t mode) {
+// The link light (link_light.h): updater.c shows it only while it shows nothing itself.
+static bool link_light_on;
+bool        sval_link_light(void) {
+    return link_light_on;
+}
+static int led_seen; // bit per mode shown
+void       update_led_show(update_led_mode_t mode) {
     led_now = mode;
     led_seen |= 1 << mode;
 }
@@ -1813,6 +1818,24 @@ static void test_session_mismatch_accepted(void) {
     }
 }
 
+static void test_session_link_light(void) {
+    fresh(0x30000);
+    link_light_on = true;
+    pass();
+    CHECK_EQ(led_now, UPDATE_LED_LINK); // idle: the link light shows
+    CHECK_EQ(load_manifest(CLIENT_A), UPDATE_OK);
+    CHECK_EQ(send(CLIENT_A, UPDATE_OP_ARM, NULL, 0), UPDATE_OK);
+    uint32_t nonce = get32le(rsp + 1);
+    pass();
+    CHECK_EQ(led_now, UPDATE_LED_CONFIRM); // the updater's own light wins
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, nonce), UPDATE_OK);
+    pass();
+    CHECK_EQ(led_now, UPDATE_LED_LINK); // and the link light is back after it
+    link_light_on = false;
+    pass();
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+}
+
 static void test_session(void) {
     int before_failures = failures;
     test_session_info_and_wrapper();
@@ -1829,5 +1852,6 @@ static void test_session(void) {
     test_session_presence();
     test_session_after_commit();
     test_session_slave_lights();
+    test_session_link_light();
     printf("session tests: %s\n", failures == before_failures ? "pass" : "FAIL");
 }

@@ -241,6 +241,10 @@ nothing you should simply wait through is ever red.
 | Magenta | Writing |
 | Green double flash | Done |
 | Red, blinking (1 Hz, 30 s) | Failure: open Keybard |
+| Amber, blinking (2 Hz) | The halves were paired and lost each other: check the split cable ([link light](link-light.md)) |
+
+Amber is the link light, not the updater's: it shows only while the updater
+shows nothing, and never while an update runs.
 
 While a half writes its firmware or restarts, the firmware isn't driving its
 lights, so they may freeze or show other colors until it's running again.

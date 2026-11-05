@@ -17,6 +17,7 @@ typedef enum {
     UPDATE_LED_WRITING,  // solid magenta: this half's commit, which holds a fixed color
     UPDATE_LED_DONE,     // green double flash: done, the halves match
     UPDATE_LED_ERROR,    // red, 1 Hz, 50/50: it failed, open Keybard (stops after 30 s)
+    UPDATE_LED_LINK,     // amber, 2 Hz, 50/50: the halves were paired and lost it (link_light.h)
 } update_led_mode_t;
 
 // Called on every updater_task() pass with the mode for the current state.
@@ -27,3 +28,8 @@ void update_led_show(update_led_mode_t mode);
 // let run rather than stopped), so no DMA is running when the commit starts.
 // The LEDs then keep that color until the reset.
 void update_led_commit_latch(void);
+
+#ifdef SVAL_LINK_TEST
+// Dev builds: [shown r, g, b][rgblight's last r, g, b] for this half's LED.
+void update_led_readback(uint8_t out[6]);
+#endif

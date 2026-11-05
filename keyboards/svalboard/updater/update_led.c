@@ -27,6 +27,7 @@
 #define ERROR_PERIOD_MS 1000  // red, 1 Hz, 50/50 (D24)
 #define FLASH_STEP_MS 75      // white double flash: on, off, on, off (~300 ms, D4)
 #define DONE_STEP_MS 150      // green double flash: on, off, on, off (600 ms)
+#define LINK_PERIOD_MS 500    // amber, 2 Hz, 50/50 (the link light)
 #define RAINBOW_MS_PER_HUE 8  // a full hue turn in about 2 s
 #define MIN_WRITE_MS 20       // at most 50 WS2812 writes a second
 #define WS2812_FRAME_US 30    // one LED: 24 bits at 1.25 us
@@ -34,16 +35,45 @@
 
 static bool owned;
 
+#ifdef SVAL_LINK_TEST
+// Dev builds (link_light.c): what this half's LED shows (the last value sent to
+// it), and what rgblight asked for at its last flush, sent or held back by the
+// gate (each half drives one LED). They differ only while the updater or the link
+// light owns the LED, or when a repaint is missing.
+static rgb_t led_pending, led_wanted, led_shown;
+#    define WANT(r, g, b) (led_pending = (rgb_t){r, g, b})
+#    define SHOWN(c) (led_shown = (c))
+void update_led_readback(uint8_t out[6]) {
+    out[0] = led_shown.r;
+    out[1] = led_shown.g;
+    out[2] = led_shown.b;
+    out[3] = led_wanted.r;
+    out[4] = led_wanted.g;
+    out[5] = led_wanted.b;
+}
+#else
+#    define WANT(r, g, b)
+#    define SHOWN(c)
+#endif
+
 static void gate_set_color(int index, uint8_t red, uint8_t green, uint8_t blue) {
+    if (index == 0) WANT(red, green, blue); // this half's own LED (rgblight also passes the other half's, clipped out of range)
     if (!owned) ws2812_set_color(index, red, green, blue);
 }
 
 static void gate_set_color_all(uint8_t red, uint8_t green, uint8_t blue) {
+    WANT(red, green, blue);
     if (!owned) ws2812_set_color_all(red, green, blue);
 }
 
 static void gate_flush(void) {
-    if (!owned) ws2812_flush();
+#ifdef SVAL_LINK_TEST
+    led_wanted = led_pending;
+#endif
+    if (!owned) {
+        ws2812_flush();
+        SHOWN(led_wanted);
+    }
 }
 
 const rgblight_driver_t rgblight_driver = {
@@ -73,6 +103,8 @@ static rgb_t color(update_led_mode_t mode, uint32_t t) {
             return (t / DONE_STEP_MS) % 2 == 0 && t < 4 * DONE_STEP_MS ? (rgb_t){0, v, 0} : off;
         case UPDATE_LED_ERROR:
             return t % ERROR_PERIOD_MS < ERROR_PERIOD_MS / 2 ? (rgb_t){v, 0, 0} : off;
+        case UPDATE_LED_LINK:
+            return t % LINK_PERIOD_MS < LINK_PERIOD_MS / 2 ? (rgb_t){v, (uint8_t)(v * 2 / 5), 0} : off;
         default:
             return off;
     }
@@ -105,6 +137,7 @@ void update_led_show(update_led_mode_t mode) {
     if (force || c.r != last.r || c.g != last.g || c.b != last.b) {
         ws2812_set_color_all(c.r, c.g, c.b);
         ws2812_flush();
+        SHOWN(c);
         last       = c;
         last_write = now;
     }

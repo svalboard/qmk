@@ -22,6 +22,7 @@
 #include "pointing_motion.h" // after sval.h: needs the generated fragment ids
 #include "identity.h"
 #include "build_reset.h"
+#include "link_light.h"
 #include "nvm_via.h"
 #ifdef SVAL_EITHER_HAND
 #    include "side.h"
@@ -48,6 +49,7 @@ _Static_assert(offsetof(presence_rpc_t, pad_gestures) == 19, "presence ping: the
 _Static_assert(offsetof(presence_rpc_t, pad_tuning) == 20, "presence ping: the touchpad tuning follows the tap setting");
 _Static_assert(offsetof(presence_rpc_t, pad_palm) == 22, "presence ping: the palm rejection follows the touchpad tuning");
 _Static_assert(offsetof(presence_rpc_t, pad_mode) == 23, "presence ping: the touchpad mode follows the palm rejection");
+_Static_assert(offsetof(presence_rpc_t, link_quiet) == 24, "presence ping: the link light's quiet byte follows the touchpad mode");
 #endif
 // The debounce mode took the last spare bit of the first byte: the settings
 // keep their size, so a board that updates keeps them and reads it as 0 (on).
@@ -628,6 +630,14 @@ bool sval_rgb_idle_quiesced(void) {
     return rgb_idle_applied == 2 && timer_elapsed32(rgb_last_write_ms) > 5;
 }
 static uint8_t rgb_awake_val     = 0;
+static bool     rgb_woken;
+static uint32_t rgb_woken_at;
+
+// Lights up as an input would, without one: the idle dimming counts from now.
+void sval_rgb_wake(void) {
+    rgb_woken    = true;
+    rgb_woken_at = timer_read32();
+}
 static uint8_t rgb_dim_val       = 0;
 static bool    rgb_awake_enabled = false;
 
@@ -652,6 +662,7 @@ void sval_rgb_idle_task(void) {
         return;
     }
     uint32_t quiet = last_input_activity_elapsed();
+    if (rgb_woken && timer_elapsed32(rgb_woken_at) < quiet) quiet = timer_elapsed32(rgb_woken_at); // sval_rgb_wake()
     uint8_t  want  = 0;
     if (global_saved_values.scan_deep_after_s && quiet > (uint32_t)global_saved_values.scan_deep_after_s * 1000u) {
         want = 2;
@@ -744,6 +755,17 @@ void sval_set_active_layer(uint32_t layer, bool save) {
 }
 
 // RPC listener for split keyboard sync
+// The lighting after the halves pair (again). QMK sends the other half the lighting
+// state only when something changed, and that half redraws only on a mode or
+// color change: a layer mask that arrives alone is stored, not shown. A half that
+// restarted may also take the first sync before it is ready. So for a few pings
+// after a pairing the half with USB marks the whole state changed again
+// (sval_rgb_resync), and the other half redraws from what it holds.
+#define SVAL_RGB_SYNC_PINGS 6
+static uint8_t       rgb_resyncs;                     // the half with USB: pings left that resend everything
+static uint8_t       rgb_redraws = SVAL_RGB_SYNC_PINGS; // the other half: pings left that redraw (from boot)
+static volatile bool rgb_redraw_due;
+
 void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
     const presence_rpc_t *in                = (const presence_rpc_t *)in_data;
     sval_ping_turbo                         = in->turbo_scan; // only for a wait of 0 from an older half
@@ -774,6 +796,14 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
     // And its touchpad mode (RAM only).
     bool has_mode = in_buflen >= offsetof(presence_rpc_t, pad_mode) + 1;
     pad_mode_set(sval_pad_mode_sync_setting(has_mode, has_mode ? in->pad_mode : 0, pad_mode));
+    // A ping from the half with USB: the link light's pairing (link_light.h).
+    bool    has_quiet = in_buflen >= offsetof(presence_rpc_t, link_quiet) + 1;
+    uint8_t quiet     = has_quiet ? in->link_quiet : 0;
+    if (quiet == SVAL_LINK_QUIET_STOPPING)
+        sval_link_stopped();
+    else
+        sval_link_ping_seen(quiet == SVAL_LINK_QUIET_SUSPEND);
+    if (rgb_redraws) rgb_redraw_due = true; // drawn from housekeeping, not from the link's handler
 #ifdef SVAL_UPDATER
     // The master's updater light (D24), when its ping carries it. Measured to
     // its own byte: the ping has grown past it since.
@@ -809,6 +839,9 @@ static void scanlab_rpc_listener(uint8_t in_buflen, const void *in_data, uint8_t
     if (sval_perf_split_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return;
 #endif
     if (sval_flicker_split_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return; // Sval 0x3D for this half
+#ifdef SVAL_LINK_TEST
+    if (sval_link_test_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return; // dev builds: link light tests
+#endif
 #ifdef SVAL_EITHER_HAND
     if (sval_side_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return; // Sval 0x33 for this half
 #endif
@@ -845,6 +878,34 @@ void keyboard_post_init_kb(void) {
     if (is_keyboard_master()) {
         sval_set_active_layer(sval_active_layer, false);
     }
+}
+
+// The presence ping to the other half (housekeeping_task_kb, shutdown_kb).
+static void presence_fill(presence_rpc_t *p, uint8_t link_quiet) {
+    *p = (presence_rpc_t){sval_timing_ping_turbo(global_saved_values.scan_prewait_us, global_saved_values.scan_postwait_us), global_saved_values.scan_prewait_us, global_saved_values.scan_postwait_us, global_saved_values.scan_period_us, global_saved_values.scan_idle_period_ms, global_saved_values.scan_idle_after_ms, global_saved_values.scan_deep_after_s, global_saved_values.scan_deep_period_ms, global_saved_values.idle_flags, global_saved_values.scan_deep_clock_idx};
+#ifdef SVAL_UPDATER
+    p->update_light = updater_split_light();
+#endif
+    p->debounce_mode = sval_debounce_sync_byte(sval_optical_debounce_on());
+    p->pad_gestures  = sval_pad_sync_byte(pad_gestures);
+    p->pad_tuning    = sval_pad_tune_sync_word(pad_tuning);
+    p->pad_palm      = sval_pad_palm_sync_byte(pad_palm);
+    p->pad_mode      = sval_pad_mode_sync_byte(pad_mode);
+    p->link_quiet    = link_quiet;
+}
+
+// A restart on purpose (a soft reset, the bootloader): the half with USB tells the
+// other half first, so neither shows the link light for it (link_light.h).
+bool shutdown_kb(bool jump_to_bootloader) {
+    if (!shutdown_user(jump_to_bootloader)) return false;
+    sval_link_stopped();
+    if (is_keyboard_master() && sval_other_half_connected()) {
+        presence_rpc_t rpcout;
+        presence_fill(&rpcout, SVAL_LINK_QUIET_STOPPING);
+        presence_rsp_t rpcin = {0};
+        transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin);
+    }
+    return true;
 }
 
 static bool is_connected = false;
@@ -1065,6 +1126,12 @@ void housekeeping_task_kb(void) {
     sval_usb_wake_handler();
     if (is_keyboard_master()) sval_typing_pause_task();
     scanlab_housekeeping();
+    sval_link_task();
+    if (rgb_redraw_due) { // the other half, after a ping: draw what the half with USB sent
+        rgb_redraw_due = false;
+        rgb_redraws--;
+        rgblight_set();
+    }
 #ifdef SVAL_KEYTEST
     keytest_task();
 #endif
@@ -1092,15 +1159,12 @@ void housekeeping_task_kb(void) {
 #else
         if (timer_elapsed(last_ping) > 500) {
 #endif
-            presence_rpc_t rpcout = {sval_timing_ping_turbo(global_saved_values.scan_prewait_us, global_saved_values.scan_postwait_us), global_saved_values.scan_prewait_us, global_saved_values.scan_postwait_us, global_saved_values.scan_period_us, global_saved_values.scan_idle_period_ms, global_saved_values.scan_idle_after_ms, global_saved_values.scan_deep_after_s, global_saved_values.scan_deep_period_ms, global_saved_values.idle_flags, global_saved_values.scan_deep_clock_idx};
-#ifdef SVAL_UPDATER
-            rpcout.update_light = updater_split_light();
-#endif
-            rpcout.debounce_mode = sval_debounce_sync_byte(sval_optical_debounce_on());
-            rpcout.pad_gestures  = sval_pad_sync_byte(pad_gestures);
-            rpcout.pad_tuning    = sval_pad_tune_sync_word(pad_tuning);
-            rpcout.pad_palm      = sval_pad_palm_sync_byte(pad_palm);
-            rpcout.pad_mode      = sval_pad_mode_sync_byte(pad_mode);
+            presence_rpc_t rpcout;
+            presence_fill(&rpcout, sval_link_quiet() ? SVAL_LINK_QUIET_SUSPEND : 0);
+            if (rgb_resyncs) { // a few pings after a pairing: resend the whole lighting state
+                rgb_resyncs--;
+                sval_rgb_resync();
+            }
             presence_rsp_t rpcin = {0};
             if (transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin)) {
                 if (rpcin.magic[0] == SVAL_PRESENCE_RSP_MAGIC0 && rpcin.magic[1] == SVAL_PRESENCE_RSP_MAGIC1 && (rpcin.pointer.flags & SVAL_POINTER_REPORTED)) {
@@ -1122,6 +1186,8 @@ void housekeeping_task_kb(void) {
 #endif
                 if (!is_connected) {
                     is_connected = true;
+                    sval_rgb_resync(); // the other half may have restarted (it is powered over the cable)
+                    rgb_resyncs = SVAL_RGB_SYNC_PINGS;
 #ifdef SVAL_UPDATER
                     // D21: no settings write while an update runs (the other
                     // half reconnects after its commit, while this one may be
@@ -1143,6 +1209,28 @@ void housekeeping_task_kb(void) {
             last_ping = timer_read32();
         }
     }
+}
+
+// QMK sends the other half the lighting state only when something changed
+// (quantum/split_common/transactions.c, PUT_RGBLIGHT). A half that restarted
+// while the link was down never gets the current mode, color or layers that
+// way: mark them all changed, and the next exchange sends them.
+#if defined(RGBLIGHT_ENABLE) && defined(RGBLIGHT_SPLIT)
+extern rgblight_status_t rgblight_status; // quantum/rgblight/rgblight.c
+#endif
+void sval_rgb_resync(void) {
+#if defined(RGBLIGHT_ENABLE) && defined(RGBLIGHT_SPLIT)
+    if (is_keyboard_master()) rgblight_status.change_flags |= RGBLIGHT_STATUS_CHANGE_MODE | RGBLIGHT_STATUS_CHANGE_HSVS | RGBLIGHT_STATUS_CHANGE_LAYERS | RGBLIGHT_STATUS_CHANGE_TIMER;
+#endif
+}
+
+// The link light cleared (link_light.h): show the current state at once on both
+// halves, whatever the idle dimming did meanwhile.
+void sval_link_recovered(void) {
+    sval_rgb_wake();
+    sval_rgb_resync();
+    rgb_resyncs = SVAL_RGB_SYNC_PINGS;
+    rgb_redraws = SVAL_RGB_SYNC_PINGS;
 }
 
 void sval_on_reconnect(void) {

@@ -53,6 +53,8 @@ FORBIDDEN = {
     "sval_perf_stats_build": "SVAL_PERF_STATS (dev builds)",
     "sval_perf_command": "SVAL_PERF_STATS (dev builds)",
     "sval_dev_command": "the raw HID 0xFC dev command (SVAL_TOUCH_DEV, SVAL_PERF_STATS)",
+    "sval_link_test_command": "the link light's test hooks (SVAL_LINK_TEST)",
+    "sval_link_test_rpc": "the link light's test hooks (SVAL_LINK_TEST)",
     "sval_mt_command": "SVAL_TOUCH_DEV (dev builds)",
     "velocity_scroll_dev_hold": "SVAL_TOUCH_DEV (dev builds)",
 }
