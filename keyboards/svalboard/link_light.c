@@ -16,9 +16,16 @@
 #include "link_light.h"
 #include <string.h>
 
-// The other half: pings come every 500 ms (svalboard.c); three missed is a loss.
+// The other half: pings come a little over every 500 ms (svalboard.c), so
+// 1.5 s is two missed pings and most of a third.
 #ifndef SVAL_LINK_SUB_LOST_MS
 #    define SVAL_LINK_SUB_LOST_MS 1500
+#endif
+// The half with USB after a stop on purpose: it pairs again once the link has gone
+// down and up, or after this long if the link never went down (a restart that did
+// not happen).
+#ifndef SVAL_LINK_REARM_MS
+#    define SVAL_LINK_REARM_MS 5000
 #endif
 
 static bool     armed, lost;
@@ -27,6 +34,9 @@ static uint32_t lost_at;
 // the half with USB
 static bool cable_paired; // a presence ping answered since boot or the last loss
 static bool cable_lost;   // the transport check fired while paired
+static bool     stop_wait;   // stopped on purpose: wait for the link to go down (or the delay)
+static bool     stop_down;   // the link went down since the stop
+static uint32_t stopped_at;
 // the other half
 static bool     sub_paired, sub_quiet;
 static uint32_t sub_last_ping;
@@ -58,8 +68,14 @@ void sval_link_lost(void) {
 }
 
 void sval_link_stopped(void) {
-    armed = false;
-    lost  = false;
+    armed        = false;
+    lost         = false;
+    cable_paired = false;
+    cable_lost   = false;
+    sub_paired   = false;
+    stop_wait    = true;
+    stop_down    = false;
+    stopped_at   = timer_read32();
 }
 
 void sval_link_ping_seen(bool quiet) {
@@ -71,10 +87,20 @@ void sval_link_ping_seen(bool quiet) {
     }
 }
 
+// The half with USB after a stop on purpose: true while it should not pair yet.
+static bool stop_holds(bool up) {
+    if (!stop_wait) return false;
+    if (!up || !sval_other_half_connected()) stop_down = true;
+    if ((stop_down && up && sval_other_half_connected()) || timer_elapsed32(stopped_at) >= SVAL_LINK_REARM_MS) stop_wait = false;
+    return stop_wait;
+}
+
 void sval_link_task(void) {
     if (is_keyboard_master()) {
         bool up = is_transport_connected();
-        if (!cable_paired && !cable_lost && sval_other_half_connected()) {
+        if (stop_holds(up)) {
+            // not yet: the restart asked for is still going on
+        } else if (!cable_paired && !cable_lost && sval_other_half_connected()) {
             cable_paired = true;
             sval_link_paired();
         } else if (cable_paired && !up) {
@@ -133,7 +159,7 @@ bool sval_link_light(void) {
 // 5 quiet), ms since the loss:2, the other half's silence when it called its last
 // loss:2, the last loss's length:2, losses, clears.
 enum { LT_STATUS = 0, LT_PAUSE = 1, LT_SUB_REBOOT = 2, LT_BOOT_AS_SUB = 3 };
-#    define LT_RPC_OP 0x4C // 'L': first byte of the KEYBOARD_SYNC_B request
+#    define LT_RPC_OP 0xB1 // first byte of the KEYBOARD_SYNC_B request: no Scan Lab, side or flicker op uses it
 #    define LT_STATUS_LEN 10
 #    define LT_SUB_MAGIC 0x5B5B1E7Eu
 #    define LT_SCRATCH 7 // watchdog scratch 7: the boot ROM reads it only with its own magic in scratch 4
@@ -177,7 +203,8 @@ void sval_link_test_command(uint8_t *data, uint8_t length) {
             return;
         }
         case LT_PAUSE:
-            if (!is_keyboard_master() || pausing || !sval_split_pause(true)) {
+            // Never during an update: it owns the pause, and this would end it.
+            if (!is_keyboard_master() || pausing || sval_split_paused() || updater_active() || !sval_split_pause(true)) {
                 st = 1;
                 break;
             }

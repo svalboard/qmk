@@ -11,7 +11,9 @@
 void sval_link_paired(void);
 // The pairing was lost: the light shows, if a pairing came up since boot.
 void sval_link_lost(void);
-// Told to stop on purpose: no light, and nothing armed until paired again.
+// Told to stop on purpose (a restart, the bootloader): no light, and nothing
+// armed until paired again. The half with USB pairs again only once the link has
+// gone down and up, or after SVAL_LINK_REARM_MS if it never went down.
 void sval_link_stopped(void);
 
 // Every housekeeping pass, on both halves: the split cable's own pairing.
@@ -20,6 +22,10 @@ void sval_link_stopped(void);
 // check, SPLIT_MIN_DISCONNECT_MS). The other half pairs on the first presence
 // ping it gets, and loses it when pings stop for SVAL_LINK_SUB_LOST_MS.
 void sval_link_task(void);
+// The presence ping's link_quiet byte (svalboard.h).
+#define SVAL_LINK_QUIET_SUSPEND 1  // the half with USB is in USB suspend
+#define SVAL_LINK_QUIET_STOPPING 2 // its last ping before it restarts on purpose
+
 // The other half: a presence ping came in. quiet: the half with USB is in USB
 // suspend (its own light is dark then, and so is this half's).
 void sval_link_ping_seen(bool quiet);

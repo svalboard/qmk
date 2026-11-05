@@ -185,6 +185,7 @@ uint8_t sval_side_pair(uint8_t mine, bool other_connected, bool other_reported, 
 #    include "typing_pause.h"
 #    include "split_common/transactions.h"
 #    include "split_common/split_util.h"
+#    include "link_light.h"
 #    include "hardware/regs/addressmap.h"
 #    include "hardware/structs/sio.h"
 
@@ -470,6 +471,7 @@ enum { SIDE_OP_GET = 0, SIDE_OP_SET = 1, SIDE_OP_CLEAR = 2 };
 
 static uint8_t relay(uint8_t op, uint8_t s, uint8_t src, uint8_t flags) {
     if (!is_keyboard_master() || !sval_other_half_connected()) return SVAL_SIDE_NOT_CONNECTED;
+    if (flags & 1) sval_link_stopped(); // the other half restarts after the write: no link light for it
     uint8_t req[5] = {SVAL_SIDE_RPC_OP, op, s, src, flags};
     uint8_t rsp[2] = {0, 0};
     if (!transaction_rpc_exec(KEYBOARD_SYNC_B, sizeof(req), req, sizeof(rsp), rsp) || rsp[0] != SVAL_SIDE_RPC_OP) return SVAL_SIDE_NO_ANSWER;

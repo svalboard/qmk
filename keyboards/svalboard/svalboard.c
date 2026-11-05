@@ -49,6 +49,7 @@ _Static_assert(offsetof(presence_rpc_t, pad_gestures) == 19, "presence ping: the
 _Static_assert(offsetof(presence_rpc_t, pad_tuning) == 20, "presence ping: the touchpad tuning follows the tap setting");
 _Static_assert(offsetof(presence_rpc_t, pad_palm) == 22, "presence ping: the palm rejection follows the touchpad tuning");
 _Static_assert(offsetof(presence_rpc_t, pad_mode) == 23, "presence ping: the touchpad mode follows the palm rejection");
+_Static_assert(offsetof(presence_rpc_t, link_quiet) == 24, "presence ping: the link light's quiet byte follows the touchpad mode");
 #endif
 // The debounce mode took the last spare bit of the first byte: the settings
 // keep their size, so a board that updates keeps them and reads it as 0 (on).
@@ -776,8 +777,12 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
     bool has_mode = in_buflen >= offsetof(presence_rpc_t, pad_mode) + 1;
     pad_mode_set(sval_pad_mode_sync_setting(has_mode, has_mode ? in->pad_mode : 0, pad_mode));
     // A ping from the half with USB: the link light's pairing (link_light.h).
-    bool has_quiet = in_buflen >= offsetof(presence_rpc_t, link_quiet) + 1;
-    sval_link_ping_seen(has_quiet && in->link_quiet);
+    bool    has_quiet = in_buflen >= offsetof(presence_rpc_t, link_quiet) + 1;
+    uint8_t quiet     = has_quiet ? in->link_quiet : 0;
+    if (quiet == SVAL_LINK_QUIET_STOPPING)
+        sval_link_stopped();
+    else
+        sval_link_ping_seen(quiet == SVAL_LINK_QUIET_SUSPEND);
 #ifdef SVAL_UPDATER
     // The master's updater light (D24), when its ping carries it. Measured to
     // its own byte: the ping has grown past it since.
@@ -852,6 +857,34 @@ void keyboard_post_init_kb(void) {
     if (is_keyboard_master()) {
         sval_set_active_layer(sval_active_layer, false);
     }
+}
+
+// The presence ping to the other half (housekeeping_task_kb, shutdown_kb).
+static void presence_fill(presence_rpc_t *p, uint8_t link_quiet) {
+    *p = (presence_rpc_t){sval_timing_ping_turbo(global_saved_values.scan_prewait_us, global_saved_values.scan_postwait_us), global_saved_values.scan_prewait_us, global_saved_values.scan_postwait_us, global_saved_values.scan_period_us, global_saved_values.scan_idle_period_ms, global_saved_values.scan_idle_after_ms, global_saved_values.scan_deep_after_s, global_saved_values.scan_deep_period_ms, global_saved_values.idle_flags, global_saved_values.scan_deep_clock_idx};
+#ifdef SVAL_UPDATER
+    p->update_light = updater_split_light();
+#endif
+    p->debounce_mode = sval_debounce_sync_byte(sval_optical_debounce_on());
+    p->pad_gestures  = sval_pad_sync_byte(pad_gestures);
+    p->pad_tuning    = sval_pad_tune_sync_word(pad_tuning);
+    p->pad_palm      = sval_pad_palm_sync_byte(pad_palm);
+    p->pad_mode      = sval_pad_mode_sync_byte(pad_mode);
+    p->link_quiet    = link_quiet;
+}
+
+// A restart on purpose (a soft reset, the bootloader): the half with USB tells the
+// other half first, so neither shows the link light for it (link_light.h).
+bool shutdown_kb(bool jump_to_bootloader) {
+    if (!shutdown_user(jump_to_bootloader)) return false;
+    sval_link_stopped();
+    if (is_keyboard_master() && sval_other_half_connected()) {
+        presence_rpc_t rpcout;
+        presence_fill(&rpcout, SVAL_LINK_QUIET_STOPPING);
+        presence_rsp_t rpcin = {0};
+        transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin);
+    }
+    return true;
 }
 
 static bool is_connected = false;
@@ -1100,16 +1133,8 @@ void housekeeping_task_kb(void) {
 #else
         if (timer_elapsed(last_ping) > 500) {
 #endif
-            presence_rpc_t rpcout = {sval_timing_ping_turbo(global_saved_values.scan_prewait_us, global_saved_values.scan_postwait_us), global_saved_values.scan_prewait_us, global_saved_values.scan_postwait_us, global_saved_values.scan_period_us, global_saved_values.scan_idle_period_ms, global_saved_values.scan_idle_after_ms, global_saved_values.scan_deep_after_s, global_saved_values.scan_deep_period_ms, global_saved_values.idle_flags, global_saved_values.scan_deep_clock_idx};
-#ifdef SVAL_UPDATER
-            rpcout.update_light = updater_split_light();
-#endif
-            rpcout.debounce_mode = sval_debounce_sync_byte(sval_optical_debounce_on());
-            rpcout.pad_gestures  = sval_pad_sync_byte(pad_gestures);
-            rpcout.pad_tuning    = sval_pad_tune_sync_word(pad_tuning);
-            rpcout.pad_palm      = sval_pad_palm_sync_byte(pad_palm);
-            rpcout.pad_mode      = sval_pad_mode_sync_byte(pad_mode);
-            rpcout.link_quiet    = sval_link_quiet();
+            presence_rpc_t rpcout;
+            presence_fill(&rpcout, sval_link_quiet() ? SVAL_LINK_QUIET_SUSPEND : 0);
             presence_rsp_t rpcin = {0};
             if (transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin)) {
                 if (rpcin.magic[0] == SVAL_PRESENCE_RSP_MAGIC0 && rpcin.magic[1] == SVAL_PRESENCE_RSP_MAGIC1 && (rpcin.pointer.flags & SVAL_POINTER_REPORTED)) {

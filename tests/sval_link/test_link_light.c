@@ -22,10 +22,12 @@ static int checks, failures;
         }                                                           \
     } while (0)
 
+static uint32_t boot_ms = 1000;
+
 static void boot(bool master) {
-    armed = lost = cable_paired = cable_lost = sub_paired = sub_quiet = false;
-    lost_at = sub_last_ping = 0;
-    host_now_ms         = 1000;
+    armed = lost = cable_paired = cable_lost = sub_paired = sub_quiet = stop_wait = stop_down = false;
+    lost_at = sub_last_ping = stopped_at = 0;
+    host_now_ms         = boot_ms;
     host_master         = master;
     host_transport_up   = true; // QMK's check reads connected until 200 ms of failures
     host_other_connected = false;
@@ -83,6 +85,55 @@ static void test_master(void) {
     CHECK(!sval_link_light());
 }
 
+// A restart on purpose (shutdown_kb, a relayed restart of the other half).
+static void test_master_stop(void) {
+    // the other half restarts: the link goes down, no light; it comes back and arms again
+    boot(true);
+    host_other_connected = true;
+    run_ms(10);
+    sval_link_stopped();
+    host_transport_up    = false;
+    host_other_connected = false;
+    run_ms(2500);
+    CHECK(!sval_link_light());
+    host_transport_up    = true;
+    host_other_connected = true;
+    run_ms(10);
+    CHECK(armed);
+    host_transport_up    = false;
+    host_other_connected = false;
+    run_ms(1);
+    CHECK(sval_link_light()); // a real loss after that shows
+
+    // a restart that never happened: armed again after SVAL_LINK_REARM_MS
+    boot(true);
+    host_other_connected = true;
+    run_ms(10);
+    sval_link_stopped();
+    run_ms(SVAL_LINK_REARM_MS - 20);
+    CHECK(!armed);
+    run_ms(40);
+    CHECK(armed);
+    host_transport_up = false;
+    run_ms(1);
+    CHECK(sval_link_light());
+}
+
+static void test_sub_stop(void) {
+    // the half with USB restarts on purpose (its last ping said so): no light; its
+    // next ping pairs again, and a loss after that shows
+    boot(false);
+    sval_link_ping_seen(false);
+    run_ms(500);
+    sval_link_stopped();
+    run_ms(5000);
+    CHECK(!sval_link_light());
+    sval_link_ping_seen(false);
+    CHECK(armed);
+    run_ms(SVAL_LINK_SUB_LOST_MS + 1);
+    CHECK(sval_link_light());
+}
+
 // The half without USB: pings every 500 ms.
 static void test_sub(void) {
     boot(false);
@@ -113,8 +164,13 @@ static void test_sub(void) {
 }
 
 int main(void) {
-    test_master();
-    test_sub();
+    for (int pass = 0; pass < 2; pass++) {
+        boot_ms = pass ? UINT32_MAX - 3000 : 1000; // and once across the 32-bit timer wrap
+        test_master();
+        test_master_stop();
+        test_sub();
+        test_sub_stop();
+    }
     printf("link light: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
