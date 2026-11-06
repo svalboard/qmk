@@ -45,6 +45,12 @@ void velocity_scroll_dev_hold(bool on) {
     velocity_on = on;
 }
 
+void sval_dev_pad_scroll(bool mac, int16_t h, int16_t v) {
+    (void)mac;
+    (void)h;
+    (void)v;
+}
+
 // ------------------------------------------------------------- helpers
 
 static void raw_sample(uint8_t *raw, bool finger, uint16_t x, uint16_t y) {

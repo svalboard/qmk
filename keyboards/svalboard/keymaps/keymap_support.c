@@ -24,6 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "caps_word.h"
 #include "pointing_motion.h"
 #include "velocity_scroll.h"
+#include "pad_scroll.h"
 #include <string.h>
 #ifdef SVAL_NATIVE_PTP
 #    include "../azoteq/ptp.h"
@@ -98,6 +99,36 @@ bool process_detected_host_os_kb(os_variant_t os) {
 }
 
 axis_scale_t sniper_x = {1, 1, 0};
+
+// A pad's two-finger scroll (the chip's pixels in h and v) as wheel counts.
+static sval_pad_scroll_t pad_scroll_state[2];
+#ifdef SVAL_TOUCH_DEV
+static int16_t dev_inject_h, dev_inject_v;
+// Dev builds only (raw HID 0xFC op 0x42, action 3): force the Mac scaling on
+// or off, and add pad scroll pixels to the left pad's next report.
+void sval_dev_pad_scroll(bool mac, int16_t h, int16_t v) {
+    is_mac        = mac;
+    dev_inject_h += h;
+    dev_inject_v += v;
+}
+#endif
+
+static void pad_scroll_scale(report_mouse_t *left, report_mouse_t *right) {
+    report_mouse_t *hands[2] = {left, right};
+#ifdef SVAL_TOUCH_DEV
+    left->h += dev_inject_h;
+    left->v += dev_inject_v;
+    dev_inject_h = dev_inject_v = 0;
+#endif
+    for (uint8_t hand = 0; hand < 2; hand++) {
+        report_mouse_t *r = hands[hand];
+        if (r->h == 0 && r->v == 0) continue;
+        int16_t h, v;
+        sval_pad_scroll(&pad_scroll_state[hand], timer_read32(), r->h, r->v, is_mac, global_saved_values.axis_scroll_lock && !is_mac, &h, &v);
+        r->h = h;
+        r->v = v;
+    }
+}
 axis_scale_t sniper_y = {1, 1, 0};
 axis_scale_t sniper_h = {1, 1, 0};
 axis_scale_t sniper_v = {1, 1, 0};
@@ -432,6 +463,8 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
 #endif
     if (vs.active) return velocity_scroll_report(reportMouse1, reportMouse2);
 
+    pad_scroll_scale(&reportMouse1, &reportMouse2);
+
     if (any_sniper_active()) {
         reportMouse1.x = add_to_axis(&sniper_x, reportMouse1.x);
         reportMouse1.y = add_to_axis(&sniper_y, reportMouse1.y);
@@ -461,8 +494,12 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     sval_ptp_automouse();
 #endif
 
-    if (reportMouse1.x == 0 && reportMouse1.y == 0 && reportMouse2.x == 0 && reportMouse2.y == 0)
-        return pointing_device_combine_reports(reportMouse1, reportMouse2);
+    if (reportMouse1.x == 0 && reportMouse1.y == 0 && reportMouse2.x == 0 && reportMouse2.y == 0) {
+        // A pad's two-finger scroll, already in wheel counts (pad_scroll_scale).
+        ret_mouse = pointing_device_combine_reports(reportMouse1, reportMouse2);
+        if (global_saved_values.natural_scroll) ret_mouse.v = -ret_mouse.v;
+        return ret_mouse;
+    }
 
     // Track scroll input BEFORE division (h/v after division may be 0 due to accumulation)
     bool left_scrolling = hand_scrolling(0);
