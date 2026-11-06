@@ -127,7 +127,7 @@ static void pad_scroll_scale(report_mouse_t *left, report_mouse_t *right) {
         report_mouse_t *r = hands[hand];
         if (r->h == 0 && r->v == 0) continue;
         int16_t h, v;
-        sval_pad_scroll(&pad_scroll_state[hand], timer_read32(), r->h, r->v, is_mac, MAC_DIVISOR, global_saved_values.axis_scroll_lock, &h, &v);
+        sval_pad_scroll(&pad_scroll_state[hand], timer_read32(), r->h, r->v, is_mac, MAC_DIVISOR, global_saved_values.axis_scroll_lock && !is_mac, &h, &v);
         r->h = h;
         r->v = v;
     }
