@@ -2,7 +2,7 @@
 
 usage: python pad_scroll_rate.py --serial EXACT_SERIAL [--mac] [--mm 100]
 
-Injects pad scroll pixels (about 47.6 per mm of swipe on the pad) into the
+Injects pad scroll pixels (47.6 per mm across, 44.8 up and down of swipe on the pad) into the
 board over raw HID 0xFC op 0x42 action 3, forces the Mac scaling on (--mac) or
 off, logs the wheel reports Windows receives with tb_log.py, and prints the
 wheel counts, detents (120 counts) and mm of swipe per detent. Run it on the
@@ -21,7 +21,7 @@ import time
 
 from sval_raw import Board
 
-PX_PER_MM = 2048 / 43
+PX_PER_MM = {"v": 1792 / 40, "h": 2048 / 43}
 TB_LOG = r"C:\Users\morga\Svalboard\handoff\ptp-grab\tools\tb_log.py"
 CAPTURES = r"C:\Users\morga\Svalboard\handoff\ptp-grab\captures"
 
@@ -39,7 +39,7 @@ def main():
     p.add_argument("--mm", type=float, default=100.0, help="mm of swipe to inject")
     p.add_argument("--axis", choices=["v", "h"], default="v")
     a = p.parse_args()
-    px_total = round(a.mm * PX_PER_MM)
+    px_total = round(a.mm * PX_PER_MM[a.axis])
     step = 12  # pixels per 10 ms: about 25 mm/s, a gentle swipe
     seconds = px_total / step * 0.01 + 4
     board = Board(a.serial)

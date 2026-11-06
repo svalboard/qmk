@@ -14,13 +14,17 @@ static int32_t iabs(int32_t v) {
     return v < 0 ? -v : v;
 }
 
-void sval_pad_scroll(sval_pad_scroll_t *s, uint32_t now_ms, int32_t px_h, int32_t px_v, bool mac, uint8_t mac_divisor, bool lock, int16_t *h, int16_t *v) {
+void sval_pad_scroll(sval_pad_scroll_t *s, uint32_t now_ms, int32_t px_h, int32_t px_v, bool mac, bool lock, int16_t *h, int16_t *v) {
     *h = *v = 0;
     if (px_h == 0 && px_v == 0) return;
     if (s->lock != 0 || s->acc_h || s->acc_v) {
         if (now_ms - s->last_ms > SVAL_PAD_SCROLL_LOCK_REST_MS) s->lock = 0, s->acc_h = s->acc_v = 0;
     }
     s->last_ms = now_ms;
+    if (s->mac != mac) { // a part of a count belongs to the mode it came from
+        s->mac   = mac;
+        s->rem_h = s->rem_v = 0;
+    }
     if (lock && s->lock == 0) {
         s->acc_h += px_h;
         s->acc_v += px_v;
@@ -29,7 +33,7 @@ void sval_pad_scroll(sval_pad_scroll_t *s, uint32_t now_ms, int32_t px_h, int32_
     if (!lock) s->lock = 0;
     if (s->lock == 1) px_h = 0;
     if (s->lock == 2) px_v = 0;
-    int32_t den = mac ? (int32_t)SVAL_PAD_SCROLL_PX_PER_DETENT_MAC * (mac_divisor ? mac_divisor : 1) : SVAL_PAD_SCROLL_PX_PER_DETENT;
+    int32_t den = mac ? (int32_t)SVAL_PAD_SCROLL_PX_PER_DETENT_MAC * SVAL_PAD_SCROLL_MAC_DIV : SVAL_PAD_SCROLL_PX_PER_DETENT;
     *h          = counts(px_h, den, &s->rem_h);
     *v          = counts(px_v, den, &s->rem_v);
 }

@@ -71,10 +71,7 @@ axis_scale_t l_y = {1, SCROLL_DIVISOR, SCROLL_MULTIPLIER};
 axis_scale_t r_x = {1, SCROLL_DIVISOR, SCROLL_MULTIPLIER};
 axis_scale_t r_y = {1, SCROLL_DIVISOR, SCROLL_MULTIPLIER};
 
-// Hires wheel counts are 120 per detent and macOS reads each count as a line,
-// so Mac scroll counts are divided by 120. Vial had 120 (3cfbe907ca); the port
-// (d5c08ab292) set 12, ten times too fast.
-#define MAC_DIVISOR 120
+#define MAC_DIVISOR 12
 bool is_mac = false;
 bool process_detected_host_os_kb(os_variant_t os) {
     if (!process_detected_host_os_user(os)) {
@@ -127,7 +124,7 @@ static void pad_scroll_scale(report_mouse_t *left, report_mouse_t *right) {
         report_mouse_t *r = hands[hand];
         if (r->h == 0 && r->v == 0) continue;
         int16_t h, v;
-        sval_pad_scroll(&pad_scroll_state[hand], timer_read32(), r->h, r->v, is_mac, MAC_DIVISOR, global_saved_values.axis_scroll_lock && !is_mac, &h, &v);
+        sval_pad_scroll(&pad_scroll_state[hand], timer_read32(), r->h, r->v, is_mac, global_saved_values.axis_scroll_lock && !is_mac, &h, &v);
         r->h = h;
         r->v = v;
     }
