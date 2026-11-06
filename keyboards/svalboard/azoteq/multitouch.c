@@ -482,6 +482,7 @@ static void poll_remote(void) {
 // for keyless test boards; a hold ends unless repeated within 500 ms
 // (tools/multitouch/velocity_hold.py).
 void velocity_scroll_dev_hold(bool on); // keymaps/keymap_support.c
+void sval_dev_pad_scroll(bool mac, int16_t h, int16_t v);
 void sval_mt_command(uint8_t *data, uint8_t length) {
     uint8_t action = data[7], wanted = data[8], status = 0;
     if (action == 7) {
@@ -516,7 +517,12 @@ void sval_mt_command(uint8_t *data, uint8_t length) {
         }
         return;
     }
-    if (action == 2) {
+    if (action == 3) {
+        // Pad scroll test: data[8] 1 forces the Mac scaling (0 Windows),
+        // data[9..10] and data[11..12] add pad scroll pixels (int16, little
+        // endian) to the left pad's next report (tools/multitouch/pad_scroll_rate.py).
+        sval_dev_pad_scroll(wanted != 0, (int16_t)(data[9] | (data[10] << 8)), (int16_t)(data[11] | (data[12] << 8)));
+    } else if (action == 2) {
         velocity_scroll_dev_hold(wanted != 0);
     } else if (action == 1 && wanted != touch_owner) {
         if (wanted != SVAL_TOUCH_OWNER_MOUSE && wanted != SVAL_TOUCH_OWNER_NATIVE) {
@@ -532,7 +538,7 @@ void sval_mt_command(uint8_t *data, uint8_t length) {
     data[6] = 0xC2;
     data[7] = status;
     data[8] = touch_owner;
-    data[9] = 1 | 2 | 4 | 8 | 64; // bit 0 native touchpad built, bit 1 status v2 (pads, link), bit 2 v3 (lost fingers), bit 3 action 2, bit 6 action 7
+    data[9] = 1 | 2 | 4 | 8 | 16 | 64; // bit 4 action 3, bit 0 native touchpad built, bit 1 status v2 (pads, link), bit 2 v3 (lost fingers), bit 3 action 2, bit 6 action 7
     sval_ptp_status(data + 10);
     uint8_t *o = data + 10 + SVAL_PTP_STATUS_SIZE;
     put32(o, samples);
