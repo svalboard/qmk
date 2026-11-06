@@ -53,7 +53,7 @@ int main(void) {
     CHECK(h == 0 && v == 30);
     // Rest frees it: now horizontal wins.
     sval_pad_scroll(&l, 1000, 40, 5, false, 120, true, &h, &v);
-    CHECK(h == 40 && v == 5); // decided on the same report: both still pass
+    CHECK(h == 40 && v == 0); // horizontal wins on this report
     sval_pad_scroll(&l, 1010, 10, 4, false, 120, true, &h, &v);
     CHECK(h == 10 && v == 0);
     // No lock when off.
