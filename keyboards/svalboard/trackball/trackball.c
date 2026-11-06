@@ -78,7 +78,10 @@ uint8_t sval_pointer_retry_own(void) {
     trackball_spi_pins();
     uint8_t product = pmw33xx_read(0, REG_Product_ID), inverse = pmw33xx_read(0, REG_Inverse_Product_ID);
     uint8_t sensor  = sval_pmw33xx_classify(product, inverse);
-    if (sensor == SVAL_SENSOR_NO_RESPONSE) return SVAL_RETRY_NONE;
+    if (sensor == SVAL_SENSOR_NO_RESPONSE) {
+        pmw33xx_write(0, REG_Power_Up_Reset, 0x5a); // a stuck sensor answers after this; the next search reads it
+        return SVAL_RETRY_NONE;
+    }
 #    if defined(POINTING_DEVICE_IS_PMW3389)
     const uint8_t built_for = SVAL_SENSOR_PMW3389;
 #    else
@@ -111,7 +114,53 @@ uint8_t sval_pointer_own_bus(void) {
     return SVAL_BUS_SPI;
 }
 
+// A running sensor is looked at about once a second: its Product_ID and Inverse_Product_ID are
+// what the start read, and its Config2 is what we wrote (a power reset puts it back to 0).
+// A sensor that glitched with the half's power (stuck, reset or shut down) answers differently,
+// or not at all, and the start's cached answers would keep reporting "ok". Two bad looks in a
+// row clear the flag (Sval 0x2C and 0x18 then say so) and restart the driver: its reset, SROM
+// upload, CPI and rest mode (about 0.2 s). A start that fails is tried again after 1, 2, 4, 8,
+// 16, then every 30 s, so a sensor that is really gone costs little. Once it starts, the half
+// reports the sensor again.
+#define SENSOR_CHECK_MS 1000
+#define SENSOR_RECOVER_FIRST_MS 1000
+#define SENSOR_RECOVER_MAX_MS 30000
+static uint32_t sensor_check_at     = 0;
+static uint32_t sensor_recover_at   = 0;
+static uint16_t sensor_recover_wait = 0;
+
+static bool sensor_answers(void) {
+    uint8_t product = pmw33xx_read(0, REG_Product_ID), inverse = pmw33xx_read(0, REG_Inverse_Product_ID);
+    uint8_t config2 = pmw33xx_read(0, REG_Config2);
+    pmw33xx_write(0, REG_Config2, config2_shadow); // any write leaves burst mode; this one changes nothing
+    return product == sensor_product_id && inverse == sensor_inverse_product_id && config2 == config2_shadow;
+}
+
+// True when the sensor is running and can be read.
+static bool sensor_running(void) {
+    uint32_t now = timer_read32();
+    if (sensor_init_ok) {
+        if (timer_elapsed32(sensor_check_at) < SENSOR_CHECK_MS) return true;
+        sensor_check_at = now;
+        if (sensor_answers()) return true;
+        wait_us(500);
+        if (sensor_answers()) return true;
+        sensor_init_ok      = false;
+        sensor_recover_wait = 0;
+    }
+    if (timer_elapsed32(sensor_recover_at) < sensor_recover_wait) return false;
+    sensor_recover_at = now;
+    if (pointing_device_driver_init()) { // sets sensor_init_ok, CPI and rest mode again
+        sensor_recover_wait = 0;
+        sensor_check_at     = timer_read32();
+        return true;
+    }
+    sensor_recover_wait = sensor_recover_wait ? MIN(sensor_recover_wait * 2, SENSOR_RECOVER_MAX_MS) : SENSOR_RECOVER_FIRST_MS;
+    return false;
+}
+
 report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
+    if (!sensor_running()) return mouse_report;
     // Same as pmw33xx_get_report, but keep the Motion byte so the idle diagnostics can
     // report which run/rest mode the sensor is actually in.
     pmw33xx_report_t report = pmw33xx_read_burst(0);
