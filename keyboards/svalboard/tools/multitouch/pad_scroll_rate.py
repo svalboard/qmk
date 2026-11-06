@@ -65,8 +65,15 @@ def main():
     new = sorted(set(glob.glob(os.path.join(CAPTURES, "tblog-*.json"))) - before)
     rows = json.load(open(new[-1]))["rows"]
     flag = 0x0400 if a.axis == "v" else 0x0800
-    counts = sum(r[5] for r in rows if r[4] & flag)
-    reports = sum(1 for r in rows if r[4] & flag)
+    # Other Svalboards may be in use: the injected one reports about every
+    # 10 ms, so keep the device with the most wheel reports.
+    wheel = [r for r in rows if r[4] & flag]
+    names = [r[1] for r in wheel]
+    if names:
+        best = max(set(names), key=names.count)
+        wheel = [r for r in wheel if r[1] == best]
+    counts = sum(r[5] for r in wheel)
+    reports = len(wheel)
     # Windows: 120 counts are a detent. A Mac reads each count as a line.
     unit = abs(counts) if a.mac else abs(counts) / 120
     name = "lines (counts)" if a.mac else "detents"
