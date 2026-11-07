@@ -10,17 +10,23 @@
 #include "svalboard.h"
 
 #define SVAL_POINTING_AUTO
+#define SVAL_TRACKBALL_HOST_TEST
 #define POINTING_DEVICE_IS_PMW3389
 
 uint32_t sim_ms, sim_stall_us;
+int      sim_status;
 
 // The simulated chip.
-enum { HEALTHY, STUCK, RESET, GONE };
+enum { HEALTHY, STUCK, RESET, GONE, INITFAIL, BADID }; // INITFAIL: IDs fine, the start fails; BADID: IDs that are not a pair until reset
 static struct {
     int      state;
     uint8_t  srom_id, config2, lift;
     uint16_t cpi;
     int      writes, writes_not_burst, inits;
+    int      cs_pulses, resets;  // selects of the chip (a CS pulse) and 0x5A writes
+    bool     drop_cpi;           // CPI writes are ignored
+    int      glitch_raw;         // the next CPI register reads return 0
+    bool     glitching;
 } chip;
 #define DEFAULT_CPI 1600
 
@@ -34,22 +40,52 @@ static void chip_start(void) { // what a start (pmw33xx_init) leaves
 bool pmw33xx_init(uint8_t s) {
     (void)s;
     chip.inits++;
-    if (chip.state == GONE) return false;
+    if (chip.state == GONE || chip.state == INITFAIL || chip.state == BADID) return false;
     chip_start();
     return true;
+}
+bool pmw33xx_spi_start(uint8_t s) {
+    (void)s;
+    chip.cs_pulses++;
+    return true;
+}
+static uint16_t cpi_raw(uint16_t cpi) { // as pmw3360.c and pmw3389.c write it
+    uint16_t steps = CONSTRAIN(cpi / PMW33XX_CPI_STEP, PMW33XX_CPI_MIN / PMW33XX_CPI_STEP, PMW33XX_CPI_MAX / PMW33XX_CPI_STEP) - 1U;
+#ifdef SIM_PMW3360
+    return steps & 0xFF;
+#else
+    return steps;
+#endif
 }
 uint8_t pmw33xx_read(uint8_t s, uint8_t reg) {
     (void)s;
     if (chip.state == GONE || chip.state == STUCK) return 0x00;
+    if (chip.state == BADID) return reg == REG_Product_ID || reg == REG_Inverse_Product_ID ? 0x22 : 0x00;
     switch (reg) {
         case REG_Product_ID: return 0x47;
         case REG_Inverse_Product_ID: return 0xB8;
         case REG_Config2: return chip.config2;
 #ifdef SIM_PMW3360
-        case REG_Config1: return chip.cpi & 0xFF;
+        case REG_Config1:
+            if (chip.glitch_raw > 0) {
+                chip.glitch_raw--;
+                return 0;
+            }
+            return cpi_raw(chip.cpi);
 #else
-        case REG_Resolution_L: return chip.cpi & 0xFF;
-        case REG_Resolution_H: return chip.cpi >> 8;
+        case REG_Resolution_L:
+            if (chip.glitch_raw > 0) {
+                chip.glitch_raw--;
+                chip.glitching = true;
+                return 0;
+            }
+            return cpi_raw(chip.cpi) & 0xFF;
+        case REG_Resolution_H:
+            if (chip.glitching) {
+                chip.glitching = false;
+                return 0;
+            }
+            return cpi_raw(chip.cpi) >> 8;
 #endif
         case REG_SROM_ID: return 0; // reads 0 on a healthy sensor too
         case REG_Lift_Config: return chip.lift;
@@ -60,7 +96,8 @@ bool pmw33xx_write(uint8_t s, uint8_t reg, uint8_t v) {
     (void)s;
     chip.writes++;
     if (reg != REG_Motion_Burst) chip.writes_not_burst++;
-    if (chip.state == STUCK && reg == REG_Power_Up_Reset && v == 0x5A) chip.state = HEALTHY; // a stuck sensor answers after the reset (its settings need a start)
+    if (reg == REG_Power_Up_Reset && v == 0x5A) chip.resets++;
+    if ((chip.state == STUCK || chip.state == BADID) && reg == REG_Power_Up_Reset && v == 0x5A) chip.state = HEALTHY; // a stuck sensor answers after the reset (its settings need a start)
     if (reg == REG_Config2 && chip.state == HEALTHY) chip.config2 = v;
     if (reg == REG_Lift_Config && chip.state == HEALTHY) chip.lift = v;
     return true;
@@ -73,7 +110,7 @@ uint16_t pmw33xx_get_cpi(uint8_t s) {
     return chip.state == GONE || chip.state == STUCK ? 0 : chip.cpi;
 }
 void pmw33xx_set_cpi_all_sensors(uint16_t cpi) {
-    if (chip.state == HEALTHY) chip.cpi = cpi;
+    if (chip.state == HEALTHY && !chip.drop_cpi) chip.cpi = cpi;
 }
 pmw33xx_report_t pmw33xx_read_burst(uint8_t s) {
     (void)s;
@@ -115,12 +152,28 @@ static void run(uint32_t ms) {
         pointing_device_driver_get_report(r);
     }
 }
-static void fresh(uint8_t idle_flags, uint16_t cpi) {
+// A cold start with the chip in state, before anything has run.
+static void cold(int state) {
     memset(&chip, 0, sizeof(chip));
-    sensor_init_ok = sensor_was_running = sensor_gave_up = false;
+    sensor_init_ok = sensor_was_running = sensor_gave_up = sensor_saw_pair = false;
     sensor_recover_fails = 0;
     sensor_recover_wait = sensor_recover_at = sensor_check_at = 0;
     sensor_product_id = sensor_inverse_product_id = 0;
+    sim_ms = 1000; // uptime in ms, so the probes' 30 s waits count from boot
+    sim_stall_us = 0;
+    sim_status = POINTING_DEVICE_STATUS_UNKNOWN;
+    global_saved_values.idle_flags = SVAL_IDLE_POINTER_REST;
+    trackball_cached_cpi           = 0;
+    chip_start();
+    chip.state = state;
+}
+static void fresh(uint8_t idle_flags, uint16_t cpi) {
+    memset(&chip, 0, sizeof(chip));
+    sensor_init_ok = sensor_was_running = sensor_gave_up = sensor_saw_pair = false;
+    sensor_recover_fails = 0;
+    sensor_recover_wait = sensor_recover_at = sensor_check_at = 0;
+    sensor_product_id = sensor_inverse_product_id = 0;
+    sim_status = POINTING_DEVICE_STATUS_SUCCESS;
     sim_ms = 100000;
     sim_stall_us = 0;
     global_saved_values.idle_flags = idle_flags;
@@ -175,7 +228,7 @@ static void stuck_is_caught(void) {
 
 static void never_started_is_left_to_the_search(void) {
     fresh(0, 0);
-    sensor_init_ok = sensor_was_running = false; // this half never had a sensor
+    sensor_init_ok = sensor_was_running = sensor_saw_pair = false; // this half never had a sensor
     chip.state = GONE;
     run(120000);
     CHECK(chip.inits == 0);
@@ -225,6 +278,99 @@ static void gone_then_stuck_gets_reset_by_the_slow_probe(void) {
     CHECK(sensor_init_ok && !sensor_gave_up);
 }
 
+
+// What QMK does with the status (quantum/pointing_device/pointing_device.c): init sets it from the
+// driver's start, then pointing_device_init_kb(); pointing_device_task() returns before it reads
+// the other half's shared report unless the status is SUCCESS (POINTING_DEVICE_COMBINED).
+static void qmk_init(void) {
+    sim_status = pointing_device_driver_init() ? POINTING_DEVICE_STATUS_SUCCESS : POINTING_DEVICE_STATUS_INIT_FAILED;
+    pointing_device_init_kb();
+}
+static int16_t qmk_task_x(int16_t sub_x, bool *ran) {
+    *ran = pointing_device_get_status() == POINTING_DEVICE_STATUS_SUCCESS;
+    if (!*ran) return 0;
+    report_mouse_t own = pointing_device_driver_get_report((report_mouse_t){0});
+    return own.x + sub_x;
+}
+
+static void master_boot_failure_keeps_the_sub_flowing(void) {
+    cold(GONE); // the master's own sensor does not start
+    qmk_init();
+    bool ran;
+    CHECK(sim_status == POINTING_DEVICE_STATUS_SUCCESS);
+    CHECK(qmk_task_x(7, &ran) == 7 && ran); // the sub's report still reaches the host
+    run(10000);
+    CHECK(qmk_task_x(7, &ran) == 7 && ran);
+    sval_pointer_identity_t id = {0};
+    sval_pointer_identity(&id);
+    CHECK(!(id.flags & SVAL_POINTER_INIT_OK)); // 0x2C still says the own sensor is down
+    sval_idle_status_t st = {0};
+    sval_pointer_status(&st);
+    CHECK(st.sensor_present == 0);
+    // What QMK alone does, for the record: INIT_FAILED blocks the sub.
+    sim_status = POINTING_DEVICE_STATUS_INIT_FAILED;
+    CHECK(qmk_task_x(7, &ran) == 0 && !ran);
+}
+
+static void boot_ids_that_are_not_a_pair_get_the_reset(void) {
+    cold(BADID);
+    CHECK(!pointing_device_driver_init());
+    CHECK(chip.cs_pulses >= 1 && chip.resets == 1); // CS pulse and 0x5A
+    CHECK(chip.state == HEALTHY);
+}
+
+static void slow_probe_resets_ids_that_are_not_a_pair(void) {
+    fresh(SVAL_IDLE_POINTER_REST, 800);
+    chip.state = GONE;
+    run(60000);
+    CHECK(sensor_gave_up);
+    chip.state = BADID; // answers 0x22 0x22, not 0x00: not a pair either
+    int resets = chip.resets, pulses = chip.cs_pulses, inits = chip.inits;
+    run(31000);
+    CHECK(chip.resets == resets + 1 && chip.cs_pulses > pulses); // reset by the probe
+    CHECK(chip.inits == inits);                                  // and not started on a non-pair
+    run(31000);
+    CHECK(sensor_init_ok && !sensor_gave_up); // the next probe reads a pair and starts it
+}
+
+static void sensor_that_appears_late_on_a_half_that_had_one(void) {
+    cold(INITFAIL); // answers as a PMW3389 but the start fails
+    CHECK(!pointing_device_driver_init());
+    CHECK(sensor_saw_pair && !sensor_was_running);
+    chip.inits = 0;
+    run(28000);
+    CHECK(chip.inits == 0); // the searches cover the first 30 s
+    run(30000);             // to ~60 s: the probe looks every 30 s and the start still fails
+    CHECK(!sensor_init_ok);
+    CHECK(chip.inits <= 2);
+    chip.state = HEALTHY; // the sensor's start works at ~60 s
+    run(31000);
+    CHECK(sensor_init_ok && !sensor_gave_up);
+    // A half that never read a trackball is left to the searches.
+    cold(GONE);
+    CHECK(!pointing_device_driver_init());
+    chip.inits = 0;
+    chip.state = HEALTHY;
+    run(120000);
+    CHECK(chip.inits == 0 && !sensor_init_ok);
+}
+
+static void failed_cpi_write_causes_no_restart_loop(void) {
+    // A read that glitches right after the write must not become the health check's reference.
+    fresh(SVAL_IDLE_POINTER_REST, 800);
+    chip.glitch_raw = 1;
+    pointing_device_driver_set_cpi(1600);
+    CHECK(chip.cpi == 1600 && sensor_cpi_seen == cpi_raw(1600));
+    run(30000);
+    CHECK(chip.inits == 0 && sensor_init_ok);
+    // A write the sensor ignores leaves the reference at what it holds.
+    chip.drop_cpi = true;
+    pointing_device_driver_set_cpi(2400);
+    CHECK(sensor_cpi_seen == cpi_raw(1600) && trackball_cached_cpi == 2400);
+    run(30000);
+    CHECK(chip.inits == 0 && sensor_init_ok);
+}
+
 int main(void) {
     healthy_is_only_read();
     power_reset_is_caught();
@@ -232,6 +378,11 @@ int main(void) {
     never_started_is_left_to_the_search();
     gone_is_given_up_on();
     gone_then_stuck_gets_reset_by_the_slow_probe();
+    master_boot_failure_keeps_the_sub_flowing();
+    boot_ids_that_are_not_a_pair_get_the_reset();
+    slow_probe_resets_ids_that_are_not_a_pair();
+    sensor_that_appears_late_on_a_half_that_had_one();
+    failed_cpi_write_causes_no_restart_loop();
     if (fails) {
         printf("%d failed\n", fails);
         return 1;

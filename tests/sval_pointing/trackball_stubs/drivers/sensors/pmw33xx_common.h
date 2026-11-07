@@ -3,6 +3,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef SIM_PMW3360
+#    define PMW33XX_CPI_STEP 100
+#    define PMW33XX_CPI_MIN 100
+#    define PMW33XX_CPI_MAX 12000
+#else
+#    define PMW33XX_CPI_STEP 50
+#    define PMW33XX_CPI_MIN 50
+#    define PMW33XX_CPI_MAX 16000
+#endif
 #define REG_Product_ID 0x00
 #define REG_Motion 0x02
 #ifdef SIM_PMW3360
@@ -36,6 +45,7 @@ typedef struct {
 } pmw33xx_report_t;
 
 bool             pmw33xx_init(uint8_t sensor);
+bool             pmw33xx_spi_start(uint8_t sensor);
 uint8_t          pmw33xx_read(uint8_t sensor, uint8_t reg);
 bool             pmw33xx_write(uint8_t sensor, uint8_t reg, uint8_t val);
 uint16_t         pmw33xx_get_cpi(uint8_t sensor);

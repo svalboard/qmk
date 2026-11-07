@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#define CONSTRAIN(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define CONSTRAIN_HID_XY(v) (v)
 #define dprintf(...) printf(__VA_ARGS__)
