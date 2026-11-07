@@ -96,6 +96,7 @@ enum sval_command_id {
     // 0x34-0x37 are allocated by the pointing tools branch and 0x3A by the
     // board ID record branch.
     sval_cmd_main_board    = 0x38, // advertised by sval_flag3_main_board
+    sval_cmd_pointing_sensor = 0x39, // advertised by sval_flag4_pointing_sensor
     sval_cmd_typing_pause  = 0x3C, // advertised by sval_flag3_typing_pause
     sval_cmd_flicker_latch = 0x3D, // advertised by sval_flag3_flicker_latch
     sval_cmd_debug_console = 0x3E, // advertised by sval_flag4_debug_console
@@ -143,6 +144,7 @@ enum sval_feature_flags4 {
     sval_flag4_pad_palm      = (1 << 0), // VIA value 58: the touchpad palm rejection (native touchpad builds)
     sval_flag4_pad_mode      = (1 << 1), // VIA value 59: touchpad mode, Automatic or built-in gestures (native touchpad builds)
     sval_flag4_debug_console = (1 << 2), // 0x3E sets and reads QMK's debug flag (builds with the console)
+    sval_flag4_pointing_sensor = (1 << 3), // 0x39 reads each trackball sensor's SQUAL, raw data and shutter
 };
 
 // Status byte after the modifiers in the 0x16 reply (sval_flag2_modifier_state).
@@ -433,6 +435,11 @@ void sval_pointing_contacts_kb(uint8_t *out, uint8_t length);
 // fills out[0..length-1] (already zeroed); it clears no motion counts.
 void sval_pointing_touch_kb(uint8_t *out, uint8_t length);
 void sval_pointing_fingers_kb(uint8_t *out, uint8_t length);
+
+// POINTING_SENSOR (0x39): the keyboard handles data after [0xDF] [0x39] in place:
+// [op] [hand] [arg:2] -> the reply from byte 0 (keyboards/svalboard/docs/protocol.md,
+// "Pointing sensor"). Weak no-op in the module; byte 0 = 0 means no data.
+void sval_pointing_sensor_kb(uint8_t *data, uint8_t length);
 
 // SIDE (0x33, SVAL_EITHER_HAND builds only): the keyboard handles data after
 // [0xDF] [0x33] in place: [op] [status] [...].

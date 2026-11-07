@@ -16,6 +16,7 @@
 #include "keytest.h"
 #include "typing_pause.h"
 #include "flicker_latch.h"
+#include "squal.h"
 #include "debounce_sval.h"
 #include "pad_gestures.h"
 #include "sval.h"
@@ -600,10 +601,15 @@ uint8_t sval_get_feature_flags3_kb(void) {
 // touchpad palm rejection (VIA value 58).
 uint8_t sval_get_feature_flags4_kb(void) {
     uint8_t flags = sval_pad_palm_supported() ? sval_flag4_pad_palm | sval_flag4_pad_mode : 0;
+    flags |= sval_flag4_pointing_sensor; // 0x39 (squal.c)
 #ifdef CONSOLE_ENABLE
     flags |= sval_flag4_debug_console; // 0x3E (debug_console.c)
 #endif
     return flags;
+}
+
+void sval_pointing_sensor_kb(uint8_t *data, uint8_t length) {
+    sval_squal_command(data, length);
 }
 
 void sval_flicker_latch_kb(uint8_t *data, uint8_t length) {
@@ -839,6 +845,7 @@ static void scanlab_rpc_listener(uint8_t in_buflen, const void *in_data, uint8_t
     if (sval_perf_split_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return;
 #endif
     if (sval_flicker_split_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return; // Sval 0x3D for this half
+    if (sval_squal_split_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return;   // Sval 0x39 for this half
 #ifdef SVAL_LINK_TEST
     if (sval_link_test_rpc(in_buflen, (const uint8_t *)in_data, out_buflen, (uint8_t *)out_data)) return; // dev builds: link light tests
 #endif

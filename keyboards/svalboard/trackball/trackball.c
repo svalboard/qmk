@@ -6,6 +6,7 @@
 #include "pointing_device.h"
 #include "drivers/sensors/pmw33xx_common.h"
 #include "svalboard.h"
+#include "squal.h"
 
 static uint16_t trackball_cached_cpi = 0;
 
@@ -62,6 +63,11 @@ bool pointing_device_driver_init(void) {
     sensor_inverse_product_id = pmw33xx_read(0, REG_Inverse_Product_ID);
     sensor_init_ok            = ok;
     if (ok) {
+#if defined(POINTING_DEVICE_IS_PMW3389)
+        sval_squal_set_capable(true);
+#else
+        sval_squal_set_capable(false);
+#endif
         sval_pointer_rest_apply();
         // The start puts the sensor at its default CPI; the one asked for before stays.
         if (trackball_cached_cpi) pmw33xx_set_cpi_all_sensors(trackball_cached_cpi);
@@ -117,6 +123,17 @@ report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
     pmw33xx_report_t report = pmw33xx_read_burst(0);
     last_motion = report.motion.w;
     have_motion = true;
+    if (pmw33xx_burst_has_extra) { // a host is polling Sval 0x39 (squal.c)
+        sval_squal_read_t q = {
+            .motion  = report.motion.w,
+            .squal   = pmw33xx_burst_extra[0],
+            .rawsum  = pmw33xx_burst_extra[1],
+            .rawmax  = pmw33xx_burst_extra[2],
+            .rawmin  = pmw33xx_burst_extra[3],
+            .shutter = (uint16_t)((pmw33xx_burst_extra[4] << 8) | pmw33xx_burst_extra[5]),
+        };
+        sval_squal_record(&q);
+    }
     if (report.motion.b.is_lifted || !report.motion.b.is_motion) {
         return mouse_report;
     }
