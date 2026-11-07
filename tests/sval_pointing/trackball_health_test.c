@@ -9,7 +9,9 @@
 #include "drivers/sensors/pmw33xx_common.h"
 #include "svalboard.h"
 
-#define SVAL_POINTING_AUTO
+#ifndef SIM_NONAUTO
+#    define SVAL_POINTING_AUTO
+#endif
 #define SVAL_TRACKBALL_HOST_TEST
 #define POINTING_DEVICE_IS_PMW3389
 
@@ -156,6 +158,7 @@ static void run(uint32_t ms) {
 static void cold(int state) {
     memset(&chip, 0, sizeof(chip));
     sensor_init_ok = sensor_was_running = sensor_gave_up = sensor_saw_pair = false;
+    sensor_probe_starts = 0;
     sensor_recover_fails = 0;
     sensor_recover_wait = sensor_recover_at = sensor_check_at = 0;
     sensor_product_id = sensor_inverse_product_id = 0;
@@ -170,6 +173,7 @@ static void cold(int state) {
 static void fresh(uint8_t idle_flags, uint16_t cpi) {
     memset(&chip, 0, sizeof(chip));
     sensor_init_ok = sensor_was_running = sensor_gave_up = sensor_saw_pair = false;
+    sensor_probe_starts = 0;
     sensor_recover_fails = 0;
     sensor_recover_wait = sensor_recover_at = sensor_check_at = 0;
     sensor_product_id = sensor_inverse_product_id = 0;
@@ -355,6 +359,40 @@ static void sensor_that_appears_late_on_a_half_that_had_one(void) {
     CHECK(chip.inits == 0 && !sensor_init_ok);
 }
 
+static void probe_starts_are_capped(void) {
+    cold(INITFAIL);
+    CHECK(!pointing_device_driver_init());
+    chip.inits = 0;
+    run(400000); // a sensor that answers but never starts
+    CHECK(chip.inits == SENSOR_PROBE_START_TRIES);
+    chip.state = HEALTHY; // the cap holds: no more starts, however long it waits
+    run(100000);
+    CHECK(chip.inits == SENSOR_PROBE_START_TRIES && !sensor_init_ok);
+}
+
+#ifdef SIM_NONAUTO
+// The per-module build's search looks at the sensor itself (sval_pointer_retry_own).
+static void search_retry_resets_ids_that_are_not_a_pair(void) {
+    cold(BADID);
+    CHECK(sval_pointer_retry_own() == SVAL_RETRY_NONE);
+    CHECK(chip.cs_pulses >= 1 && chip.resets == 1 && !sensor_saw_pair);
+    chip.state = HEALTHY; // reset: the next search reads a pair and starts it
+    CHECK(sval_pointer_retry_own() == SVAL_RETRY_OK && sensor_init_ok && sensor_saw_pair);
+}
+
+static void search_and_probe_do_not_share_a_window(void) {
+    cold(INITFAIL);
+    run(29000); // no pair seen yet: nothing to probe
+    CHECK(chip.inits == 0);
+    CHECK(sval_pointer_retry_own() == SVAL_RETRY_FAILED); // the last search: a start, and the pair is noted
+    CHECK(sensor_saw_pair && chip.inits == 1);
+    run(29000); // the probe stays out for 30 s after the search
+    CHECK(chip.inits == 1);
+    run(2000);
+    CHECK(chip.inits == 2); // then it looks
+}
+#endif
+
 static void failed_cpi_write_causes_no_restart_loop(void) {
     // A read that glitches right after the write must not become the health check's reference.
     fresh(SVAL_IDLE_POINTER_REST, 800);
@@ -383,6 +421,11 @@ int main(void) {
     slow_probe_resets_ids_that_are_not_a_pair();
     sensor_that_appears_late_on_a_half_that_had_one();
     failed_cpi_write_causes_no_restart_loop();
+    probe_starts_are_capped();
+#ifdef SIM_NONAUTO
+    search_retry_resets_ids_that_are_not_a_pair();
+    search_and_probe_do_not_share_a_window();
+#endif
     if (fails) {
         printf("%d failed\n", fails);
         return 1;

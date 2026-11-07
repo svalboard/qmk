@@ -79,9 +79,20 @@ static void sensor_unstick(void) {
     pmw33xx_write(0, REG_Power_Up_Reset, 0x5a);
 }
 
-// Notes that this build's sensor answered as itself, for the slow probe below.
+// Full starts the slow probe may make for a sensor that never started (as #80's reprobe cap).
+#define SENSOR_PROBE_START_TRIES 4
+static uint8_t  sensor_probe_starts = 0;
+static uint32_t sensor_recover_at   = 0;
+
+// Notes that this build's sensor answered as itself, for the slow probe below. A search or a
+// start that sees it holds the probe off for 30 s from now, so a reset is never followed by an
+// ID read within the sensor's 50 ms, and a search's start and the probe's never land together.
+static void sensor_saw(void) {
+    sensor_saw_pair = true;
+    if (!sensor_was_running) sensor_recover_at = timer_read32();
+}
 static void sensor_note_ids(uint8_t product, uint8_t inverse) {
-    if (sval_pmw33xx_classify(product, inverse) == SVAL_BUILT_FOR) sensor_saw_pair = true;
+    if (sval_pmw33xx_classify(product, inverse) == SVAL_BUILT_FOR) sensor_saw();
 }
 
 // The SPI pins back on the SPI hardware. spi_init() sets them once, and the module search
@@ -147,7 +158,7 @@ uint8_t sval_pointer_retry_own(void) {
         return SVAL_RETRY_NONE;
     }
     const uint8_t built_for = SVAL_BUILT_FOR;
-    if (sensor == built_for) sensor_saw_pair = true;
+    if (sensor == built_for) sensor_saw();
     if (sensor != built_for) { // the other sensor, which needs the other .uf2: report it
         sensor_product_id         = product;
         sensor_inverse_product_id = inverse;
@@ -194,7 +205,6 @@ uint8_t sval_pointer_own_bus(void) {
 #define SENSOR_RECOVER_TRIES 5
 #define SENSOR_SLOW_PROBE_MS 30000
 static uint32_t sensor_check_at     = 0;
-static uint32_t sensor_recover_at   = 0;
 static uint16_t sensor_recover_wait = 0;
 
 static bool sensor_answers(void) {
@@ -223,7 +233,7 @@ static bool sensor_running(void) {
         // A half that read this build's IDs but never got the sensor running (its start failed):
         // the searches cover the first 30 s, then this probe keeps looking. A half that never
         // saw a trackball leaves it to the searches.
-        if (!sensor_saw_pair) return false;
+        if (!sensor_saw_pair || sensor_probe_starts >= SENSOR_PROBE_START_TRIES) return false;
         sensor_gave_up = true;
     }
     if (sensor_gave_up) {
@@ -234,6 +244,7 @@ static bool sensor_running(void) {
         if (sensor == SVAL_SENSOR_NO_RESPONSE) {
             sensor_unstick(); // not a pair: a stuck sensor answers after this; the next probe reads it
         } else if (sensor == SVAL_BUILT_FOR) {
+            if (!sensor_was_running) sensor_probe_starts++;
             if (pointing_device_driver_init()) { // clears sensor_gave_up and the failed-restart count
                 sensor_recover_wait = 0;
                 sensor_check_at     = timer_read32();

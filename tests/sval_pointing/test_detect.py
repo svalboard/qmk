@@ -112,6 +112,11 @@ class VelocityScrollTests(unittest.TestCase):
             subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-DSIM_PMW3360', '-I', str(HERE / 'trackball_stubs'), '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'trackball_health_test.c'), '-o', str(binary)], check=True)
             result = subprocess.run([str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # The per-module build, which has the search's own retry (sval_pointer_retry_own).
+            binary = Path(directory) / 'trackball_health_nonauto'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-DSIM_NONAUTO', '-I', str(HERE / 'trackball_stubs'), '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'trackball_health_test.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_keycodes_are_positions_30_and_31_in_both_keymaps(self):
         for keymap in ('sval', 'blank'):
