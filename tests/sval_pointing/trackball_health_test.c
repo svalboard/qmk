@@ -18,7 +18,7 @@ uint32_t sim_ms, sim_stall_us;
 enum { HEALTHY, STUCK, RESET, GONE };
 static struct {
     int      state;
-    uint8_t  srom_id, config2, config2_reset;
+    uint8_t  srom_id, config2, lift;
     uint16_t cpi;
     int      writes, writes_not_burst, inits;
 } chip;
@@ -27,6 +27,7 @@ static struct {
 static void chip_start(void) { // what a start (pmw33xx_init) leaves
     chip.state   = HEALTHY;
     chip.srom_id = 0x04;
+    chip.lift    = 0x00; // the start writes it; a reset leaves 0x02
     chip.config2 = 0x00;
     chip.cpi     = DEFAULT_CPI;
 }
@@ -44,7 +45,8 @@ uint8_t pmw33xx_read(uint8_t s, uint8_t reg) {
         case REG_Product_ID: return 0x47;
         case REG_Inverse_Product_ID: return 0xB8;
         case REG_Config2: return chip.config2;
-        case REG_SROM_ID: return chip.state == RESET ? 0 : chip.srom_id;
+        case REG_SROM_ID: return 0; // reads 0 on a healthy sensor too
+        case REG_Lift_Config: return chip.lift;
     }
     return 0;
 }
@@ -53,6 +55,7 @@ bool pmw33xx_write(uint8_t s, uint8_t reg, uint8_t v) {
     chip.writes++;
     if (reg != REG_Motion_Burst) chip.writes_not_burst++;
     if (reg == REG_Config2 && chip.state == HEALTHY) chip.config2 = v;
+    if (reg == REG_Lift_Config && chip.state == HEALTHY) chip.lift = v;
     return true;
 }
 uint16_t pmw33xx_get_cpi(uint8_t s) {
@@ -122,23 +125,25 @@ static void healthy_is_only_read(void) {
 static void power_reset_is_caught(void) {
     // Reset puts Config2 and the CPI at their defaults and drops the SROM.
     fresh(SVAL_IDLE_POINTER_REST, 800);
-    chip.state = RESET; // IDs still answer, SROM_ID reads 0
-    chip.config2 = 0x00;
+    chip.state = RESET; // IDs still answer
+    chip.config2 = 0x20; // reset value of Config2 is the rest-mode value
     chip.cpi     = DEFAULT_CPI;
+    chip.lift    = 0x02;
     run(2500);
     CHECK(chip.inits == 1);
     CHECK(sensor_init_ok);
-    CHECK(chip.state == HEALTHY && chip.srom_id == 0x04); // SROM back
+    CHECK(chip.state == HEALTHY && chip.lift == 0x00); // start settings back
     CHECK(chip.cpi == 800);                               // the asked CPI back
     CHECK(chip.config2 == 0x20);                          // rest mode back
 
-    // Reset to the same Config2 and the default CPI as what we run: only the SROM tells.
+    // Reset to the same Config2 and the default CPI as what we run: only Lift_Config tells.
     fresh(SVAL_IDLE_POINTER_REST, DEFAULT_CPI);
     chip.state   = RESET;
     chip.config2 = 0x20;
+    chip.lift    = 0x02;
     run(2500);
     CHECK(chip.inits == 1);
-    CHECK(chip.state == HEALTHY && chip.srom_id == 0x04);
+    CHECK(chip.state == HEALTHY && chip.lift == 0x00);
 }
 
 static void stuck_is_caught(void) {

@@ -12,6 +12,7 @@
 #define REG_Power_Up_Reset 0x3a
 #define REG_Inverse_Product_ID 0x3f
 #define REG_Motion_Burst 0x50
+#define REG_Lift_Config 0x63
 
 typedef struct {
     union {

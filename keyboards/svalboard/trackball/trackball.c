@@ -41,7 +41,7 @@ static uint8_t sensor_inverse_product_id = 0;
 static bool    sensor_init_ok            = false;
 // What a start leaves in the sensor, for the health check (below).
 static uint16_t sensor_cpi_seen = 0;     // the CPI it reports after the start or the last CPI change
-static uint8_t  sensor_srom_id  = 0;     // SROM_ID after the start; 0 = this sensor doesn't report one, not checked
+static uint8_t  sensor_lift_seen = 0;    // Lift_Config after the start (the start sets it; a power reset puts it back to 0x02)
 static bool     sensor_was_running = false; // a start has succeeded in this session: only then is a loss recovered here
 
 // The SPI pins back on the SPI hardware. spi_init() sets them once, and the module search
@@ -77,7 +77,7 @@ bool pointing_device_driver_init(void) {
         // The start puts the sensor at its default CPI; the one asked for before stays.
         if (trackball_cached_cpi) pmw33xx_set_cpi_all_sensors(trackball_cached_cpi);
         sensor_cpi_seen    = pmw33xx_get_cpi(0);
-        sensor_srom_id     = pmw33xx_read(0, REG_SROM_ID);
+        sensor_lift_seen   = pmw33xx_read(0, REG_Lift_Config);
         sensor_was_running = true;
         sensor_recover_fails = 0;
         sensor_gave_up       = false;
@@ -132,10 +132,10 @@ uint8_t sval_pointer_own_bus(void) {
 
 // A running sensor is looked at about once a second, reads only (no writes, so the rest-mode
 // step-down is never disturbed): Product_ID and Inverse_Product_ID as the start read them,
-// Config2 as the start wrote it, the CPI it reported after the start, and SROM_ID when the
-// sensor reports one. A sensor that glitched with the half's power answers differently or not
-// at all: stuck (0x00 or 0xFF), or reset (IDs fine, but no SROM, default CPI and Config2, which
-// only a start sets), and the start's cached answers would keep reporting "ok". Two bad looks
+// Config2 as the start wrote it, the CPI it reported after the start, and Lift_Config as the
+// start left it (SROM_ID reads 0 on a healthy sensor here, so it can't tell). A sensor that glitched with the half's power answers differently or not
+// at all: stuck (0x00 or 0xFF), or reset (IDs fine, but no SROM, and Config2, CPI and Lift_Config at
+// their defaults, which only a start sets), and the start's cached answers would keep reporting "ok". Two bad looks
 // in a row clear the flag (Sval 0x2C and 0x18 then say so) and restart the driver: its reset,
 // SROM upload, CPI and rest mode (about 0.2 s). A restart that fails is tried again after
 // 1, 2, 4 and 8 s; after SENSOR_RECOVER_TRIES failed restarts it gives up (a later search or a
@@ -152,7 +152,7 @@ static uint16_t sensor_recover_wait = 0;
 static bool sensor_answers(void) {
     bool ok = pmw33xx_read(0, REG_Product_ID) == sensor_product_id && pmw33xx_read(0, REG_Inverse_Product_ID) == sensor_inverse_product_id &&
               pmw33xx_read(0, REG_Config2) == config2_shadow && pmw33xx_get_cpi(0) == sensor_cpi_seen &&
-              (sensor_srom_id == 0 || pmw33xx_read(0, REG_SROM_ID) == sensor_srom_id);
+              pmw33xx_read(0, REG_Lift_Config) == sensor_lift_seen;
     pmw33xx_write(0, REG_Motion_Burst, 0x00); // burst mode again, as the read path enters it; no setting changes
     return ok;
 }
