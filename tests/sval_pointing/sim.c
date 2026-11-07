@@ -10,7 +10,8 @@ static uint8_t host[32];      // what the probe does with each pin
 static bool    dev_low[32];   // a device pulling the line low
 static int     dev_drive[32]; // -1 none, else a device driving the line (push-pull, MISO)
 static long    now_us;
-static int     cs_driven_low; // times GP25 was driven low (only the SPI probe may)
+static int     cs_driven_low;    // times GP25 was driven low (only the SPI probe may)
+static int     other_bus_driven; // times a PS/2 or I2C line was driven (not by the SPI probe)
 
 static bool line(pin_t p) {
     if (host[p] == H_LOW || dev_low[p]) return false;
@@ -194,10 +195,21 @@ static struct {
     int      rxbits;
     uint8_t  queue[4];
     int      qlen, qpos;
+    long     post_until; // in its self-test after a reset on GP25 (driven low): answers nothing
+    int      resets;
 } ps2;
 #define HALF 40
+// A TrackPoint's self-test after a reset, as modelled here: shorter than
+// SVAL_DETECT_TP_SETTLE_MS, as a PS/2 device's 500-750 ms basic assurance test is.
+#define TP_POST_US 750000
 static void ps2_tick(void) {
     if (!ps2.on) return;
+    if (now_us < ps2.post_until) {
+        ps2.state           = P_IDLE;
+        ps2.clock_low_since = -1;
+        dev_low[GP23] = dev_low[GP24] = false;
+        return;
+    }
     bool host_clock_low = host[GP24] == H_LOW;
     switch (ps2.state) {
         case P_IDLE:
@@ -288,11 +300,19 @@ void pin_release(pin_t p) {
     update();
 }
 void pin_low(pin_t p) {
+    if (p == GP24 || p == GP23 || p == GP16 || p == GP17) other_bus_driven++;
     host[p] = H_LOW;
     update();
 }
 void pin_drive(pin_t p, bool high) {
-    if (p == GP25 && !high) cs_driven_low++;
+    if (p == GP25 && !high) {
+        cs_driven_low++;
+        if (ps2.on) {
+            ps2.resets++;
+            ps2.post_until = now_us + TP_POST_US;
+        }
+    }
+    if (p == GP24 || p == GP23 || p == GP16 || p == GP17) other_bus_driven++;
     host[p] = high ? H_HIGH : H_LOW;
     update();
 }
@@ -322,6 +342,7 @@ static void reset(void) {
     ps2.clock_low_since = -1;
     now_us              = 0;
     cs_driven_low       = 0;
+    other_bus_driven    = 0;
     azo.sda = azo.scl = true;
     azo.window        = true;
 }
@@ -346,9 +367,11 @@ static void nothing_attached(void) {
     sval_probe_result_t r = sval_probe_pointers(0);
     CHECK(r.detected == SVAL_SENSOR_NO_RESPONSE);
     all_released();
-    CHECK(now_us < 150000); // a bare connector costs little
+    // A bare connector costs little beyond the wait for a TrackPoint the SPI probe may have reset.
+    CHECK(now_us < SVAL_DETECT_TP_SETTLE_MS * 1000L + 150000);
 }
 
+// The trackball goes first: one that answers ends the search before PS/2 or I2C is touched.
 static void trackball(uint8_t pid, uint8_t inv, uint8_t expected) {
     reset();
     pmw.on                = true;
@@ -356,6 +379,7 @@ static void trackball(uint8_t pid, uint8_t inv, uint8_t expected) {
     pmw.inv               = inv;
     sval_probe_result_t r = sval_probe_pointers(0);
     CHECK(r.detected == expected && r.id0 == pid && r.id1 == inv);
+    CHECK(other_bus_driven == 0 && now_us < 2000);
     all_released();
 }
 
@@ -365,8 +389,8 @@ static void trackpad(void) {
     azo.product           = 40; // IQS550
     sval_probe_result_t r = sval_probe_pointers(0);
     CHECK(r.detected == SVAL_SENSOR_AZOTEQ && r.id0 == 0 && r.id1 == 40);
-    CHECK(azo.ended);          // closed the comms window
-    CHECK(cs_driven_low == 0); // never reached the SPI probe
+    CHECK(azo.ended); // closed the comms window
+    CHECK(cs_driven_low > 0); // the trackball was looked for first
     all_released();
 }
 
@@ -381,16 +405,28 @@ static void trackpad_low_power(long cycle_us) {
     sval_probe_result_t r = sval_probe_pointers(0);
     CHECK(r.detected == SVAL_SENSOR_AZOTEQ && r.id0 == 0 && r.id1 == 40);
     CHECK(azo.ended);
-    CHECK(cs_driven_low == 0);
     all_released();
 }
 
+// The SPI probe pulses GP25, a TrackPoint's reset: PS/2 asks only after its self-test.
 static void trackpoint(void) {
     reset();
     ps2.on                = true;
     sval_probe_result_t r = sval_probe_pointers(0);
     CHECK(r.detected == SVAL_SENSOR_TRACKPOINT && r.id0 == 0x00);
-    CHECK(cs_driven_low == 0); // its reset line (GP25) was never driven
+    CHECK(ps2.resets > 0); // the trackball was looked for first
+    all_released();
+}
+
+// Without that wait, a TrackPoint the SPI probe reset doesn't answer: the wait is needed.
+static void trackpoint_needs_the_wait(void) {
+    reset();
+    ps2.on = true;
+    CHECK(sval_probe_bus(SVAL_BUS_SPI, false).detected == SVAL_SENSOR_NO_RESPONSE);
+    CHECK(ps2.resets > 0);
+    CHECK(sval_probe_bus(SVAL_BUS_PS2, true).detected == SVAL_SENSOR_NO_RESPONSE);
+    det_wait_us(SVAL_DETECT_TP_SETTLE_MS * 1000u);
+    CHECK(sval_probe_bus(SVAL_BUS_PS2, true).detected == SVAL_SENSOR_TRACKPOINT);
     all_released();
 }
 
@@ -507,6 +543,7 @@ int main(void) {
     trackpad_low_power(160000);
     trackpad_low_power(250000);
     trackpoint();
+    trackpoint_needs_the_wait();
     skips_own_bus();
     stuck_sensor();
     classify();

@@ -298,10 +298,14 @@ static void release_all(bool i2c) {
 sval_probe_result_t sval_probe_pointers(uint8_t skip_buses) {
     sval_probe_result_t found = {.detected = SVAL_SENSOR_NO_RESPONSE};
     bool                i2c   = !(skip_buses & SVAL_BUS_I2C);
-    release_all(i2c); // GP25 pulled up: trackball deselected, TrackPoint reset left as its module sets it
+    release_all(i2c); // GP25 pulled up: trackball deselected
+    if (!(skip_buses & SVAL_BUS_SPI)) {
+        if (probe_spi(&found)) goto done;
+        release_all(i2c);
+        if (!(skip_buses & SVAL_BUS_PS2)) det_wait_us(SVAL_DETECT_TP_SETTLE_MS * 1000u); // a TrackPoint the chip select reset
+    }
     if (!(skip_buses & SVAL_BUS_PS2) && probe_ps2(&found, 2)) goto done;
-    if (i2c && probe_i2c(&found)) goto done;
-    if (!(skip_buses & SVAL_BUS_SPI)) probe_spi(&found);
+    if (i2c) probe_i2c(&found);
 done:
     release_all(i2c);
     return found;
