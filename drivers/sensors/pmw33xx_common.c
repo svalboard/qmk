@@ -197,8 +197,21 @@ bool pmw33xx_init(uint8_t sensor) {
     return true;
 }
 
+// Svalboard: true while a host reads the sensor's quality registers (Sval 0x39);
+// the burst then carries the six bytes after the motion data. The strong
+// definition is keyboards/svalboard/squal.c.
+__attribute__((weak)) bool sval_squal_wanted(void) {
+    return false;
+}
+
+// SQUAL, Raw_Data_Sum, Maximum_Raw_data, Minimum_Raw_data, Shutter_Upper and
+// Shutter_Lower from the last burst that carried them; zero otherwise.
+uint8_t pmw33xx_burst_extra[6];
+bool    pmw33xx_burst_has_extra;
+
 pmw33xx_report_t pmw33xx_read_burst(uint8_t sensor) {
     pmw33xx_report_t report = {0};
+    pmw33xx_burst_has_extra = false;
 
     if (sensor >= pmw33xx_number_of_sensors) {
         return report;
@@ -220,6 +233,13 @@ pmw33xx_report_t pmw33xx_read_burst(uint8_t sensor) {
     wait_us(35); // waits for tSRAD_MOTBR
 
     spi_receive((uint8_t *)&report, sizeof(report));
+    if (sval_squal_wanted()) {
+        // Burst order (datasheet): Motion, Observation, Delta_X L/H, Delta_Y L/H, SQUAL,
+        // Raw_Data_Sum, Maximum_Raw_data, Minimum_Raw_data, Shutter_Upper, Shutter_Lower.
+        // The burst stays open while CS is low, so these ride on the same transaction.
+        spi_receive(pmw33xx_burst_extra, sizeof(pmw33xx_burst_extra));
+        pmw33xx_burst_has_extra = true;
+    }
 
     // panic recovery, sometimes burst mode works weird.
     if (report.motion.w & 0b111) {
