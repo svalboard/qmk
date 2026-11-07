@@ -78,7 +78,8 @@ int main(void) {
                 sval_pad_scroll(&x, (uint32_t)i, 0, px, mac, false, dpis[d], &h, &v);
                 total += v;
             }
-            long want = (mac ? 1000L : 1000L * 120) * dpis[d] / 800;
+            long eff  = dpis[d] < 1138 ? dpis[d] : 1138; // the vertical cap
+            long want = (mac ? 1000L : 1000L * 120) * eff / 800;
             CHECK(total == want);
         }
     }
@@ -91,6 +92,13 @@ int main(void) {
         sum += h;
     }
     CHECK(sum == 1200);
+    // Across caps at 1210: 1600 and 3200 count what 1210 does.
+    static const uint16_t hd[] = {1210, 1600, 3200};
+    for (int k = 0; k < 3; k++) {
+        sval_pad_scroll_t q = {0};
+        sval_pad_scroll(&q, 0, 1700, 0, false, false, hd[k], &h, &v);
+        CHECK(h == 1700 * 120 * 1210 / (170 * 800));
+    }
     // DPI 0 means the 800 anchor.
     sval_pad_scroll_t z = {0};
     sval_pad_scroll(&z, 0, 0, 170, false, false, 0, &h, &v);

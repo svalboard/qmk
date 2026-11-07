@@ -38,6 +38,8 @@ void sval_pad_scroll(sval_pad_scroll_t *s, uint32_t now_ms, int32_t px_h, int32_
     if (s->lock == 2) px_v = 0;
     // The px-per-detent distances hold at the reference DPI; the DPI scales them.
     int64_t den = (mac ? (int64_t)SVAL_PAD_SCROLL_PX_PER_DETENT_MAC * SVAL_PAD_SCROLL_MAC_DIV : SVAL_PAD_SCROLL_PX_PER_DETENT) * SVAL_PAD_SCROLL_REF_DPI;
-    *h          = counts(px_h, den, dpi, &s->rem_h);
-    *v          = counts(px_v, den, dpi, &s->rem_v);
+    // The pointer stops gaining at the pad's full resolution (azoteq.c, azo_num),
+    // so scroll does too: the DPI means the same for both, as on x4.5.
+    *h          = counts(px_h, den, dpi < SVAL_PAD_SCROLL_CAP_DPI_X ? dpi : SVAL_PAD_SCROLL_CAP_DPI_X, &s->rem_h);
+    *v          = counts(px_v, den, dpi < SVAL_PAD_SCROLL_CAP_DPI_Y ? dpi : SVAL_PAD_SCROLL_CAP_DPI_Y, &s->rem_v);
 }
