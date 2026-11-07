@@ -45,6 +45,12 @@ uint8_t pmw33xx_read(uint8_t s, uint8_t reg) {
         case REG_Product_ID: return 0x47;
         case REG_Inverse_Product_ID: return 0xB8;
         case REG_Config2: return chip.config2;
+#ifdef SIM_PMW3360
+        case REG_Config1: return chip.cpi & 0xFF;
+#else
+        case REG_Resolution_L: return chip.cpi & 0xFF;
+        case REG_Resolution_H: return chip.cpi >> 8;
+#endif
         case REG_SROM_ID: return 0; // reads 0 on a healthy sensor too
         case REG_Lift_Config: return chip.lift;
     }
@@ -54,12 +60,16 @@ bool pmw33xx_write(uint8_t s, uint8_t reg, uint8_t v) {
     (void)s;
     chip.writes++;
     if (reg != REG_Motion_Burst) chip.writes_not_burst++;
+    if (chip.state == STUCK && reg == REG_Power_Up_Reset && v == 0x5A) chip.state = HEALTHY; // a stuck sensor answers after the reset (its settings need a start)
     if (reg == REG_Config2 && chip.state == HEALTHY) chip.config2 = v;
     if (reg == REG_Lift_Config && chip.state == HEALTHY) chip.lift = v;
     return true;
 }
 uint16_t pmw33xx_get_cpi(uint8_t s) {
     (void)s;
+#ifdef SIM_PMW3360
+    chip.writes_not_burst++; // the PMW3360 driver writes Config1 back after reading it
+#endif
     return chip.state == GONE || chip.state == STUCK ? 0 : chip.cpi;
 }
 void pmw33xx_set_cpi_all_sensors(uint16_t cpi) {
@@ -178,13 +188,31 @@ static void gone_is_given_up_on(void) {
     sval_pointer_identity_t id = {0};
     sval_pointer_identity(&id);
     CHECK(id.product_id == 0x47 && id.inverse_product_id == 0xB8 && !(id.flags & SVAL_POINTER_INIT_OK));
-    // The sensor comes back and a later search starts the driver: checks and recovery resume.
+    // The status says it is down, with no mode.
+    sval_idle_status_t st = {0};
+    sval_pointer_status(&st);
+    CHECK(st.sensor_present == 0 && st.sensor_mode == 0);
+    // The sensor comes back with nothing else running (searches stopped after 30 s): the slow probe
+    // finds it within 30 s and starts it, and the checks and the backoff begin again.
     chip.state = HEALTHY;
-    CHECK(pointing_device_driver_init());
-    CHECK(!sensor_gave_up && sensor_recover_fails == 0);
-    chip.state = STUCK;
+    run(31000);
+    CHECK(sensor_init_ok && !sensor_gave_up && sensor_recover_fails == 0);
+    CHECK(chip.inits == inits + 1);
+    sval_pointer_status(&st);
+    CHECK(st.sensor_present == 1);
+    chip.state = STUCK; // and a loss after that is recovered again, from the first try
     run(2500);
     CHECK(sensor_init_ok && chip.state == HEALTHY);
+}
+
+static void gone_then_stuck_gets_reset_by_the_slow_probe(void) {
+    fresh(SVAL_IDLE_POINTER_REST, 800);
+    chip.state = GONE;
+    run(60000);
+    CHECK(sensor_gave_up);
+    chip.state = STUCK; // answers 0x00 until the power-up reset: the first probe sends it, the next starts it
+    run(65000);
+    CHECK(sensor_init_ok && !sensor_gave_up);
 }
 
 int main(void) {
@@ -193,6 +221,7 @@ int main(void) {
     stuck_is_caught();
     never_started_is_left_to_the_search();
     gone_is_given_up_on();
+    gone_then_stuck_gets_reset_by_the_slow_probe();
     if (fails) {
         printf("%d failed\n", fails);
         return 1;

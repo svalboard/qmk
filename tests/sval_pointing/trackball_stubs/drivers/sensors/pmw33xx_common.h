@@ -5,8 +5,12 @@
 
 #define REG_Product_ID 0x00
 #define REG_Motion 0x02
+#ifdef SIM_PMW3360
+#define REG_Config1 0x0f
+#else
 #define REG_Resolution_L 0x0e
 #define REG_Resolution_H 0x0f
+#endif
 #define REG_Config2 0x10
 #define REG_SROM_ID 0x2a
 #define REG_Power_Up_Reset 0x3a
