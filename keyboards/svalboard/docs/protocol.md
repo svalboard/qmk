@@ -274,7 +274,7 @@ Combos can have names on the board, like layers, tap dances and macros: one name
 - Each half folds its reads into bins of 50 ms (`SVAL_SQUAL_BIN_MS`) and keeps the newest 256 (12.8 s) in RAM. The half with USB answers for both hands; for the other hand it asks the other half over the split link (`KEYBOARD_SYNC_B`, first byte `0xB9`) only when it is asked. Nothing is pushed over the link. A reply for the other hand is empty (format `0`) while the link is down or paused for an update.
 - The first request after a pause (a new session) starts with an empty ring. Bins are numbered with a 16-bit sequence that keeps counting and wraps.
 - Request: `DF 39 <op> <hand> <arg lo> <arg hi>`. `hand`: `0` left, `1` right. `op` `0` SAMPLES: `arg` is the cursor, the sequence number of the next bin wanted. `op` `1` STATS: `arg` is how many of the newest bins to cover (`0` = all held).
-- Response: `DF 39` then 25 bytes (offsets from the first of them). Byte `0` is the format: `1`, or `0` for no data (the rest zero). Byte `1` is flags for both ops: bit 0 a PMW sensor runs on that hand, bit 1 it is a PMW3389, bit 2 lost (SAMPLES: the cursor was older than the ring, or ahead of it; the reply starts at the oldest bin), bit 3 more bins wait (SAMPLES), bit 4 the hand is the right one, bits 5-6 the op answered, bit 7 the newest bin saw the ball lifted.
+- Response: `DF 39` then 25 bytes (offsets from the first of them). Byte `0` is the format: `1`, or `0` for no data (the rest zero). Byte `1` is flags for both ops: bit 0 a PMW sensor runs on that hand, bit 1 it is a PMW3389, bit 2 lost (SAMPLES: the cursor was older than the ring, or ahead of it; the reply starts at the oldest bin), bit 3 more bins wait (SAMPLES), bit 4 the hand is the right one, bits 5-6 the op answered, bit 7 the newest bin saw the ball lifted (STATS only; SAMPLES carries it per bin).
 
 SAMPLES (`op 0`), at most two bins per reply:
 
@@ -298,9 +298,9 @@ Each bin:
 | 4 | 1 | Maximum_Raw_data, highest read |
 | 5 | 1 | Minimum_Raw_data, lowest read |
 | 6 | 2 | shutter, mean, uint16 little-endian |
-| 7 | 1 | bits 0-6: reads with motion (127 at most); bit 7: the ball was lifted at some read |
+| 8 | 1 | bits 0-6: reads with motion (127 at most); bit 7: the ball was lifted at some read |
 
-A host keeps its own cursor: ask with the head it was last given, and ask again at once while bit 3 is set. A bin is a mean of about 50 reads at the sensor's 1 kHz read rate, so a panel that polls every 100 ms asks about once per two bins.
+A host keeps its own cursor: ask with the head it was last given, and ask again at once while bit 3 is set. A bin is a mean of every read the pointing task made in its 50 ms (about 15 to 30 on current builds; STATS bytes 22-23 give the measured rate), so a panel that polls every 100 ms asks about once per two bins.
 
 STATS (`op 1`), over the newest bins:
 
