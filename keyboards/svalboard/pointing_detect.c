@@ -41,8 +41,11 @@ uint8_t sval_pmw33xx_classify(uint8_t product_id, uint8_t inverse_product_id) {
     // Datasheet signatures, as in drivers/sensors/pmw3360.c and pmw3389.c.
     if (product_id == 0x42 && inverse_product_id == 0xBD) return SVAL_SENSOR_PMW3360;
     if (product_id == 0x47 && inverse_product_id == 0xB8) return SVAL_SENSOR_PMW3389;
-    if ((product_id == 0x00 && inverse_product_id == 0x00) || (product_id == 0xFF && inverse_product_id == 0xFF)) return SVAL_SENSOR_NO_RESPONSE;
-    return SVAL_SENSOR_UNKNOWN;
+    // Another device's answer is a pair too: Inverse_Product_ID is Product_ID inverted. Anything
+    // else is no answer: a silent bus (0x00 or 0xFF) or a sensor left in a bad state, as one
+    // that answered 0x22 0x22 until it was powered off. The search resets it and looks again.
+    if ((uint8_t)~product_id == inverse_product_id && product_id != 0x00 && product_id != 0xFF) return SVAL_SENSOR_UNKNOWN;
+    return SVAL_SENSOR_NO_RESPONSE;
 }
 
 /* ---- PS/2 (TrackPoint), after drivers/ps2/ps2_busywait.c ---- */
@@ -266,10 +269,15 @@ static bool probe_spi(sval_probe_result_t *found) {
     uint8_t product = spi_read_register(0x00), inverse = spi_read_register(0x3F);
     uint8_t sensor = sval_pmw33xx_classify(product, inverse);
     if (sensor == SVAL_SENSOR_NO_RESPONSE) {
-        // A sensor that stays powered through an MCU restart can be stuck, answering 0x00 or 0xFF
-        // until it is reset (the CS pulse only resets its serial port). Send the power-up reset
-        // (0x5A to Power_Up_Reset) now; the sensor is ready by the next search, which reads it
-        // again. Nothing here waits for the sensor's 50 ms.
+        // A sensor that stays powered through an MCU restart or a power dip can be stuck,
+        // answering 0x00, 0xFF or IDs that aren't a pair until it is reset (the CS pulse only
+        // resets its serial port). The power-up sequence: CS high then low, and 0x5A to
+        // Power_Up_Reset. The next search reads it again at least SVAL_REPROBE_GAP_MS later
+        // (pointer_reprobe.h), after the sensor's 50 ms; nothing here waits for it.
+        pin_drive(SVAL_DETECT_SPI_CS, false);
+        det_wait_us(10);
+        pin_drive(SVAL_DETECT_SPI_CS, true);
+        det_wait_us(10);
         spi_write_register(0x3A, 0x5A);
         pin_release(SVAL_DETECT_SPI_CS);
         return false;

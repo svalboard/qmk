@@ -80,6 +80,8 @@ pmw33xx_report_t pmw33xx_read_burst(uint8_t s) {
     pmw33xx_report_t r = {0};
     return r;
 }
+uint8_t pmw33xx_burst_extra[6];
+bool    pmw33xx_burst_has_extra;
 uint8_t sval_pmw33xx_classify(uint8_t p, uint8_t i) {
     if (p == 0x47 && i == 0xB8) return SVAL_SENSOR_PMW3389;
     if (p == 0x42 && i == 0xBD) return SVAL_SENSOR_PMW3360;
@@ -87,6 +89,14 @@ uint8_t sval_pmw33xx_classify(uint8_t p, uint8_t i) {
 }
 
 #include "../../keyboards/svalboard/trackball/trackball.c"
+
+// squal.c: the quality stream (Sval 0x39), not under test here.
+void sval_squal_set_capable(bool is_pmw3389) {
+    (void)is_pmw3389;
+}
+void sval_squal_record(const sval_squal_read_t *q) {
+    (void)q;
+}
 
 static int fails;
 #define CHECK(c)                                                    \

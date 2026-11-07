@@ -106,7 +106,7 @@ enum sval_pointer_sensor {
     SVAL_SENSOR_PMW3360     = 1, // trackball
     SVAL_SENSOR_PMW3389     = 2, // trackball
     SVAL_SENSOR_NO_RESPONSE = 3, // detected only: no module answered
-    SVAL_SENSOR_UNKNOWN     = 4, // detected only: the trackball bus answered with another Product_ID
+    SVAL_SENSOR_UNKNOWN     = 4, // detected only: the trackball bus answered with another device's ID pair (Inverse_Product_ID = ~Product_ID)
     SVAL_SENSOR_AZOTEQ      = 5, // trackpad (IQS5xx)
     SVAL_SENSOR_TRACKPOINT  = 6, // TrackPoint (PS/2)
 };

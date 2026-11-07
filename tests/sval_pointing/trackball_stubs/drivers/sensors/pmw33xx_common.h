@@ -41,3 +41,7 @@ bool             pmw33xx_write(uint8_t sensor, uint8_t reg, uint8_t val);
 uint16_t         pmw33xx_get_cpi(uint8_t sensor);
 void             pmw33xx_set_cpi_all_sensors(uint16_t cpi);
 pmw33xx_report_t pmw33xx_read_burst(uint8_t sensor);
+
+// The burst read's quality bytes (SQUAL and the rest), when a host polls Sval 0x39.
+extern uint8_t pmw33xx_burst_extra[6];
+extern bool    pmw33xx_burst_has_extra;
