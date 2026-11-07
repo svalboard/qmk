@@ -375,9 +375,9 @@ report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
         pad_sched_done(&azo_sched, start, end, ok, !retried, slots, AZOTEQ_IQS5XX_REPORT_RATE * 1000u);
         mouse_report.x = azo_scale(mouse_report.x, azo_num_x, AZO_FULL_X, &azo_rem[0]);
         mouse_report.y = azo_scale(mouse_report.y, azo_num_y, AZO_FULL_Y, &azo_rem[1]);
-        // A two-finger scroll stays in the pad's full-resolution pixels,
-        // whatever the DPI: keymaps/keymap_support.c turns it into wheel
-        // counts (pad_scroll.h).
+        // A two-finger scroll stays in the pad's full-resolution pixels:
+        // keymaps/keymap_support.c turns it into wheel counts and applies
+        // the DPI there (pad_scroll.h), so the DPI drives scroll speed too.
     }
 #else
     if (timer_elapsed(azo_timer) >= AZO_MS) {
