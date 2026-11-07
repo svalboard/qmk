@@ -8,6 +8,8 @@
 #include "svalboard.h"
 
 static uint16_t trackball_cached_cpi = 0;
+static uint8_t  sensor_recover_fails = 0; // restarts that failed since the sensor was last running
+static bool     sensor_gave_up       = false;
 
 // The sensor's own rest modes: Run -> Rest1 (3 mA, 1 ms frames) after ~0.5 s without motion,
 // Rest2 (100 ms frames) after ~10 s, Rest3 (500 ms frames) after ~10 min; motion wakes it on its
@@ -37,6 +39,10 @@ void sval_pointer_status(sval_idle_status_t *st) {
 static uint8_t sensor_product_id         = 0;
 static uint8_t sensor_inverse_product_id = 0;
 static bool    sensor_init_ok            = false;
+// What a start leaves in the sensor, for the health check (below).
+static uint16_t sensor_cpi_seen = 0;     // the CPI it reports after the start or the last CPI change
+static uint8_t  sensor_srom_id  = 0;     // SROM_ID after the start; 0 = this sensor doesn't report one, not checked
+static bool     sensor_was_running = false; // a start has succeeded in this session: only then is a loss recovered here
 
 // The SPI pins back on the SPI hardware. spi_init() sets them once, and the module search
 // (pointing_detect.c) takes them as plain GPIO, so a start after a search sets them again.
@@ -58,13 +64,23 @@ static void trackball_spi_pins(void) {
 bool pointing_device_driver_init(void) {
     trackball_spi_pins();
     bool ok = pmw33xx_init(0);
-    sensor_product_id         = pmw33xx_read(0, REG_Product_ID);
-    sensor_inverse_product_id = pmw33xx_read(0, REG_Inverse_Product_ID);
-    sensor_init_ok            = ok;
+    uint8_t product = pmw33xx_read(0, REG_Product_ID), inverse = pmw33xx_read(0, REG_Inverse_Product_ID);
+    // A restart of a sensor that was running keeps the last good IDs while it answers nothing,
+    // so a host doesn't see "no trackball" for a moment (the INIT_OK flag reports the loss).
+    if (!sensor_was_running || sval_pmw33xx_classify(product, inverse) != SVAL_SENSOR_NO_RESPONSE) {
+        sensor_product_id         = product;
+        sensor_inverse_product_id = inverse;
+    }
+    sensor_init_ok = ok;
     if (ok) {
         sval_pointer_rest_apply();
         // The start puts the sensor at its default CPI; the one asked for before stays.
         if (trackball_cached_cpi) pmw33xx_set_cpi_all_sensors(trackball_cached_cpi);
+        sensor_cpi_seen    = pmw33xx_get_cpi(0);
+        sensor_srom_id     = pmw33xx_read(0, REG_SROM_ID);
+        sensor_was_running = true;
+        sensor_recover_fails = 0;
+        sensor_gave_up       = false;
     }
     return ok;
 }
@@ -114,26 +130,31 @@ uint8_t sval_pointer_own_bus(void) {
     return SVAL_BUS_SPI;
 }
 
-// A running sensor is looked at about once a second: its Product_ID and Inverse_Product_ID are
-// what the start read, and its Config2 is what we wrote (a power reset puts it back to 0).
-// A sensor that glitched with the half's power (stuck, reset or shut down) answers differently,
-// or not at all, and the start's cached answers would keep reporting "ok". Two bad looks in a
-// row clear the flag (Sval 0x2C and 0x18 then say so) and restart the driver: its reset, SROM
-// upload, CPI and rest mode (about 0.2 s). A start that fails is tried again after 1, 2, 4, 8,
-// 16, then every 30 s, so a sensor that is really gone costs little. Once it starts, the half
-// reports the sensor again.
+// A running sensor is looked at about once a second, reads only (no writes, so the rest-mode
+// step-down is never disturbed): Product_ID and Inverse_Product_ID as the start read them,
+// Config2 as the start wrote it, the CPI it reported after the start, and SROM_ID when the
+// sensor reports one. A sensor that glitched with the half's power answers differently or not
+// at all: stuck (0x00 or 0xFF), or reset (IDs fine, but no SROM, default CPI and Config2, which
+// only a start sets), and the start's cached answers would keep reporting "ok". Two bad looks
+// in a row clear the flag (Sval 0x2C and 0x18 then say so) and restart the driver: its reset,
+// SROM upload, CPI and rest mode (about 0.2 s). A restart that fails is tried again after
+// 1, 2, 4 and 8 s; after SENSOR_RECOVER_TRIES failed restarts it gives up (a later search or a
+// re-plug can bring the sensor back), so a sensor that is really gone costs about 1 s of
+// stall in total, once. Only a half whose sensor has started before recovers here: a half
+// that never had a sensor leaves that to the search.
 #define SENSOR_CHECK_MS 1000
 #define SENSOR_RECOVER_FIRST_MS 1000
-#define SENSOR_RECOVER_MAX_MS 30000
+#define SENSOR_RECOVER_TRIES 5
 static uint32_t sensor_check_at     = 0;
 static uint32_t sensor_recover_at   = 0;
 static uint16_t sensor_recover_wait = 0;
 
 static bool sensor_answers(void) {
-    uint8_t product = pmw33xx_read(0, REG_Product_ID), inverse = pmw33xx_read(0, REG_Inverse_Product_ID);
-    uint8_t config2 = pmw33xx_read(0, REG_Config2);
-    pmw33xx_write(0, REG_Config2, config2_shadow); // any write leaves burst mode; this one changes nothing
-    return product == sensor_product_id && inverse == sensor_inverse_product_id && config2 == config2_shadow;
+    bool ok = pmw33xx_read(0, REG_Product_ID) == sensor_product_id && pmw33xx_read(0, REG_Inverse_Product_ID) == sensor_inverse_product_id &&
+              pmw33xx_read(0, REG_Config2) == config2_shadow && pmw33xx_get_cpi(0) == sensor_cpi_seen &&
+              (sensor_srom_id == 0 || pmw33xx_read(0, REG_SROM_ID) == sensor_srom_id);
+    pmw33xx_write(0, REG_Motion_Burst, 0x00); // burst mode again, as the read path enters it; no setting changes
+    return ok;
 }
 
 // True when the sensor is running and can be read.
@@ -147,7 +168,9 @@ static bool sensor_running(void) {
         if (sensor_answers()) return true;
         sensor_init_ok      = false;
         sensor_recover_wait = 0;
+        dprintf("PMW33XX: failed its health check, restarting\n");
     }
+    if (!sensor_was_running || sensor_gave_up) return false;
     if (timer_elapsed32(sensor_recover_at) < sensor_recover_wait) return false;
     sensor_recover_at = now;
     if (pointing_device_driver_init()) { // sets sensor_init_ok, CPI and rest mode again
@@ -155,7 +178,12 @@ static bool sensor_running(void) {
         sensor_check_at     = timer_read32();
         return true;
     }
-    sensor_recover_wait = sensor_recover_wait ? MIN(sensor_recover_wait * 2, SENSOR_RECOVER_MAX_MS) : SENSOR_RECOVER_FIRST_MS;
+    if (++sensor_recover_fails >= SENSOR_RECOVER_TRIES) {
+        sensor_gave_up = true;
+        dprintf("PMW33XX: gave up after %u failed restarts\n", sensor_recover_fails);
+        return false;
+    }
+    sensor_recover_wait = sensor_recover_wait ? sensor_recover_wait * 2 : SENSOR_RECOVER_FIRST_MS;
     return false;
 }
 
@@ -188,5 +216,6 @@ void pointing_device_driver_set_cpi(uint16_t cpi) {
     if (cpi != trackball_cached_cpi) {
         pmw33xx_set_cpi_all_sensors(cpi);
         trackball_cached_cpi = cpi;
+        if (sensor_init_ok) sensor_cpi_seen = pmw33xx_get_cpi(0);
     }
 }

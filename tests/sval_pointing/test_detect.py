@@ -99,6 +99,15 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('OK', result.stdout)
 
+    def test_trackball_health_check(self):
+        # trackball.c: the once-a-second check is read-only, catches a reset or stuck sensor,
+        # leaves a half that never had a sensor to the search, and gives up on a gone one.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'trackball_health'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(HERE / 'trackball_stubs'), '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'trackball_health_test.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_keycodes_are_positions_30_and_31_in_both_keymaps(self):
         for keymap in ('sval', 'blank'):
             data = json.loads((ROOT / f'keyboards/svalboard/keymaps/{keymap}/sval.json').read_text())
