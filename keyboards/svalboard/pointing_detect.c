@@ -237,6 +237,23 @@ static uint8_t spi_read_register(uint8_t reg) {
     return value;
 }
 
+// A write: bit 7 of the address set, then the value.
+static void spi_write_register(uint8_t reg, uint8_t value) {
+    uint16_t word = ((uint16_t)(reg | 0x80) << 8) | value;
+    pin_drive(SVAL_DETECT_SPI_CS, false);
+    det_wait_us(1);
+    for (uint8_t i = 0; i < 16; i++) {
+        pin_drive(SVAL_DETECT_SPI_SCK, false);
+        pin_drive(SVAL_DETECT_SPI_MOSI, word & (0x8000 >> i));
+        det_wait_us(1);
+        pin_drive(SVAL_DETECT_SPI_SCK, true);
+        det_wait_us(1);
+    }
+    det_wait_us(35); // tSCLK-NCS for a write
+    pin_drive(SVAL_DETECT_SPI_CS, true);
+    det_wait_us(145); // tSWW
+}
+
 static bool probe_spi(sval_probe_result_t *found) {
     pin_drive(SVAL_DETECT_SPI_SCK, true);
     pin_drive(SVAL_DETECT_SPI_CS, true);
@@ -247,9 +264,17 @@ static bool probe_spi(sval_probe_result_t *found) {
     pin_drive(SVAL_DETECT_SPI_CS, true);
     det_wait_us(10);
     uint8_t product = spi_read_register(0x00), inverse = spi_read_register(0x3F);
-    pin_release(SVAL_DETECT_SPI_CS);
     uint8_t sensor = sval_pmw33xx_classify(product, inverse);
-    if (sensor == SVAL_SENSOR_NO_RESPONSE) return false;
+    if (sensor == SVAL_SENSOR_NO_RESPONSE) {
+        // A sensor that stays powered through an MCU restart can be stuck, answering 0x00 or 0xFF
+        // until it is reset (the CS pulse only resets its serial port). Send the power-up reset
+        // (0x5A to Power_Up_Reset) now; the sensor is ready by the next search, which reads it
+        // again. Nothing here waits for the sensor's 50 ms.
+        spi_write_register(0x3A, 0x5A);
+        pin_release(SVAL_DETECT_SPI_CS);
+        return false;
+    }
+    pin_release(SVAL_DETECT_SPI_CS);
     found->detected = sensor;
     found->id0      = product;
     found->id1      = inverse;
@@ -273,10 +298,14 @@ static void release_all(bool i2c) {
 sval_probe_result_t sval_probe_pointers(uint8_t skip_buses) {
     sval_probe_result_t found = {.detected = SVAL_SENSOR_NO_RESPONSE};
     bool                i2c   = !(skip_buses & SVAL_BUS_I2C);
-    release_all(i2c); // GP25 pulled up: trackball deselected, TrackPoint reset left as its module sets it
+    release_all(i2c); // GP25 pulled up: trackball deselected
+    if (!(skip_buses & SVAL_BUS_SPI)) {
+        if (probe_spi(&found)) goto done;
+        release_all(i2c);
+        if (!(skip_buses & SVAL_BUS_PS2)) det_wait_us(SVAL_DETECT_TP_SETTLE_MS * 1000u); // a TrackPoint the chip select reset
+    }
     if (!(skip_buses & SVAL_BUS_PS2) && probe_ps2(&found, 2)) goto done;
-    if (i2c && probe_i2c(&found)) goto done;
-    if (!(skip_buses & SVAL_BUS_SPI)) probe_spi(&found);
+    if (i2c) probe_i2c(&found);
 done:
     release_all(i2c);
     return found;

@@ -7,10 +7,13 @@
 //
 // The probes toggle the pins directly instead of using the chip's SPI/I2C/PIO
 // peripherals, so they work in any build. They take each pin from whatever peripheral
-// had it, so only run them when the build's own module didn't answer. GP25 is the
-// trackball's chip select and the TrackPoint's (undriven) reset line: it's only pulled
-// up, never driven, until the last probe (SPI), which runs only when PS/2 and I2C found
-// nothing.
+// had it, so only run them when the build's own module didn't answer.
+//
+// The trackball goes first: most boards have one, a PMW3389. A trackball that answers
+// ends the search before any other bus is touched. GP25 is the trackball's chip select
+// and the TrackPoint's reset line, so the SPI probe also pulses a TrackPoint's reset:
+// PS/2 is asked only SVAL_DETECT_TP_SETTLE_MS later, once a TrackPoint that it reset
+// has finished its self-test. I2C goes last.
 #pragma once
 
 #include <stdbool.h>
@@ -21,13 +24,21 @@
 #define SVAL_BUS_I2C 0x02
 #define SVAL_BUS_SPI 0x04
 
+// After the SPI probe, how long a TrackPoint gets to finish the self-test the probe's chip
+// select may have started, before PS/2 asks for it. The boot search's 1.5 s
+// (pointer_reprobe.h) already allows for a TrackPoint's power-on self-test; this is that
+// test again after a reset.
+#define SVAL_DETECT_TP_SETTLE_MS 1000u
+
 typedef struct {
     uint8_t detected; // enum sval_pointer_sensor: a module, or SVAL_SENSOR_NO_RESPONSE
     uint8_t id0;      // PMW Product_ID, Azoteq product number high byte, or PS/2 device ID
     uint8_t id1;      // PMW Inverse_Product_ID, or Azoteq product number low byte
 } sval_probe_result_t;
 
-// Probes the buses not in skip_buses, PS/2 then I2C then SPI, stopping at the first module.
+// Probes the buses not in skip_buses, SPI then PS/2 then I2C, stopping at the first module.
+// Blocking, with the SVAL_DETECT_TP_SETTLE_MS wait after a silent SPI probe: the host test
+// uses it; the firmware's searches go one bus per main loop pass (pointer_reprobe.c).
 // The I2C pins are left alone when I2C is skipped, so a hardware I2C driver keeps them.
 sval_probe_result_t sval_probe_pointers(uint8_t skip_buses);
 

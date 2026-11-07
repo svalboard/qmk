@@ -966,7 +966,7 @@ uint8_t sval_pad_hands(void) {
 // 0xFF until that half has settled: not checked yet, or its own module missing before the
 // boot probe of the other buses has run (the other half's probe runs on its own clock, so
 // allow it a second more).
-#    define SVAL_POINTER_SETTLED_MS (SVAL_POINTER_PROBE_AFTER_MS + 1000)
+#    define SVAL_POINTER_SETTLED_MS (SVAL_POINTER_PROBE_AFTER_MS + SVAL_DETECT_TP_SETTLE_MS + 1000)
 uint8_t sval_fragment_detect(uint8_t instance_idx) {
     bool left;
     if (instance_idx == SVAL_FRAGMENT_IDX_LEFT_POINTING)
