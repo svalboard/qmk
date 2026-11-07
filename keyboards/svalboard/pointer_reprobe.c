@@ -2,7 +2,9 @@
 // while nothing works (pointer_reprobe.h: when, and when it stops). Each search first asks
 // the build's own module again (sval_pointer_retry_own), then probes the other buses one per main loop pass,
 // so no pass waits on more than one bus; whatever answers is started with
-// sval_pointer_select. Never runs while the half's module works.
+// sval_pointer_select. Never runs while the half's module works. The trackball (SPI) goes
+// first, since most boards have one; PS/2 waits SVAL_DETECT_TP_SETTLE_MS after it
+// (pointing_detect.h), and I2C comes last.
 #ifdef SVAL_REPROBE_HOST_TEST
 #    include "reprobe_test_hal.h" // tests/sval_pointing: identity, clock and bus mocks
 #else
@@ -18,6 +20,8 @@ static uint16_t            pointer_searches     = 0;
 static uint8_t             pointer_search_step  = 0;     // 0 between searches, else the next bus (1-3)
 static uint8_t             pointer_search_skip  = 0;     // buses this search leaves out
 static uint8_t             pointer_init_fails   = 0;     // modules found that didn't start
+static uint32_t            pointer_spi_at       = 0;     // when this search's SPI probe ran
+static bool                pointer_spi_probed   = false; // this search has driven the SPI pins
 static sval_probe_result_t pointer_probe        = {.detected = SVAL_SENSOR_NO_RESPONSE};
 
 static bool sval_pointer_search_wanted(void) {
@@ -34,7 +38,7 @@ static void sval_pointer_search_end(void) {
 }
 
 void sval_pointer_probe_task(void) {
-    static const uint8_t buses[] = {SVAL_BUS_PS2, SVAL_BUS_I2C, SVAL_BUS_SPI}; // the TrackPoint's reset (GP25) is driven last
+    static const uint8_t buses[] = {SVAL_BUS_SPI, SVAL_BUS_PS2, SVAL_BUS_I2C}; // the trackball first
     if (pointer_search_done) return;
     if (pointer_search_step == 0) {
         uint32_t due = sval_reprobe_due_ms(pointer_searches);
@@ -68,11 +72,23 @@ void sval_pointer_probe_task(void) {
         }
         pointer_search_skip = sval_pointer_own_bus();
         pointer_search_step = 1;
+        pointer_spi_probed  = false;
         return; // the buses start on the next pass
     }
     while (pointer_search_step <= sizeof(buses) && (pointer_search_skip & buses[pointer_search_step - 1])) pointer_search_step++;
     sval_probe_result_t found = {.detected = SVAL_SENSOR_NO_RESPONSE};
-    if (pointer_search_step <= sizeof(buses)) found = sval_probe_bus(buses[pointer_search_step++ - 1], pointer_searches == 0);
+    if (pointer_search_step <= sizeof(buses)) {
+        uint8_t bus = buses[pointer_search_step - 1];
+        // The SPI probe drives GP25, which is also a TrackPoint's reset line: a TrackPoint
+        // that it reset gets time to finish its self-test before PS/2 asks for it.
+        if (bus == SVAL_BUS_PS2 && pointer_spi_probed && timer_elapsed32(pointer_spi_at) < SVAL_DETECT_TP_SETTLE_MS) return;
+        pointer_search_step++;
+        found = sval_probe_bus(bus, pointer_searches == 0);
+        if (bus == SVAL_BUS_SPI) {
+            pointer_spi_probed = true;
+            pointer_spi_at     = timer_read32();
+        }
+    }
     if (found.detected == SVAL_SENSOR_NO_RESPONSE && pointer_search_step <= sizeof(buses)) return; // the next bus on the next pass
     pointer_probe = found;
     if (found.detected != SVAL_SENSOR_NO_RESPONSE) {
