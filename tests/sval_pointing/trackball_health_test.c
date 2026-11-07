@@ -139,7 +139,7 @@ static void power_reset_is_caught(void) {
     chip.config2 = 0x20; // reset value of Config2 is the rest-mode value
     chip.cpi     = DEFAULT_CPI;
     chip.lift    = 0x02;
-    run(2500);
+    run(4500);
     CHECK(chip.inits == 1);
     CHECK(sensor_init_ok);
     CHECK(chip.state == HEALTHY && chip.lift == 0x00); // start settings back
@@ -151,7 +151,7 @@ static void power_reset_is_caught(void) {
     chip.state   = RESET;
     chip.config2 = 0x20;
     chip.lift    = 0x02;
-    run(2500);
+    run(4500);
     CHECK(chip.inits == 1);
     CHECK(chip.state == HEALTHY && chip.lift == 0x00);
 }
@@ -159,7 +159,7 @@ static void power_reset_is_caught(void) {
 static void stuck_is_caught(void) {
     fresh(SVAL_IDLE_POINTER_REST, 800);
     chip.state = STUCK;
-    run(2500);
+    run(4500);
     CHECK(chip.inits == 1 && sensor_init_ok && chip.state == HEALTHY);
 }
 
@@ -201,7 +201,7 @@ static void gone_is_given_up_on(void) {
     sval_pointer_status(&st);
     CHECK(st.sensor_present == 1);
     chip.state = STUCK; // and a loss after that is recovered again, from the first try
-    run(2500);
+    run(4500);
     CHECK(sensor_init_ok && chip.state == HEALTHY);
 }
 

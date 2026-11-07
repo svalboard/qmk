@@ -143,7 +143,7 @@ uint8_t sval_pointer_own_bus(void) {
     return SVAL_BUS_SPI;
 }
 
-// A running sensor is looked at about once a second, reads only (no writes, so the rest-mode
+// A running sensor is looked at about every 3 s, reads only (no writes, so the rest-mode
 // step-down is never disturbed): Product_ID and Inverse_Product_ID as the start read them,
 // Config2 as the start wrote it, the CPI it reported after the start, and Lift_Config as the
 // start left it (SROM_ID reads 0 on a healthy sensor here, so it can't tell). A sensor that glitched with the half's power answers differently or not
@@ -157,7 +157,7 @@ uint8_t sval_pointer_own_bus(void) {
 // the checks and the backoff begin again. A sensor that is really gone costs about 1 s of
 // stall in total, then 0.4 ms every 30 s. Only a half whose sensor has started before recovers here: a half
 // that never had a sensor leaves that to the search.
-#define SENSOR_CHECK_MS 1000
+#define SENSOR_CHECK_MS 3000
 #define SENSOR_RECOVER_FIRST_MS 1000
 #define SENSOR_RECOVER_TRIES 5
 #define SENSOR_SLOW_PROBE_MS 30000
