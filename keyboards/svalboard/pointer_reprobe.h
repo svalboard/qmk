@@ -26,6 +26,11 @@
 #define SVAL_REPROBE_LAST_MS 30000u
 #define SVAL_REPROBE_SEARCHES 5u
 #define SVAL_REPROBE_INIT_TRIES 4u
+// The least time from the end of one search to the start of the next. A half that boots late
+// (the half without USB waits ~2 s for USB, then listens for the link) is past several due
+// times at once; a search that just reset a stuck trackball (pointing_detect.c) leaves it its
+// 50 ms before the next one reads it.
+#define SVAL_REPROBE_GAP_MS 60u
 
 // When search number attempt (0 is the first) is due, in ms after boot; 0 once there are no
 // more searches.

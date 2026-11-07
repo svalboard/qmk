@@ -314,9 +314,31 @@ static void found_only_changes_at_search_end(void) {
     CHECK(sval_pointer_found()->detected == SVAL_SENSOR_NO_RESPONSE);
 }
 
+// A half that boots late (the half without USB: ~2 s for USB, then the link) is past the 1.5
+// and 3 s due times at once. The second search still waits SVAL_REPROBE_GAP_MS after the
+// first, so a trackball the first one reset (pointing_detect.c) has had its 50 ms.
+static void late_boot_searches_spaced(void) {
+    auto_half();
+    now_ms = 3500;
+    run_until(3503); // the first search: its start, then PS/2 and SPI, one per pass
+    CHECK(probe_calls == 2 && retry_calls == 0);
+    run_until(3502 + SVAL_REPROBE_GAP_MS);
+    CHECK(retry_calls == 0);
+    run_until(3600);
+    CHECK(retry_calls == 1 && search_times[0] >= 3502 + SVAL_REPROBE_GAP_MS);
+    run_until(10UL * 60 * 1000);
+    CHECK(searches == 4); // 6, 12 and 30 s as before
+    CHECK(search_times[1] == 6000 && search_times[2] == 12000 && search_times[3] == 30000);
+}
+
+// The gap never delays a search that's due on time.
+static void gap_keeps_the_schedule(void) {
+    CHECK(SVAL_REPROBE_GAP_MS < 1500);
+}
+
 typedef void (*test_fn)(void);
 int main(void) {
-    static const test_fn tests[] = {schedule, nothing_attached_stops_at_30_s, never_probes_after_30_s, plugged_in_at_10_s_starts_at_12_s, plugged_in_at_20_s_starts_at_30_s, plugged_in_at_40_s_never_found, own_module_retry_starts_it, working_module_never_probed, working_auto_trackpad_never_probed, failing_start_gives_up, failing_own_start_gives_up, per_module_build_stops_on_other_module, per_module_build_stops_on_wrong_sensor, retry_own_stop_ends_it, found_only_changes_at_search_end};
+    static const test_fn tests[] = {schedule, nothing_attached_stops_at_30_s, never_probes_after_30_s, plugged_in_at_10_s_starts_at_12_s, plugged_in_at_20_s_starts_at_30_s, plugged_in_at_40_s_never_found, own_module_retry_starts_it, working_module_never_probed, working_auto_trackpad_never_probed, failing_start_gives_up, failing_own_start_gives_up, per_module_build_stops_on_other_module, per_module_build_stops_on_wrong_sensor, retry_own_stop_ends_it, found_only_changes_at_search_end, late_boot_searches_spaced, gap_keeps_the_schedule};
     int                  failed  = 0;
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
         fflush(stdout);
