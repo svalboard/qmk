@@ -26,6 +26,10 @@ static struct {
     int     bits;
     uint8_t addr, out;
     bool    reading;
+    bool    stuck;     // answers 0x00 until it gets Power_Up_Reset (0x5A)
+    bool    writing;
+    uint8_t wdata;
+    int     resets;
 } pmw;
 static void pmw_update(void) {
     if (!pmw.on) return;
@@ -34,14 +38,30 @@ static void pmw_update(void) {
         pmw.bits    = 0;
         pmw.addr    = 0;
         pmw.reading = false;
+        pmw.writing = false;
     }
     if (!sel) dev_drive[GP24] = -1;
-    if (sel && sck && !pmw.sck && !pmw.reading) { // rising edge: address bit in
+    if (sel && sck && !pmw.sck && pmw.writing) { // rising edge: data bit in
+        pmw.wdata = (pmw.wdata << 1) | line(GP27);
+        if (++pmw.bits == 8) {
+            if ((pmw.addr & 0x7F) == 0x3A && pmw.wdata == 0x5A) {
+                pmw.stuck = false;
+                pmw.resets++;
+            }
+            pmw.writing = false;
+            pmw.bits    = 9; // done
+        }
+    } else if (sel && sck && !pmw.sck && !pmw.reading && pmw.bits < 8) { // rising edge: address bit in
         pmw.addr = (pmw.addr << 1) | line(GP27);
         if (++pmw.bits == 8) {
-            pmw.reading = true;
-            pmw.bits    = 0;
-            pmw.out     = (pmw.addr & 0x7F) == 0x00 ? pmw.pid : (pmw.addr & 0x7F) == 0x3F ? pmw.inv : 0x55;
+            pmw.bits = 0;
+            if (pmw.addr & 0x80) {
+                pmw.writing = true;
+                pmw.wdata   = 0;
+            } else {
+                pmw.reading = true;
+                pmw.out     = pmw.stuck ? 0x00 : (pmw.addr & 0x7F) == 0x00 ? pmw.pid : (pmw.addr & 0x7F) == 0x3F ? pmw.inv : 0x55;
+            }
         }
     } else if (sel && !sck && pmw.sck && pmw.reading && pmw.bits < 8) { // falling edge: next data bit out
         dev_drive[GP24] = (pmw.out >> (7 - pmw.bits++)) & 1;
@@ -447,6 +467,28 @@ static void skipped_i2c_pins_untouched(void) {
     CHECK(host[GP16] == H_HIGH && host[GP17] == H_HIGH);
 }
 
+// A sensor stuck through an MCU restart (answers 0x00): the first search sends the power-up
+// reset and still finds nothing, the next one finds it. A healthy one is never reset.
+static void stuck_sensor(void) {
+    reset();
+    pmw.on    = true;
+    pmw.pid   = 0x47;
+    pmw.inv   = 0xB8;
+    pmw.stuck = true;
+    CHECK(sval_probe_bus(SVAL_BUS_SPI, false).detected == SVAL_SENSOR_NO_RESPONSE);
+    CHECK(pmw.resets == 1);
+    CHECK(sval_probe_bus(SVAL_BUS_SPI, false).detected == SVAL_SENSOR_PMW3389);
+    CHECK(pmw.resets == 1);
+    all_released();
+    reset();
+    pmw.on  = true;
+    pmw.pid = 0x47;
+    pmw.inv = 0xB8;
+    CHECK(sval_probe_bus(SVAL_BUS_SPI, false).detected == SVAL_SENSOR_PMW3389);
+    CHECK(pmw.resets == 0);
+    all_released();
+}
+
 static void classify(void) {
     CHECK(sval_pmw33xx_classify(0x42, 0xBD) == SVAL_SENSOR_PMW3360);
     CHECK(sval_pmw33xx_classify(0x47, 0xB8) == SVAL_SENSOR_PMW3389);
@@ -466,6 +508,7 @@ int main(void) {
     trackpad_low_power(250000);
     trackpoint();
     skips_own_bus();
+    stuck_sensor();
     classify();
     one_bus_costs();
     one_bus_finds_its_module();
