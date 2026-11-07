@@ -116,5 +116,16 @@ class VelocityScrollTests(unittest.TestCase):
         self.assertIn('SV_VELOCITY_SCROLL_TOGGLE', passthrough)
 
 
+class PointingSensorTests(unittest.TestCase):
+    """pointing_squal.h: trackball sensor bins and the POINTING_SENSOR (0x39) SAMPLES and STATS packing."""
+    def test_squal_packing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'squal'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'squal_test.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('OK', result.stdout)
+
+
 if __name__ == '__main__':
     unittest.main()

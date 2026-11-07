@@ -899,6 +899,13 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
             break;
         }
 
+        case sval_cmd_pointing_sensor: {
+            // Request:  [0xDF] [0x39] [op] [hand] [arg lo] [arg hi]
+            // Response: [0xDF] [0x39] [reply...] (keyboards/svalboard/docs/protocol.md, "Pointing sensor")
+            if (length > 5) sval_pointing_sensor_kb(&data[2], length - 2);
+            break;
+        }
+
         case sval_cmd_debug_console: {
             // Request:  [0xDF] [0x3E] [op]
             // Response: [0xDF] [0x3E] [op] [status] [state] (keyboards/svalboard/docs/protocol.md)
@@ -1263,6 +1270,10 @@ __attribute__((weak)) void sval_flicker_latch_kb(uint8_t *data, uint8_t length) 
 __attribute__((weak)) void sval_pointing_hardware_kb(uint8_t *out, uint8_t length) {}
 
 __attribute__((weak)) void sval_pointing_motion_kb(uint8_t *out, uint8_t length) {}
+
+__attribute__((weak)) void sval_pointing_sensor_kb(uint8_t *data, uint8_t length) {
+    memset(data, 0, length);
+}
 
 __attribute__((weak)) void sval_main_board_kb(uint8_t *out, uint8_t length) {}
 
