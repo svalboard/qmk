@@ -45,7 +45,7 @@ and passes the release checks. A distribution's own `arm-none-eabi-gcc` can
 differ from Arm's build (different newlib, different defaults); if one fails,
 use the 13.2 tarball above and open an issue with the first error line.
 
-### Manjaro and Arch
+### Distribution toolchains
 
 Use Arm's tarball (13.2 or 15.2 above) and put it first on `PATH` for the
 shell that runs `make`. Check that the right compiler is picked up:
@@ -55,22 +55,10 @@ which arm-none-eabi-gcc
 arm-none-eabi-gcc -dumpversion
 ```
 
-If you want the distribution's compiler, a build that stops in
-`lib/chibios/os/various/newlib_bindings/syscalls.c` with
-`'struct _reent' declared inside parameter list` means the compiler is not
-seeing a complete newlib. Those headers come from the
-`arm-none-eabi-newlib` package, and the compiler and the headers must come
-from the same install. Open an issue with the output of:
-
-```
-pacman -Q arm-none-eabi-gcc arm-none-eabi-newlib
-arm-none-eabi-gcc -print-sysroot
-echo | arm-none-eabi-gcc -E -xc -v - 2>&1 | grep -A6 'search starts'
-```
-
-We build with the Arm 13.2 and 15.2 tarballs and with Arch's
-`arm-none-eabi-gcc` 16.2 plus its `arm-none-eabi-newlib` 4.6; all three
-compile this file cleanly.
+Some distributions build their `arm-none-eabi` toolchain on picolibc instead
+of newlib (Debian sid, for example). ChibiOS needs newlib, so with those the
+build stops in `lib/chibios/os/various/newlib_bindings/syscalls.c` with
+`'struct _reent' declared inside parameter list`. Use Arm's tarball instead.
 
 Python 3.9 or newer, in a virtual environment:
 
