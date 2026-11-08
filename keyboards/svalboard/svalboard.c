@@ -670,6 +670,7 @@ uint8_t sval_get_feature_flags3_kb(void) {
 uint8_t sval_get_feature_flags4_kb(void) {
     uint8_t flags = sval_pad_palm_supported() ? sval_flag4_pad_palm | sval_flag4_pad_mode : 0;
     flags |= sval_flag4_scroll_speed;                                              // VIA values 61 and 62 (scroll_speed.h)
+    flags |= sval_flag4_trackpoint_speed;                                          // a TrackPoint's DPI list scales it (pointer_speed.h)
     if (sval_pad_gestures_supported()) flags |= sval_flag4_pad_scroll_speed_alias; // VIA value 60, as the test build
 #ifdef CONSOLE_ENABLE
     flags |= sval_flag4_debug_console; // 0x3E (debug_console.c)
