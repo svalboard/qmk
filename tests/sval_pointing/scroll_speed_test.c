@@ -250,8 +250,12 @@ int main(void) {
         uint8_t  idx;
         sval_scroll_migrate(SVAL_SCROLL_KIND_PAD, 3, 175, choices, N, &pct, &idx);
         CHECK(pct == 175 && idx == 3);
+        // The test build's percent multiplied the DPI's speed: 3200 caps at
+        // 1210 (151%), x 1.75 = 264%; 1200 (150%) x 1.75 = 263%.
         sval_scroll_migrate(SVAL_SCROLL_KIND_PAD, 7, 175, choices, N, &pct, &idx);
-        CHECK(pct == 175 && idx == 4);
+        CHECK(pct == 264 && idx == 4);
+        sval_scroll_migrate(SVAL_SCROLL_KIND_PAD, 4, 175, choices, N, &pct, &idx);
+        CHECK(pct == 263 && idx == 4);
         sval_scroll_migrate(SVAL_SCROLL_KIND_BALL, 5, 175, choices, N, &pct, &idx);
         CHECK(pct == 200 && idx == 5);
         sval_scroll_migrate(SVAL_SCROLL_KIND_TRACKPOINT, 5, 175, choices, N, &pct, &idx);
