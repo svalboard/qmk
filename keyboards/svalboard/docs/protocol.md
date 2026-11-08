@@ -377,6 +377,15 @@ How fast motion becomes scroll, one setting per hand, the same on every pointing
 - A touchpad hand's saved DPI index is lowered at boot to the touchpad's maximum, 1200, and written back. Behavior is the same, since the pointer already stopped gaining there; the stored value now matches.
 - Stored in five bytes of their own after the touchpad mode's two and three more that the test build used (left, right, and a check byte), so the settings keep their size and layout stamp. Bytes that don't check out are not a record, and the migration above runs.
 
+## Pointer speed per module
+
+The DPI list (`id_left_dpi` 1 and `id_right_dpi` 3, an index) now ends at 16000, appended after 12000 so saved indexes stay valid. Each hand's list stops at its module's maximum: touchpad 1200, PMW3360 12000, PMW3389 16000, TrackPoint 3200. The DPI step keys stop there, and a write above it stores the maximum. Before a hand's module is known the whole list is allowed.
+
+- A touchpad hand's saved index is held to 1200 at boot (Scroll speed, above), and a trackball hand's to its sensor's maximum.
+- A TrackPoint has no DPI to set. Its list is a software Pointer speed applied to its counts as DPI over 800, with remainders carried: 800 is 1:1, exactly the motion it has always had; 400 is half, 1600 double, up to 3200 (4x). The half the TrackPoint is on applies it, so the speed reaches it the way a DPI does.
+- First boot of this firmware on settings saved without a Scroll speed: a TrackPoint hand's saved index is set to 800 (index 3), since its DPI did nothing before, so its motion does not change. A touch of the TrackPoint in the second or two before its module is known can still use the old index.
+- Scroll does not follow Pointer speed: a TrackPoint's scaled counts divide by the speed's DPI for scroll, so Scroll speed gives the same scroll at every Pointer speed.
+
 ## Touchpad touch
 
 The touch page of `POINTING_MOTION` shows each pad's touch as the chip's tap and press-and-hold rules see it: where the finger touched down, where it is, how long it has been down, how far it has moved from the down point, and the chip's gesture events. It is for the editor's touchpad visualizer, so a user can see why a touch did or didn't click. It only watches: nothing about it changes what the pads report.
