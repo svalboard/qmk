@@ -143,8 +143,10 @@ enum sval_feature_flags4 {
     sval_flag4_pad_palm      = (1 << 0), // VIA value 58: the touchpad palm rejection (native touchpad builds)
     sval_flag4_pad_mode      = (1 << 1), // VIA value 59: touchpad mode, Automatic or built-in gestures (native touchpad builds)
     sval_flag4_debug_console = (1 << 2), // 0x3E sets and reads QMK's debug flag (builds with the console)
-    sval_flag4_pad_scroll_speed_alias = (1 << 3), // VIA value 60: the touchpad hand's Scroll speed, kept for the test build's Keybard (Azoteq builds)
-    sval_flag4_scroll_speed           = (1 << 4), // VIA values 61 and 62: each hand's Scroll speed, percent (every build)
+    // Bit 3 is sval_flag4_pointing_sensor (0x39) on svalboard/qmk: never reuse it.
+    sval_flag4_pad_scroll_speed_alias = (1 << 4), // VIA value 60: the touchpad hand's Scroll speed; the test build's bit, same meaning (Azoteq builds)
+    sval_flag4_scroll_speed           = (1 << 5), // VIA values 61 and 62: each hand's Scroll speed, percent (every build)
+    sval_flag4_trackpoint_speed       = (1 << 6), // a TrackPoint's DPI list is a software Pointer speed, 200 to 3200 (every build)
 };
 
 // Status byte after the modifiers in the 0x16 reply (sval_flag2_modifier_state).
