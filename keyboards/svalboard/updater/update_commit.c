@@ -133,7 +133,10 @@ COMMIT_INLINE void __attribute__((noreturn)) spin_forever(void) {
 #    include "hardware/regs/dma.h"
 #    include "hardware/regs/m0plus.h"
 #    include "hardware/platform_defs.h"
-#    define COMMIT_RAM(name) __no_inline_not_in_flash_func(name)
+// noclone: GCC 15 otherwise splits an unexported RAM function with IPA-SRA
+// into "name.isra.0", and check_ram_funcs.py no longer finds "name" (the
+// clone is still in RAM; GCC 13.2 emits identical code either way).
+#    define COMMIT_RAM(name) __attribute__((noclone)) __no_inline_not_in_flash_func(name)
 typedef uint32_t commit_vec_t;
 _Static_assert(WD_CTRL == WATCHDOG_BASE + WATCHDOG_CTRL_OFFSET && WD_LOAD == WATCHDOG_BASE + WATCHDOG_LOAD_OFFSET, "watchdog registers");
 _Static_assert(WD_SCRATCH4 == WATCHDOG_BASE + WATCHDOG_SCRATCH4_OFFSET && WD_TICK == WATCHDOG_BASE + WATCHDOG_TICK_OFFSET, "watchdog registers");
