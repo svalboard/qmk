@@ -108,6 +108,25 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('scroll_speed OK', result.stdout)
 
+    def test_pointer_speed(self):
+        # pointer_speed.c: the TrackPoint's software speed (default 1:1, remainders carry, scroll independent) and each module's DPI maximum.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'pointer_speed'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'pointer_speed_test.c'), str(ROOT / 'keyboards/svalboard/pointer_speed.c'), str(ROOT / 'keyboards/svalboard/scroll_speed.c'), str(ROOT / 'keyboards/svalboard/pad_scroll.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('pointer_speed OK', result.stdout)
+
+    def test_dpi_list_only_grows_at_the_end(self):
+        # Saved DPI indexes stay valid: the shipped list keeps its first eleven values and 16000 is last.
+        import re
+        src = (ROOT / 'keyboards/svalboard/svalboard.c').read_text(encoding='utf-8')
+        m = re.search(r'const uint16_t dpi_choices\[\] = \{([^}]*)\}', src)
+        values = [int(v) for v in m.group(1).split(',')]
+        self.assertEqual(values[:11], [200, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 12000])
+        self.assertEqual(values[11:], [16000])
+        self.assertEqual(values[3], 800)  # index 3 is the default and a TrackPoint's 1:1
+
     def test_axis_factor(self):
         # axis_scale.h: sniper and boost factors clamp to 255, never wrap.
         with tempfile.TemporaryDirectory() as directory:

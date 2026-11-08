@@ -12,8 +12,9 @@
 //               the feel of 800 DPI before this existed
 //   touchpad    pad pixels / 47.6 per mm across, 44.8 up and down; 170 pixels
 //               per detent (120 counts) at 1.0x (pad_scroll.h)
-//   TrackPoint  raw counts as the 800 DPI trackball feel (its DPI setting does
-//               nothing)
+//   TrackPoint  its counts are scaled in software by DPI / 800 (pointer_speed.h),
+//               so they divide by that DPI like a trackball's: the raw counts
+//               are the 800 DPI trackball feel at any Pointer speed
 //
 // The OS divisors (a Mac counts each wheel count as a line) apply after the
 // multiplier, so 2.0x means twice as fast on a Mac and on Windows.
@@ -71,7 +72,8 @@ uint8_t sval_dpi_index_normalize_pad(const uint16_t *choices, uint8_t n, uint8_t
 // ---------------------------------------------------------------- trackball scaler
 // The DPI that counts as the hand's motion resolution for scroll: the saved
 // DPI for a trackball, capped per axis for a pad (its pointer counts stop
-// gaining there), 800 for a TrackPoint.
+// gaining there), the Pointer speed's DPI for a TrackPoint (its counts are
+// scaled by DPI / 800, so dividing them back gives the raw motion).
 uint16_t sval_scroll_motion_dpi(uint8_t kind, uint16_t dpi, bool vertical);
 
 typedef struct {

@@ -19,6 +19,7 @@
 #include "debounce_sval.h"
 #include "pad_gestures.h"
 #include "scroll_speed.h"
+#include "pointer_speed.h"
 #include "sval.h"
 #include "pointing_motion.h" // after sval.h: needs the generated fragment ids
 #include "identity.h"
@@ -128,7 +129,9 @@ static void pad_mode_set(uint8_t m) {
     pad_mode = m == SVAL_PAD_MODE_BUILTIN ? SVAL_PAD_MODE_BUILTIN : SVAL_PAD_MODE_AUTO;
 }
 
-const uint16_t dpi_choices[] = {200, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 12000}; // If we need more, add them.
+// If we need more, add them at the end: saved indexes stay valid. Each module's list stops at its own
+// maximum (pointer_speed.h): the pad 1200, PMW3360 12000, PMW3389 16000, TrackPoint 3200 (a software speed).
+const uint16_t dpi_choices[] = {200, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 12000, 16000};
 #define DPI_CHOICES_LENGTH (sizeof(dpi_choices) / sizeof(dpi_choices[0]))
 
 // Scroll speed (scroll_speed.h): a percent per hand (0 left, 1 right), 20 to
@@ -142,6 +145,7 @@ static uint16_t scroll_speed[2] = {SVAL_SCROLL_SPEED_DEFAULT, SVAL_SCROLL_SPEED_
 // check against the pad's maximum.
 static uint8_t  scroll_speed_pending = 0;
 static uint8_t  scroll_dpi_pending   = 3;
+static uint8_t  tp_speed_pending     = 0; // first boot of this firmware: a TrackPoint hand's index starts at 800 (1:1)
 static uint16_t scroll_legacy_pct    = 0; // the test build's touchpad speed (VIA value 60), 0 none
 
 uint16_t sval_scroll_speed(uint8_t hand) {
@@ -391,6 +395,7 @@ static void pad_gestures_load(void) {
         scroll_speed[0]      = scroll_speed_from_saved_dpi(0, SVAL_SCROLL_KIND_BALL);
         scroll_speed[1]      = scroll_speed_from_saved_dpi(1, SVAL_SCROLL_KIND_BALL);
         scroll_speed_pending = 3;
+        tp_speed_pending     = 3;
     }
 }
 
@@ -573,7 +578,7 @@ void change_turbo_scan(void) {
 }
 
 void increase_left_dpi(void) {
-    if (global_saved_values.left_dpi_index + 1 < DPI_CHOICES_LENGTH) {
+    if (global_saved_values.left_dpi_index < sval_hand_dpi_limit(0)) {
         global_saved_values.left_dpi_index++;
         set_left_dpi(global_saved_values.left_dpi_index);
         write_eeprom_kb();
@@ -589,7 +594,7 @@ void decrease_left_dpi(void) {
 }
 
 void increase_right_dpi(void) {
-    if (global_saved_values.right_dpi_index + 1 < DPI_CHOICES_LENGTH) {
+    if (global_saved_values.right_dpi_index < sval_hand_dpi_limit(1)) {
         global_saved_values.right_dpi_index++;
         set_right_dpi(global_saved_values.right_dpi_index);
         write_eeprom_kb();
@@ -1042,6 +1047,28 @@ static bool scroll_hand_kind(uint8_t hand, uint8_t *kind) {
     return true;
 }
 
+// The module a hand's DPI list is held to (enum sval_dpi_module): SVAL_DPI_MODULE_ANY until it is found.
+static uint8_t hand_dpi_module(uint8_t hand) {
+    sval_pointer_identity_t id;
+    bool                    local;
+    if (!sval_pointer_for_hand((hand & 1) == 0, &id, &local)) return SVAL_DPI_MODULE_ANY;
+    switch (id.detected) {
+        case SVAL_SENSOR_PMW3360: return SVAL_DPI_MODULE_PMW3360;
+        case SVAL_SENSOR_PMW3389: return SVAL_DPI_MODULE_PMW3389;
+        case SVAL_SENSOR_AZOTEQ: return SVAL_DPI_MODULE_PAD;
+        case SVAL_SENSOR_TRACKPOINT: return SVAL_DPI_MODULE_TRACKPOINT;
+        default: return SVAL_DPI_MODULE_ANY;
+    }
+}
+
+uint8_t sval_hand_dpi_limit(uint8_t hand) {
+    return sval_dpi_index_limit(dpi_choices, DPI_CHOICES_LENGTH, hand_dpi_module(hand));
+}
+
+uint8_t sval_hand_dpi_clamp(uint8_t hand, uint8_t index) {
+    return sval_dpi_index_clamp(dpi_choices, DPI_CHOICES_LENGTH, hand_dpi_module(hand), index);
+}
+
 // The kind of module a hand's scroll conversion uses, read every 100 ms.
 uint8_t sval_hand_scroll_kind(uint8_t hand) {
     static uint8_t  kinds[2];
@@ -1077,10 +1104,19 @@ void sval_scroll_speed_task(void) {
         }
         if (scroll_dpi_pending & bit) {
             scroll_dpi_pending &= ~bit;
-            if (lower != *idx) {
-                *idx    = lower;
+            // Every hand's saved index is held to its module's maximum (a
+            // trackball's, a touchpad's). A TrackPoint ignored its DPI before it
+            // had a software speed, so on the first boot of this firmware its
+            // index is set to 800, which is 1:1, the motion it has always had.
+            uint8_t held = sval_dpi_index_clamp(dpi_choices, DPI_CHOICES_LENGTH, hand_dpi_module(hand), lower);
+            if (kind == SVAL_SCROLL_KIND_TRACKPOINT && (tp_speed_pending & bit)) held = sval_trackpoint_base_index(dpi_choices, DPI_CHOICES_LENGTH);
+            tp_speed_pending &= ~bit;
+            if (held != *idx) {
+                *idx    = held;
                 changed = true;
             }
+            // The hand's module takes the index it now has (a TrackPoint's speed has been set from the old one).
+            if (hand) set_right_dpi(*idx); else set_left_dpi(*idx);
         }
     }
     if (changed) write_eeprom_kb();
@@ -1484,8 +1520,9 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
             switch (*value_id) {
                 case id_left_dpi:
                     if (value_data[0] < DPI_CHOICES_LENGTH) {
-                        global_saved_values.left_dpi_index = value_data[0];
-                        set_left_dpi(value_data[0]);
+                        // Held to the module's maximum: a write above it stores the maximum.
+                        global_saved_values.left_dpi_index = sval_hand_dpi_clamp(0, value_data[0]);
+                        set_left_dpi(global_saved_values.left_dpi_index);
                     }
                     break;
                 case id_left_scroll:
@@ -1493,8 +1530,9 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     break;
                 case id_right_dpi:
                     if (value_data[0] < DPI_CHOICES_LENGTH) {
-                        global_saved_values.right_dpi_index = value_data[0];
-                        set_right_dpi(value_data[0]);
+                        // Held to the module's maximum: a write above it stores the maximum.
+                        global_saved_values.right_dpi_index = sval_hand_dpi_clamp(1, value_data[0]);
+                        set_right_dpi(global_saved_values.right_dpi_index);
                     }
                     break;
                 case id_right_scroll:

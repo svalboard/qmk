@@ -16,7 +16,7 @@ static int failures = 0;
         }                                                          \
     } while (0)
 
-static const uint16_t choices[] = {200, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 12000};
+static const uint16_t choices[] = {200, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 12000, 16000};
 #define N (sizeof(choices) / sizeof(choices[0]))
 
 static uint32_t lcg = 12345;
@@ -143,7 +143,7 @@ int main(void) {
     CHECK(sval_scroll_motion_dpi(SVAL_SCROLL_KIND_PAD, 800, false) == 800);
     CHECK(sval_scroll_motion_dpi(SVAL_SCROLL_KIND_PAD, 3200, false) == 1210);
     CHECK(sval_scroll_motion_dpi(SVAL_SCROLL_KIND_PAD, 3200, true) == 1138);
-    CHECK(sval_scroll_motion_dpi(SVAL_SCROLL_KIND_TRACKPOINT, 3200, false) == 800); // its DPI does nothing
+    CHECK(sval_scroll_motion_dpi(SVAL_SCROLL_KIND_TRACKPOINT, 3200, false) == 3200); // scaled by DPI / 800, so it divides back
     CHECK(sval_scroll_motion_dpi(SVAL_SCROLL_KIND_BALL, 0, false) == 800);
 
     // ---- the saved record
@@ -179,9 +179,10 @@ int main(void) {
     }
 
     // ---- migration: the Scroll speed from the DPI
-    static const uint16_t ball_pct[N] = {25, 50, 75, 100, 150, 200, 300, 400, 600, 800, 1000};
+    static const uint16_t ball_pct[N] = {25, 50, 75, 100, 150, 200, 300, 400, 600, 800, 1000, 1000};
     for (unsigned i = 0; i < N; i++) CHECK(sval_scroll_speed_from_dpi(choices[i], SVAL_SCROLL_KIND_BALL) == ball_pct[i]);
     CHECK(sval_scroll_speed_from_dpi(12000, SVAL_SCROLL_KIND_BALL) == 1000); // 15x is above the range
+    CHECK(sval_scroll_speed_from_dpi(16000, SVAL_SCROLL_KIND_BALL) == 1000); // 20x too
     CHECK(sval_scroll_speed_from_dpi(1200, SVAL_SCROLL_KIND_PAD) == 150);
     CHECK(sval_scroll_speed_from_dpi(1600, SVAL_SCROLL_KIND_PAD) == 151); // capped at 1210 / 800
     CHECK(sval_scroll_speed_from_dpi(12000, SVAL_SCROLL_KIND_PAD) == 151);
@@ -190,7 +191,7 @@ int main(void) {
 
     // Migration keeps a trackball's output exactly: the same stream of counts
     // gives the same wheel counts, step by step, at every DPI up to 8000.
-    for (unsigned i = 0; i < N - 1; i++) {
+    for (unsigned i = 0; i < 10; i++) { // 200 to 6400; above 8000 the speed stops at 10x
         for (int mac = 0; mac < 2; mac++) {
             sval_ball_scroll_t s    = {0};
             int16_t            rx   = 0, ry = 0;

@@ -220,6 +220,9 @@ uint8_t  sval_pad_hands(void);                                                  
 // module's kind (enum sval_scroll_kind: trackball, pad, TrackPoint).
 uint16_t sval_scroll_speed(uint8_t hand);
 uint8_t  sval_hand_scroll_kind(uint8_t hand);
+// The highest DPI index a hand's module reaches, and an index held to it (pointer_speed.h).
+uint8_t  sval_hand_dpi_limit(uint8_t hand);
+uint8_t  sval_hand_dpi_clamp(uint8_t hand, uint8_t index);
 void     sval_scan_timing(uint16_t *pre, uint16_t *post);                       // matrix.c
 uint8_t  sval_pushed_mask(bool thumbs);                                         // matrix.c
 void     sval_row_drive_raw(uint8_t row, bool on);                              // matrix.c: no critical section

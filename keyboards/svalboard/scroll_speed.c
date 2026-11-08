@@ -60,7 +60,7 @@ uint8_t sval_dpi_index_normalize_pad(const uint16_t *choices, uint8_t n, uint8_t
 }
 
 uint16_t sval_scroll_motion_dpi(uint8_t kind, uint16_t dpi, bool vertical) {
-    if (kind == SVAL_SCROLL_KIND_TRACKPOINT || dpi == 0) return SVAL_BALL_SCROLL_BASE_DPI;
+    if (dpi == 0) return SVAL_BALL_SCROLL_BASE_DPI;
     if (kind == SVAL_SCROLL_KIND_PAD) {
         uint16_t cap = vertical ? SVAL_PAD_CAP_DPI_Y : SVAL_PAD_CAP_DPI_X;
         if (dpi > cap) dpi = cap;
