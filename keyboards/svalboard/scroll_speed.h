@@ -85,7 +85,7 @@ typedef struct {
 void sval_ball_scroll(sval_ball_scroll_t *s, int32_t x, int32_t y, uint16_t dpi_x, uint16_t dpi_y, uint16_t pct, bool mac, int16_t *h, int16_t *v);
 
 // One hand's migration, once its module is known: its Scroll speed from its
-// saved DPI index (the test build's touchpad speed, if there is one, for a pad)
+// saved DPI index (times the test build's touchpad speed, if there is one, for a pad)
 // and the index normalized (a pad's lowered to its maximum). Speed first, from
 // the DPI as it was.
 void sval_scroll_migrate(uint8_t kind, uint8_t dpi_index, uint16_t legacy_pct, const uint16_t *choices, uint8_t n, uint16_t *speed, uint8_t *new_index);

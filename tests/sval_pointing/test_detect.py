@@ -125,6 +125,14 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(names.index('SV_VELOCITY_SCROLL_TOGGLE'), 31, keymap)
             self.assertLessEqual(len(names), 32, keymap)  # QK_USER_31 is the last the GUI addresses
 
+    def test_pad_two_finger_scroll_takes_the_scroll_speed(self):
+        # keymap_support.c: the pad's two-finger scroll gets the hand's Scroll speed (a percent), never its DPI.
+        source = (ROOT / 'keyboards/svalboard/keymaps/keymap_support.c').read_text(encoding='utf-8')
+        call = source[source.index('sval_pad_scroll(&pad_scroll_state'):]
+        call = call[:call.index(';')]
+        self.assertIn('sval_scroll_speed(hand)', call)
+        self.assertNotIn('dpi', call)
+
     def test_toggle_key_is_handled_like_the_hold_key(self):
         # keymap_support.c: both keys on press and release, and in the mouse layer's passthrough list.
         source = (ROOT / 'keyboards/svalboard/keymaps/keymap_support.c').read_text(encoding='utf-8')
