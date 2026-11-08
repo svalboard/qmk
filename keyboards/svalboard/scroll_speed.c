@@ -96,6 +96,11 @@ void sval_ball_scroll(sval_ball_scroll_t *s, int32_t x, int32_t y, uint16_t dpi_
 
 void sval_scroll_migrate(uint8_t kind, uint8_t dpi_index, uint16_t legacy_pct, const uint16_t *choices, uint8_t n, uint16_t *speed, uint8_t *new_index) {
     uint8_t idx = dpi_index >= n ? n - 1 : dpi_index;
-    *speed      = (kind == SVAL_SCROLL_KIND_PAD && legacy_pct) ? sval_scroll_speed_clamp(legacy_pct) : sval_scroll_speed_from_dpi(choices[idx], kind);
+    *speed      = sval_scroll_speed_from_dpi(choices[idx], kind);
+    // The test build multiplied its percent on top of the DPI's speed.
+    if (kind == SVAL_SCROLL_KIND_PAD && legacy_pct) {
+        uint32_t pct = ((uint32_t)*speed * legacy_pct + 50) / 100;
+        *speed       = sval_scroll_speed_clamp(pct > 0xFFFF ? 0xFFFF : (uint16_t)pct);
+    }
     *new_index  = kind == SVAL_SCROLL_KIND_PAD ? sval_dpi_index_normalize_pad(choices, n, dpi_index) : dpi_index;
 }
