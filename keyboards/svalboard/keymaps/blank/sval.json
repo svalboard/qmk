@@ -278,9 +278,14 @@
                             "content": ["id_axis_lock", 1, 8]
                         }
                     ]
-                },
+                }
+            ]
+        },
+        {
+            "label": "Power and scanning",
+            "content": [
                 {
-                    "label": "Advanced",
+                    "label": "Power and scanning",
                     "content": [
                         {
                             "label": "Scan Pre-wait (us)",

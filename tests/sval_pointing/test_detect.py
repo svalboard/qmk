@@ -152,6 +152,37 @@ class VelocityScrollTests(unittest.TestCase):
         passthrough = passthrough[:passthrough.index(')\n')]
         self.assertIn('SV_VELOCITY_SCROLL_TOGGLE', passthrough)
 
+class PowerMenuTests(unittest.TestCase):
+    """sval.json: scan and idle items live in their own menu, ids unchanged."""
+
+    SCAN_IDS = {'id_scan_prewait_us', 'id_scan_postwait_us', 'id_scan_period_us',
+                'id_scan_idle_period_ms', 'id_scan_idle_after_ms', 'id_scan_deep_after_s',
+                'id_scan_deep_period_ms', 'id_idle_pointer_rest', 'id_idle_rgb_dim',
+                'id_idle_cpu_sleep', 'id_idle_low_clock', 'id_idle_long_nap',
+                'id_scan_deep_clock_idx'}
+
+    @staticmethod
+    def _ids(node):
+        if isinstance(node, dict):
+            c = node.get('content')
+            if isinstance(c, list) and c and isinstance(c[0], str):
+                yield c[0]
+            else:
+                for x in (c or []):
+                    yield from PowerMenuTests._ids(x)
+        elif isinstance(node, list):
+            for x in node:
+                yield from PowerMenuTests._ids(x)
+
+    def test_scan_items_are_in_power_menu_not_pointing(self):
+        for keymap in ('sval', 'blank'):
+            data = json.loads((ROOT / f'keyboards/svalboard/keymaps/{keymap}/sval.json').read_text())
+            menus = {m['label']: set(self._ids(m)) for m in data['menus']}
+            self.assertEqual(menus['Power and scanning'], self.SCAN_IDS, keymap)
+            self.assertFalse(menus['Pointing Device'] & self.SCAN_IDS, keymap)
+            self.assertNotIn('Advanced', [g['label'] for m in data['menus'] for g in m['content']
+                                          if 'content' in g and m['label'] == 'Pointing Device'])
+
 
 if __name__ == '__main__':
     unittest.main()
