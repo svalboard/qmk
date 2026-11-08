@@ -216,6 +216,10 @@ bool     sval_pad_palm_supported(void);
 // for a touchpad. Native touchpad builds (azoteq/ptp.c) apply it.
 bool     sval_pad_builtin_gestures(void);
 uint8_t  sval_pad_hands(void);                                                  // hands whose pointing module is an Azoteq pad (bit 0 left, bit 1 right)
+// Scroll speed (scroll_speed.h): a hand's multiplier in percent (hand 0 left, 1 right), and its
+// module's kind (enum sval_scroll_kind: trackball, pad, TrackPoint).
+uint16_t sval_scroll_speed(uint8_t hand);
+uint8_t  sval_hand_scroll_kind(uint8_t hand);
 void     sval_scan_timing(uint16_t *pre, uint16_t *post);                       // matrix.c
 uint8_t  sval_pushed_mask(bool thumbs);                                         // matrix.c
 void     sval_row_drive_raw(uint8_t row, bool on);                              // matrix.c: no critical section

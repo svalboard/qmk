@@ -18,6 +18,7 @@
 #include "flicker_latch.h"
 #include "debounce_sval.h"
 #include "pad_gestures.h"
+#include "scroll_speed.h"
 #include "sval.h"
 #include "pointing_motion.h" // after sval.h: needs the generated fragment ids
 #include "identity.h"
@@ -125,6 +126,38 @@ bool sval_pad_builtin_gestures(void) {
 
 static void pad_mode_set(uint8_t m) {
     pad_mode = m == SVAL_PAD_MODE_BUILTIN ? SVAL_PAD_MODE_BUILTIN : SVAL_PAD_MODE_AUTO;
+}
+
+const uint16_t dpi_choices[] = {200, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 12000}; // If we need more, add them.
+#define DPI_CHOICES_LENGTH (sizeof(dpi_choices) / sizeof(dpi_choices[0]))
+
+// Scroll speed (scroll_speed.h): a percent per hand (0 left, 1 right), 20 to
+// 1000, in its own record after the touchpad mode's. The half with USB does
+// all the scroll conversion, so nothing syncs.
+static uint16_t scroll_speed[2] = {SVAL_SCROLL_SPEED_DEFAULT, SVAL_SCROLL_SPEED_DEFAULT};
+// The first boot of firmware with a Scroll speed finds no record. Each hand's
+// speed then starts from its DPI (the 800 DPI feel is 1.0x), once its module
+// is known: a touchpad caps at 1210 DPI and a TrackPoint stays at 1.0x. Bit 0
+// left, bit 1 right: speeds still to settle, and saved DPI indexes still to
+// check against the pad's maximum.
+static uint8_t  scroll_speed_pending = 0;
+static uint8_t  scroll_dpi_pending   = 3;
+static uint16_t scroll_legacy_pct    = 0; // the test build's touchpad speed (VIA value 60), 0 none
+
+uint16_t sval_scroll_speed(uint8_t hand) {
+    return scroll_speed[hand & 1];
+}
+
+static void scroll_speed_set(uint8_t hand, uint16_t pct) {
+    hand &= 1;
+    scroll_speed[hand] = sval_scroll_speed_clamp(pct);
+    scroll_speed_pending &= ~(1u << hand); // a hand set by a host is no longer migrated
+}
+
+static uint16_t scroll_speed_from_saved_dpi(uint8_t hand, uint8_t kind) {
+    uint8_t idx = hand ? global_saved_values.right_dpi_index : global_saved_values.left_dpi_index;
+    if (idx >= DPI_CHOICES_LENGTH) idx = DPI_CHOICES_LENGTH - 1;
+    return sval_scroll_speed_from_dpi(dpi_choices[idx], kind);
 }
 
 // Builds without an Azoteq driver: nothing to write, and no capability.
@@ -268,6 +301,11 @@ _Static_assert(SVALBOARD_PAD_PALM_OFFSET + SVAL_PAD_PALM_RECORD_BYTES <= VIA_EEP
 // The touchpad mode's record, after the palm rejection's.
 #define SVALBOARD_PAD_MODE_OFFSET (SVALBOARD_PAD_PALM_OFFSET + SVAL_PAD_PALM_RECORD_BYTES)
 _Static_assert(SVALBOARD_PAD_MODE_OFFSET + SVAL_PAD_MODE_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the touchpad mode fits the VIA custom config");
+// The test build's touchpad scroll speed, read only to migrate it, after the touchpad mode's record.
+#define SVALBOARD_SCROLL_LEGACY_OFFSET (SVALBOARD_PAD_MODE_OFFSET + SVAL_PAD_MODE_RECORD_BYTES)
+// The Scroll speed record, after that.
+#define SVALBOARD_SCROLL_SPEED_OFFSET (SVALBOARD_SCROLL_LEGACY_OFFSET + SVAL_SCROLL_SPEED_LEGACY_BYTES)
+_Static_assert(SVALBOARD_SCROLL_SPEED_OFFSET + SVAL_SCROLL_SPEED_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the scroll speed fits the VIA custom config");
 
 #if VIA_ENABLE
 static void svalboard_get_magic(uint8_t *magic) {
@@ -313,6 +351,15 @@ static void pad_gestures_save(void) {
     uint8_t mode[SVAL_PAD_MODE_RECORD_BYTES];
     sval_pad_mode_record_write(pad_mode, mode);
     via_update_custom_config(mode, SVALBOARD_PAD_MODE_OFFSET, SVAL_PAD_MODE_RECORD_BYTES);
+    // Until the migration has settled each hand, the speeds in memory are a
+    // guess from the DPI: keep the old bytes, and the test build's record.
+    if (scroll_speed_pending == 0) {
+        uint8_t speed[SVAL_SCROLL_SPEED_RECORD_BYTES];
+        sval_scroll_speed_record_write(scroll_speed[0], scroll_speed[1], speed);
+        via_update_custom_config(speed, SVALBOARD_SCROLL_SPEED_OFFSET, SVAL_SCROLL_SPEED_RECORD_BYTES);
+        const uint8_t retired[SVAL_SCROLL_SPEED_LEGACY_BYTES] = {0, 0, 0};
+        via_update_custom_config(retired, SVALBOARD_SCROLL_LEGACY_OFFSET, SVAL_SCROLL_SPEED_LEGACY_BYTES);
+    }
 }
 
 static void pad_gestures_load(void) {
@@ -328,6 +375,23 @@ static void pad_gestures_load(void) {
     uint8_t mode[SVAL_PAD_MODE_RECORD_BYTES];
     via_read_custom_config(mode, SVALBOARD_PAD_MODE_OFFSET, SVAL_PAD_MODE_RECORD_BYTES);
     pad_mode_set(sval_pad_mode_record_read(mode));
+    uint8_t speed[SVAL_SCROLL_SPEED_RECORD_BYTES];
+    via_read_custom_config(speed, SVALBOARD_SCROLL_SPEED_OFFSET, SVAL_SCROLL_SPEED_RECORD_BYTES);
+    uint16_t sl, sr;
+    if (sval_scroll_speed_record_read(speed, &sl, &sr)) {
+        scroll_speed[0]      = sl;
+        scroll_speed[1]      = sr;
+        scroll_speed_pending = 0;
+    } else {
+        // First boot of this firmware: from the DPI now (as a trackball), and
+        // settled per hand once its module is known (sval_scroll_speed_task).
+        uint8_t legacy[SVAL_SCROLL_SPEED_LEGACY_BYTES];
+        via_read_custom_config(legacy, SVALBOARD_SCROLL_LEGACY_OFFSET, SVAL_SCROLL_SPEED_LEGACY_BYTES);
+        if (!sval_scroll_speed_legacy_read(legacy, &scroll_legacy_pct)) scroll_legacy_pct = 0;
+        scroll_speed[0]      = scroll_speed_from_saved_dpi(0, SVAL_SCROLL_KIND_BALL);
+        scroll_speed[1]      = scroll_speed_from_saved_dpi(1, SVAL_SCROLL_KIND_BALL);
+        scroll_speed_pending = 3;
+    }
 }
 
 void write_eeprom_kb(void) {
@@ -430,6 +494,8 @@ void read_eeprom_kb(void) {
         pad_tuning_set(0);
         pad_palm_set(0);
         pad_mode_set(SVAL_PAD_MODE_AUTO);
+        scroll_speed[0] = scroll_speed[1] = SVAL_SCROLL_SPEED_DEFAULT; // a new board starts at 1.0x on the default 800 DPI
+        scroll_speed_pending              = 0;
         write_eeprom_kb();
         svalboard_eeprom_set_valid();
     } else {
@@ -461,8 +527,6 @@ const char *yes_or_no(int flag) {
     }
 }
 
-const uint16_t dpi_choices[] = {200, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 12000}; // If we need more, add them.
-#define DPI_CHOICES_LENGTH (sizeof(dpi_choices) / sizeof(dpi_choices[0]))
 extern bool is_mac;
 
 // Boost state lives in keymaps/keymap_support.c; surfaced here for output_keyboard_info.
@@ -600,6 +664,8 @@ uint8_t sval_get_feature_flags3_kb(void) {
 // touchpad palm rejection (VIA value 58).
 uint8_t sval_get_feature_flags4_kb(void) {
     uint8_t flags = sval_pad_palm_supported() ? sval_flag4_pad_palm | sval_flag4_pad_mode : 0;
+    flags |= sval_flag4_scroll_speed;                                              // VIA values 61 and 62 (scroll_speed.h)
+    if (sval_pad_gestures_supported()) flags |= sval_flag4_pad_scroll_speed_alias; // VIA value 60, as the test build
 #ifdef CONSOLE_ENABLE
     flags |= sval_flag4_debug_console; // 0x3E (debug_console.c)
 #endif
@@ -961,6 +1027,65 @@ uint8_t sval_pad_hands(void) {
     return mask;
 }
 
+// The scroll kind of each hand's module (enum sval_scroll_kind), and whether
+// the hand has settled: its module answered, or the boot search gave up on one.
+#define SVAL_SCROLL_SETTLE_MS (SVAL_POINTER_PROBE_AFTER_MS + 1000)
+static bool scroll_hand_kind(uint8_t hand, uint8_t *kind) {
+    sval_pointer_identity_t id;
+    bool                    local;
+    *kind = SVAL_SCROLL_KIND_BALL;
+    if (!sval_pointer_for_hand(hand == 0, &id, &local)) return timer_read32() >= SVAL_SCROLL_SETTLE_MS; // no such half
+    if (id.detected == SVAL_SENSOR_AZOTEQ) *kind = SVAL_SCROLL_KIND_PAD;
+    if (id.detected == SVAL_SENSOR_TRACKPOINT) *kind = SVAL_SCROLL_KIND_TRACKPOINT;
+    if (id.detected == SVAL_SENSOR_NONE) return timer_read32() >= SVAL_SCROLL_SETTLE_MS;
+    if (id.detected == SVAL_SENSOR_NO_RESPONSE) return local ? sval_pointer_searched() : timer_read32() >= SVAL_SCROLL_SETTLE_MS;
+    return true;
+}
+
+// The kind of module a hand's scroll conversion uses, read every 100 ms.
+uint8_t sval_hand_scroll_kind(uint8_t hand) {
+    static uint8_t  kinds[2];
+    static uint32_t read_at;
+    static bool     read_once;
+    if (!read_once || timer_elapsed32(read_at) >= 100) {
+        read_once = true;
+        read_at   = timer_read32();
+        for (uint8_t h = 0; h < 2; h++) scroll_hand_kind(h, &kinds[h]);
+    }
+    return kinds[hand & 1];
+}
+
+// Once a hand's module is known (sval_scroll_migrate): its Scroll speed from
+// the DPI it had (or the test build's touchpad speed), then its saved DPI index
+// lowered to the pad's maximum, which changes nothing, since the pad stopped
+// gaining there. Run from the main loop.
+void sval_scroll_speed_task(void) {
+    if (!scroll_speed_pending && !scroll_dpi_pending) return;
+    bool changed = false;
+    for (uint8_t hand = 0; hand < 2; hand++) {
+        uint8_t kind;
+        if (!scroll_hand_kind(hand, &kind)) continue;
+        const uint8_t bit = 1u << hand;
+        uint8_t *idx = hand ? &global_saved_values.right_dpi_index : &global_saved_values.left_dpi_index;
+        uint16_t speed;
+        uint8_t  lower;
+        sval_scroll_migrate(kind, *idx, scroll_legacy_pct, dpi_choices, DPI_CHOICES_LENGTH, &speed, &lower);
+        if (scroll_speed_pending & bit) {
+            scroll_speed[hand] = speed;
+            scroll_speed_pending &= ~bit;
+            changed = true;
+        }
+        if (scroll_dpi_pending & bit) {
+            scroll_dpi_pending &= ~bit;
+            if (lower != *idx) {
+                *idx    = lower;
+                changed = true;
+            }
+        }
+    }
+    if (changed) write_eeprom_kb();
+}
+
 #ifdef SVAL_FRAGMENT_IDX_LEFT_POINTING
 // Each hand's pointing fragment (Sval 0x18) from the module identity 0x2C reports.
 // 0xFF until that half has settled: not checked yet, or its own module missing before the
@@ -1120,6 +1245,7 @@ void housekeeping_task_kb(void) {
     sval_touch_task();
 #endif
     sval_pointer_probe_task();
+    sval_scroll_speed_task();
 #ifdef SVAL_EITHER_HAND
     sval_side_task();
 #endif
@@ -1313,6 +1439,10 @@ enum sval_via_value_id {
     id_pad_palm = 58, // u16: a contact with more area than this, in channels, is a palm; 0 (the default) is off
     // The touchpad mode (pad_gestures.h), with sval_flag4_pad_mode:
     id_pad_touchpad_mode = 59, // 0 Automatic (the default): a touchpad when the OS asks; 1 built-in gestures always
+    // Scroll speed (scroll_speed.h), with sval_flag4_scroll_speed:
+    id_pad_scroll_speed_alias = 60, // u16: the touchpad hand's Scroll speed (an alias of 61 or 62, for the test build's Keybard)
+    id_scroll_speed_left      = 61, // u16: the left hand's Scroll speed, percent, 20-1000 (100 the default)
+    id_scroll_speed_right     = 62, // u16: the right hand's Scroll speed
 };
 
 void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
@@ -1459,6 +1589,19 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                 case id_pad_touchpad_mode:
                     pad_mode_set(value_data[0]);
                     break;
+                case id_scroll_speed_left:
+                case id_scroll_speed_right:
+                    scroll_speed_set(*value_id == id_scroll_speed_right, value_data[0] | (value_data[1] << 8));
+                    break;
+                case id_pad_scroll_speed_alias: {
+                    // Every touchpad hand, or the right one when no pad is known.
+                    uint8_t pads = sval_pad_hands();
+                    if (!pads) pads = 2;
+                    for (uint8_t hand = 0; hand < 2; hand++) {
+                        if (pads & (1u << hand)) scroll_speed_set(hand, value_data[0] | (value_data[1] << 8));
+                    }
+                    break;
+                }
                 case id_pad_scroll_start: {
                     // The build's own distance, as it reads back, is the build's own.
                     uint16_t mm = value_data[0] | (value_data[1] << 8);
@@ -1624,6 +1767,16 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                 case id_pad_touchpad_mode:
                     value_data[0] = pad_mode;
                     break;
+                case id_scroll_speed_left:
+                case id_scroll_speed_right:
+                case id_pad_scroll_speed_alias: {
+                    uint8_t hand = *value_id == id_scroll_speed_right;
+                    if (*value_id == id_pad_scroll_speed_alias) hand = (sval_pad_hands() & 1) ? 0 : 1; // the first touchpad hand, or the right one
+                    uint16_t v    = scroll_speed[hand];
+                    value_data[0] = v & 0xFF;
+                    value_data[1] = v >> 8;
+                    break;
+                }
                 case id_pad_dead_zone:
                 case id_pad_tap_ms:
                 case id_pad_scroll_start: {

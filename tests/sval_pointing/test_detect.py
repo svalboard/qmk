@@ -97,6 +97,16 @@ class VelocityScrollTests(unittest.TestCase):
             subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'pad_scroll_test.c'), str(ROOT / 'keyboards/svalboard/pad_scroll.c'), '-o', str(binary)], check=True)
             result = subprocess.run([str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn('pad_scroll OK', result.stdout)
+
+    def test_scroll_speed_math(self):
+        # scroll_speed.c: the trackball scaler, the saved record, the migration that keeps every hand's output, pad DPI normalization.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'scroll_speed'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'scroll_speed_test.c'), str(ROOT / 'keyboards/svalboard/scroll_speed.c'), str(ROOT / 'keyboards/svalboard/pad_scroll.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('scroll_speed OK', result.stdout)
 
     def test_axis_factor(self):
         # axis_scale.h: sniper and boost factors clamp to 255, never wrap.
