@@ -22,7 +22,7 @@ int main(void) {
     sval_pad_scroll(&s, 10, 0, -85, false, false, 100, &h, &v);
     CHECK(v == -60);
     // Mac: 180 pixels per count (a line), 1000 pixels in steps of 7 carry.
-    sval_pad_scroll_t m = {0};
+    sval_pad_scroll_t m   = {0};
     long              sum = 0;
     for (int i = 0; i < 1800; i++) {
         sval_pad_scroll(&m, (uint32_t)i, 0, 7, true, false, 100, &h, &v);

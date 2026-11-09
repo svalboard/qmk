@@ -138,5 +138,5 @@ extern uint16_t sval_leader_timeout;
 #    define DYNAMIC_KEYMAP_EEPROM_MAX_ADDR (SVAL_COMBO_LABEL_REGION_ADDR - 1)
 // VIA's layout stamp keeps using the buffer's original end (nvm_dynamic_keymap.c),
 // so this doesn't reset keymaps and macros.
-#    define DYNAMIC_KEYMAP_STAMP_MAX_ADDR ((WEAR_LEVELING_LOGICAL_SIZE)-1)
+#    define DYNAMIC_KEYMAP_STAMP_MAX_ADDR ((WEAR_LEVELING_LOGICAL_SIZE) - 1)
 #endif

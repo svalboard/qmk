@@ -10,11 +10,17 @@
 #define CONSTRAIN_HID_XY(v) (v)
 #define dprintf(...) printf(__VA_ARGS__)
 
-extern uint32_t sim_ms;
-extern uint32_t sim_stall_us; // wait_us time spent, to see how long the main loop is held
-static inline uint32_t timer_read32(void) { return sim_ms; }
-static inline uint32_t timer_elapsed32(uint32_t t) { return sim_ms - t; }
-static inline void     wait_us(uint32_t us) { sim_stall_us += us; }
+extern uint32_t        sim_ms;
+extern uint32_t        sim_stall_us; // wait_us time spent, to see how long the main loop is held
+static inline uint32_t timer_read32(void) {
+    return sim_ms;
+}
+static inline uint32_t timer_elapsed32(uint32_t t) {
+    return sim_ms - t;
+}
+static inline void wait_us(uint32_t us) {
+    sim_stall_us += us;
+}
 
 #define SPI_SCK_PIN 0
 #define SPI_MOSI_PIN 0

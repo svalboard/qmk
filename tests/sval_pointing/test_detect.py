@@ -103,7 +103,15 @@ class VelocityScrollTests(unittest.TestCase):
         # scroll_speed.c: the trackball scaler, the saved record, the migration that keeps every hand's output, pad DPI normalization.
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / 'scroll_speed'
-            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'scroll_speed_test.c'), str(ROOT / 'keyboards/svalboard/scroll_speed.c'), str(ROOT / 'keyboards/svalboard/pad_scroll.c'), '-o', str(binary)], check=True)
+            subprocess.run([
+                'gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I',
+                str(ROOT / 'keyboards/svalboard'),
+                str(HERE / 'scroll_speed_test.c'),
+                str(ROOT / 'keyboards/svalboard/scroll_speed.c'),
+                str(ROOT / 'keyboards/svalboard/pad_scroll.c'), '-o',
+                str(binary)
+            ],
+                           check=True)
             result = subprocess.run([str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('scroll_speed OK', result.stdout)
@@ -112,7 +120,16 @@ class VelocityScrollTests(unittest.TestCase):
         # pointer_speed.c: the TrackPoint's software speed (default 1:1, remainders carry, scroll independent) and each module's DPI maximum.
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / 'pointer_speed'
-            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'pointer_speed_test.c'), str(ROOT / 'keyboards/svalboard/pointer_speed.c'), str(ROOT / 'keyboards/svalboard/scroll_speed.c'), str(ROOT / 'keyboards/svalboard/pad_scroll.c'), '-o', str(binary)], check=True)
+            subprocess.run([
+                'gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I',
+                str(ROOT / 'keyboards/svalboard'),
+                str(HERE / 'pointer_speed_test.c'),
+                str(ROOT / 'keyboards/svalboard/pointer_speed.c'),
+                str(ROOT / 'keyboards/svalboard/scroll_speed.c'),
+                str(ROOT / 'keyboards/svalboard/pad_scroll.c'), '-o',
+                str(binary)
+            ],
+                           check=True)
             result = subprocess.run([str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('pointer_speed OK', result.stdout)
@@ -179,14 +196,14 @@ class VelocityScrollTests(unittest.TestCase):
         passthrough = passthrough[:passthrough.index(')\n')]
         self.assertIn('SV_VELOCITY_SCROLL_TOGGLE', passthrough)
 
+
 class PowerMenuTests(unittest.TestCase):
     """sval.json: scan and idle items live in their own menu, ids unchanged."""
 
-    SCAN_IDS = {'id_scan_prewait_us', 'id_scan_postwait_us', 'id_scan_period_us',
-                'id_scan_idle_period_ms', 'id_scan_idle_after_ms', 'id_scan_deep_after_s',
-                'id_scan_deep_period_ms', 'id_idle_pointer_rest', 'id_idle_rgb_dim',
-                'id_idle_cpu_sleep', 'id_idle_low_clock', 'id_idle_long_nap',
-                'id_scan_deep_clock_idx'}
+    SCAN_IDS = {
+        'id_scan_prewait_us', 'id_scan_postwait_us', 'id_scan_period_us', 'id_scan_idle_period_ms', 'id_scan_idle_after_ms', 'id_scan_deep_after_s', 'id_scan_deep_period_ms', 'id_idle_pointer_rest', 'id_idle_rgb_dim', 'id_idle_cpu_sleep',
+        'id_idle_low_clock', 'id_idle_long_nap', 'id_scan_deep_clock_idx'
+    }
 
     @staticmethod
     def _ids(node):
@@ -207,8 +224,7 @@ class PowerMenuTests(unittest.TestCase):
             menus = {m['label']: set(self._ids(m)) for m in data['menus']}
             self.assertEqual(menus['Power and scanning'], self.SCAN_IDS, keymap)
             self.assertFalse(menus['Pointing Device'] & self.SCAN_IDS, keymap)
-            self.assertNotIn('Advanced', [g['label'] for m in data['menus'] for g in m['content']
-                                          if 'content' in g and m['label'] == 'Pointing Device'])
+            self.assertNotIn('Advanced', [g['label'] for m in data['menus'] for g in m['content'] if 'content' in g and m['label'] == 'Pointing Device'])
 
 
 class PointingSensorTests(unittest.TestCase):

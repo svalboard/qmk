@@ -95,12 +95,12 @@ enum sval_command_id {
     sval_cmd_side                 = 0x33, // advertised by sval_flag2_side (either-hand builds)
     // 0x34-0x37 are allocated by the pointing tools branch and 0x3A by the
     // board ID record branch.
-    sval_cmd_main_board    = 0x38, // advertised by sval_flag3_main_board
+    sval_cmd_main_board      = 0x38, // advertised by sval_flag3_main_board
     sval_cmd_pointing_sensor = 0x39, // advertised by sval_flag4_pointing_sensor
-    sval_cmd_typing_pause  = 0x3C, // advertised by sval_flag3_typing_pause
-    sval_cmd_flicker_latch = 0x3D, // advertised by sval_flag3_flicker_latch
-    sval_cmd_debug_console = 0x3E, // advertised by sval_flag4_debug_console
-    sval_cmd_error         = 0xFF,
+    sval_cmd_typing_pause    = 0x3C, // advertised by sval_flag3_typing_pause
+    sval_cmd_flicker_latch   = 0x3D, // advertised by sval_flag3_flicker_latch
+    sval_cmd_debug_console   = 0x3E, // advertised by sval_flag4_debug_console
+    sval_cmd_error           = 0xFF,
 };
 
 // Feature capability flags (returned in protocol info)
@@ -141,9 +141,9 @@ enum sval_feature_flags3 {
 
 // Fourth feature byte, GET_INFO byte 21. Older firmware leaves it zero.
 enum sval_feature_flags4 {
-    sval_flag4_pad_palm      = (1 << 0), // VIA value 58: the touchpad palm rejection (native touchpad builds)
-    sval_flag4_pad_mode      = (1 << 1), // VIA value 59: touchpad mode, Automatic or built-in gestures (native touchpad builds)
-    sval_flag4_debug_console = (1 << 2), // 0x3E sets and reads QMK's debug flag (builds with the console)
+    sval_flag4_pad_palm        = (1 << 0), // VIA value 58: the touchpad palm rejection (native touchpad builds)
+    sval_flag4_pad_mode        = (1 << 1), // VIA value 59: touchpad mode, Automatic or built-in gestures (native touchpad builds)
+    sval_flag4_debug_console   = (1 << 2), // 0x3E sets and reads QMK's debug flag (builds with the console)
     sval_flag4_pointing_sensor = (1 << 3), // 0x39 reads each trackball sensor's SQUAL, raw data and shutter
     // Bit 3 is sval_flag4_pointing_sensor (0x39) on svalboard/qmk: never reuse it.
     sval_flag4_pad_scroll_speed_alias = (1 << 4), // VIA value 60: the touchpad hand's Scroll speed; the test build's bit, same meaning (Azoteq builds)
