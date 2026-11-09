@@ -58,7 +58,7 @@ int main(void) {
     CHECK(p.h == 0 && p.v == 0);
 
     // A fast spin at 1000% (1510 counts every 1 ms report): the backlog stops
-    // at SVAL_WHEEL_PACE_BACKLOG and drains within 100 reports of stopping.
+    // at SVAL_WHEEL_PACE_BACKLOG and drains within 40 reports of stopping.
     p = (sval_wheel_pace_t){0};
     for (int ms = 0; ms < 2000; ms++) {
         h = 0;
@@ -74,7 +74,7 @@ int main(void) {
         if (v == 0) break;
         drain++;
     }
-    CHECK(drain <= SVAL_WHEEL_PACE_BACKLOG / SVAL_WHEEL_PACE_MAX);
+    CHECK(drain <= 40);
     printf("worst-case drain %d reports (%d ms at 1 ms polling)\n", drain, drain);
 
     // Turning back drops the old backlog: the first report already goes the new way.

@@ -7,7 +7,8 @@
 // scroll, Velocity Scroll) can put several detents in one report, and more
 // with a higher Scroll speed. This caps each report at one detent per axis and
 // carries the rest into the following reports, so the total is unchanged and
-// only spread over a few milliseconds (one report per 1 ms USB poll).
+// only spread over a few milliseconds (a report every 2 to 3 ms, measured on
+// a trackball pair).
 //
 // Windows Terminal also drops what a report carries past the 120 that
 // completes a detent (it clears its running total on each event it sends).
@@ -15,8 +16,8 @@
 // report carries 60, then whole detents. The boundary is counted from the
 // last change of direction, as the terminal counts it.
 //
-// A backlog is bounded to SVAL_WHEEL_PACE_BACKLOG counts (about 100 ms of
-// reports) so a fast spin never builds lag; anything over it is dropped.
+// A backlog is bounded to SVAL_WHEEL_PACE_BACKLOG counts (40 reports, about
+// 100 ms) so a fast spin never builds lag; anything over it is dropped.
 // Reversing direction drops the backlog of the old direction at once.
 // macOS reads each count as a line rather than 1/120 of a detent, so on a Mac
 // reports pass through unchanged.
@@ -26,7 +27,7 @@
 
 #define SVAL_WHEEL_PACE_MAX 120
 #ifndef SVAL_WHEEL_PACE_BACKLOG
-#    define SVAL_WHEEL_PACE_BACKLOG (SVAL_WHEEL_PACE_MAX * 100)
+#    define SVAL_WHEEL_PACE_BACKLOG (SVAL_WHEEL_PACE_MAX * 40)
 #endif
 
 typedef struct {
