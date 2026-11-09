@@ -15,6 +15,12 @@ bool     sval_ps2_drv_init(void);
 uint16_t sval_ps2_drv_get_cpi(void);
 void     sval_ps2_drv_set_cpi(uint16_t cpi);
 
+// Records the Pointer speed for sval_tp_get_report, then the PS/2 module's own (a no-op).
+static void sval_tp_set_cpi(uint16_t cpi) {
+    sval_tp_apply_cpi(cpi);
+    sval_ps2_drv_set_cpi(cpi);
+}
+
 static bool sval_tp_init(void) {
     bool ok = sval_ps2_drv_init();
     sval_tp_setup();
@@ -26,7 +32,7 @@ const sval_pointer_driver_t sval_driver_trackpoint = {
     .init        = sval_tp_init,
     .get_report  = sval_tp_get_report,
     .get_cpi     = sval_ps2_drv_get_cpi,
-    .set_cpi     = sval_ps2_drv_set_cpi,
+    .set_cpi     = sval_tp_set_cpi,
     .identity    = sval_tp_identity,
     .recalibrate = sval_tp_recalibrate,
 };

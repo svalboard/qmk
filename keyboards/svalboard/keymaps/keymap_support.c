@@ -24,6 +24,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "caps_word.h"
 #include "pointing_motion.h"
 #include "velocity_scroll.h"
+#include "pad_scroll.h"
+#include "scroll_speed.h"
 #include <string.h>
 #ifdef SVAL_NATIVE_PTP
 #    include "../azoteq/ptp.h"
@@ -56,8 +58,6 @@ void mouse_mode(bool);
 
 
 #define SCROLL_FREQUENCY_MS 10
-#define SCROLL_DIVISOR 1
-#define SCROLL_MULTIPLIER 1
 bool mouse_mode_enabled = false;
 
 // Automouse threshold accumulator (normalized to 800 DPI, fixed point: AUTOMOUSE_FP_SCALE units per count)
@@ -65,10 +65,10 @@ bool mouse_mode_enabled = false;
 static int32_t automouse_accumulator = 0;
 static uint16_t automouse_accumulator_timer = 0;
 
-axis_scale_t l_x = {1, SCROLL_DIVISOR, SCROLL_MULTIPLIER};
-axis_scale_t l_y = {1, SCROLL_DIVISOR, SCROLL_MULTIPLIER};
-axis_scale_t r_x = {1, SCROLL_DIVISOR, SCROLL_MULTIPLIER};
-axis_scale_t r_y = {1, SCROLL_DIVISOR, SCROLL_MULTIPLIER};
+// A hand's motion in Scroll Mode, on a Scroll key or as Drag Scroll, as wheel
+// counts: millimeters, then the fixed base rate, then the hand's Scroll speed
+// (scroll_speed.h). The Mac divider applies after the multiplier.
+static sval_ball_scroll_t ball_scroll_state[2];
 
 #define MAC_DIVISOR 12
 bool is_mac = false;
@@ -80,24 +80,46 @@ bool process_detected_host_os_kb(os_variant_t os) {
     switch (os) {
         case OS_MACOS:
         case OS_IOS:
-            set_div_axis(&l_x, MAC_DIVISOR);
-            set_div_axis(&l_y, MAC_DIVISOR);
-            set_div_axis(&r_x, MAC_DIVISOR);
-            set_div_axis(&r_y, MAC_DIVISOR);
-	    is_mac = true;
+            is_mac = true;
             break;
         default:
-            set_div_axis(&l_x, SCROLL_DIVISOR);
-            set_div_axis(&l_y, SCROLL_DIVISOR);
-            set_div_axis(&r_x, SCROLL_DIVISOR);
-            set_div_axis(&r_y, SCROLL_DIVISOR);
-	    is_mac = false;
-	    break;
+            is_mac = false;
+            break;
     }
     return true;
 }
 
 axis_scale_t sniper_x = {1, 1, 0};
+
+// A pad's two-finger scroll (the chip's pixels in h and v) as wheel counts.
+static sval_pad_scroll_t pad_scroll_state[2];
+#ifdef SVAL_TOUCH_DEV
+static int16_t dev_inject_h, dev_inject_v;
+// Dev builds only (raw HID 0xFC op 0x42, action 3): force the Mac scaling on
+// or off, and add pad scroll pixels to the left pad's next report.
+void sval_dev_pad_scroll(bool mac, int16_t h, int16_t v) {
+    is_mac        = mac;
+    dev_inject_h += h;
+    dev_inject_v += v;
+}
+#endif
+
+static void pad_scroll_scale(report_mouse_t *left, report_mouse_t *right) {
+    report_mouse_t *hands[2] = {left, right};
+#ifdef SVAL_TOUCH_DEV
+    left->h += dev_inject_h;
+    left->v += dev_inject_v;
+    dev_inject_h = dev_inject_v = 0;
+#endif
+    for (uint8_t hand = 0; hand < 2; hand++) {
+        report_mouse_t *r = hands[hand];
+        if (r->h == 0 && r->v == 0) continue;
+        int16_t h, v;
+        sval_pad_scroll(&pad_scroll_state[hand], timer_read32(), r->h, r->v, is_mac, global_saved_values.axis_scroll_lock && !is_mac, sval_scroll_speed(hand), &h, &v);
+        r->h = h;
+        r->v = v;
+    }
+}
 axis_scale_t sniper_y = {1, 1, 0};
 axis_scale_t sniper_h = {1, 1, 0};
 axis_scale_t sniper_v = {1, 1, 0};
@@ -423,6 +445,23 @@ static void pad_drive(report_mouse_t *left, report_mouse_t *right) {
 
 #endif
 
+// One hand's x and y become its scroll h and v. mm_h and mm_v get the counts
+// over the hand's DPI, x 100000 (the unit the axis lock thresholds are in).
+static void hand_scroll_convert(uint8_t hand, report_mouse_t *r, int32_t *mm_h, int32_t *mm_v) {
+    const uint8_t  kind = sval_hand_scroll_kind(hand);
+    const uint16_t dpi  = (uint16_t)(hand ? get_right_dpi() : get_left_dpi());
+    const uint16_t dx   = sval_scroll_motion_dpi(kind, dpi, false);
+    const uint16_t dy   = sval_scroll_motion_dpi(kind, dpi, true);
+    int16_t        h, v;
+    *mm_h = ((int32_t)r->x * 100000) / dx;
+    *mm_v = ((int32_t)-r->y * 100000) / dy;
+    sval_ball_scroll(&ball_scroll_state[hand], r->x, -r->y, dx, dy, sval_scroll_speed(hand), is_mac, &h, &v);
+    r->h = h;
+    r->v = v;
+    r->x = 0;
+    r->y = 0;
+}
+
 report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, report_mouse_t reportMouse2) {
     report_mouse_t ret_mouse;
 
@@ -431,6 +470,8 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     pad_drive(&reportMouse1, &reportMouse2);
 #endif
     if (vs.active) return velocity_scroll_report(reportMouse1, reportMouse2);
+
+    pad_scroll_scale(&reportMouse1, &reportMouse2);
 
     if (any_sniper_active()) {
         reportMouse1.x = add_to_axis(&sniper_x, reportMouse1.x);
@@ -461,8 +502,12 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     sval_ptp_automouse();
 #endif
 
-    if (reportMouse1.x == 0 && reportMouse1.y == 0 && reportMouse2.x == 0 && reportMouse2.y == 0)
-        return pointing_device_combine_reports(reportMouse1, reportMouse2);
+    if (reportMouse1.x == 0 && reportMouse1.y == 0 && reportMouse2.x == 0 && reportMouse2.y == 0) {
+        // A pad's two-finger scroll, already in wheel counts (pad_scroll_scale).
+        ret_mouse = pointing_device_combine_reports(reportMouse1, reportMouse2);
+        if (global_saved_values.natural_scroll) ret_mouse.v = -ret_mouse.v;
+        return ret_mouse;
+    }
 
     // Track scroll input BEFORE division (h/v after division may be 0 due to accumulation)
     bool left_scrolling = hand_scrolling(0);
@@ -496,19 +541,14 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
         }
     }
 
+    // The motion in millimeters (counts over the hand's resolution) for the
+    // axis lock below, before the Scroll speed scales it.
+    int32_t mm_h[2] = {0, 0}, mm_v[2] = {0, 0};
     if (left_scrolling) {
-        reportMouse1.h = add_to_axis(&l_x, reportMouse1.x);
-        reportMouse1.v = add_to_axis(&l_y, -reportMouse1.y);
-
-        reportMouse1.x = 0;
-        reportMouse1.y = 0;
+        hand_scroll_convert(0, &reportMouse1, &mm_h[0], &mm_v[0]);
     }
     if (right_scrolling) {
-        reportMouse2.h = add_to_axis(&r_x, reportMouse2.x);
-        reportMouse2.v = add_to_axis(&r_y, -reportMouse2.y);
-
-        reportMouse2.x = 0;
-        reportMouse2.y = 0;
+        hand_scroll_convert(1, &reportMouse2, &mm_h[1], &mm_v[1]);
     }
 
     if (has_scroll_input && !scroll_timer_running) {
@@ -517,10 +557,8 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     }
 
     if (scroll_timer_running) {
-        m_scroll_accumulator_h += ((int32_t)reportMouse1.h * 100000) / get_left_dpi();
-	m_scroll_accumulator_v += ((int32_t)reportMouse1.v * 100000) / get_left_dpi();
-	m_scroll_accumulator_h += ((int32_t)reportMouse2.h * 100000) / get_right_dpi();
-	m_scroll_accumulator_v += ((int32_t)reportMouse2.v * 100000) / get_right_dpi();
+        m_scroll_accumulator_h += mm_h[0] + mm_h[1];
+        m_scroll_accumulator_v += mm_v[0] + mm_v[1];
 
         scroll_accumulator_h += reportMouse1.h + reportMouse2.h;
         scroll_accumulator_v += reportMouse1.v + reportMouse2.v;
