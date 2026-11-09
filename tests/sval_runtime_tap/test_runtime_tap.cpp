@@ -76,6 +76,25 @@ TEST_F(RuntimeTap, SendStringAndSendCharPreserveFullRuntimeDelay) {
         expect_timed_tap(driver, KC_B, delay, [] { send_char('b'); });
     }
 }
+TEST_F(RuntimeTap, NonAsciiBytesAreSkippedWithoutAKeypress) {
+    TestDriver driver;
+    // "µ" in UTF-8 is C2 B5; only the ASCII letters around it are typed.
+    {
+        InSequence order;
+        EXPECT_REPORT(driver, (KC_A));
+        EXPECT_EMPTY_REPORT(driver);
+        EXPECT_REPORT(driver, (KC_B));
+        EXPECT_EMPTY_REPORT(driver);
+        send_string("a\xC2\xB5"
+                    "b");
+        testing::Mock::VerifyAndClearExpectations(&driver);
+    }
+    EXPECT_NO_REPORT(driver);
+    for (int c = 128; c < 256; c++) {
+        send_char((char)c);
+    }
+    testing::Mock::VerifyAndClearExpectations(&driver);
+}
 TEST_F(RuntimeTap, ExplicitStringDelayStillOverridesRuntimeDefault) {
     TestDriver driver;
     code_delay = 300;

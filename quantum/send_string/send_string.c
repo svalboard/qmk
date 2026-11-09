@@ -214,6 +214,9 @@ void send_char(char ascii_code) {
 }
 
 void send_char_with_delay(char ascii_code, send_string_interval_t interval) {
+    // The lookup tables cover ASCII only; skip other bytes (such as UTF-8 in a macro).
+    if ((uint8_t)ascii_code >= 128) return;
+
 #if defined(AUDIO_ENABLE) && defined(SENDSTRING_BELL)
     if (ascii_code == '\a') { // BEL
         PLAY_SONG(bell_song);
