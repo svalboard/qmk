@@ -20,7 +20,7 @@
 #include "update_led.h"
 
 #ifndef RGBLIGHT_CUSTOM
-#    error "updater: the LED gate needs RGBLIGHT_DRIVER = custom (keyboards/svalboard/rules.mk)"
+#    error "updater: the LED gate needs RGBLIGHT_DRIVER = custom (keyboards/svalboard/updater/updater.mk)"
 #endif
 
 #define CONFIRM_PERIOD_MS 500 // blue blink, 2 Hz, so it differs from the 1 Hz error blink

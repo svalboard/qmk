@@ -7,9 +7,7 @@
 #include "split_util.h"
 #include "squal.h"
 #include <string.h>
-#ifdef SVAL_UPDATER
-#    include "split_pause.h"
-#endif
+#include "updater/updater_api.h"
 
 static bool              capable;
 static bool              is3389;
@@ -80,9 +78,7 @@ bool sval_squal_split_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, ui
 
 // The other half's reply to [op][arg], or false when it can't answer now.
 static bool remote(uint8_t op, uint16_t arg, uint8_t *out) {
-#ifdef SVAL_UPDATER
-    if (sval_split_paused()) return false;
-#endif
+    if (updater_split_paused()) return false;
     if (!is_transport_connected()) return false;
     uint8_t req[4] = {SVAL_SQUAL_RPC_OP, op, (uint8_t)arg, (uint8_t)(arg >> 8)};
     uint8_t reply[SVAL_SQUAL_RPC_REPLY];

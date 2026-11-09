@@ -22,9 +22,7 @@
 #include "pad_gestures.h"
 #include "pad_touch.h"
 #include <string.h>
-#ifdef SVAL_UPDATER
-#    include "updater/updater.h"
-#endif
+#include "updater/updater_api.h"
 
 #define SVAL_TOUCH_RPC_OP 0xA8                                                    // [op] -> [op][bit 0 a block][16-byte block]
 #define SVAL_TOUCH_RPC_REPLY (2 + SVAL_TOUCH_BLOCK_BYTES + SVAL_TOUCH_SIZE_BYTES) // [op][bit 0 a block][block][size]
@@ -195,9 +193,7 @@ void sval_touch_task(void) {
     if (!is_keyboard_master() || !(wanted() || fingers_wanted())) return;
     const uint8_t other = is_keyboard_left() ? 2 : 1;
     if (!(sval_pad_hands() & other) || !is_transport_connected()) return;
-#ifdef SVAL_UPDATER
-    if (updater_active()) return;
-#endif
+    if (updater_busy()) return;
     if (fingers_wanted()) fetch_fingers();
     if (!wanted() || timer_elapsed32(fetched_at) < SVAL_TOUCH_FETCH_MS) return;
     fetched_at                             = timer_read32();

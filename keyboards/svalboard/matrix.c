@@ -25,13 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "print.h"
 #include "svalboard.h"
 #include "scanlab.h"
-#ifdef SVAL_UPDATER
-#    include "updater/updater.h"
-#    include "updater/update_gesture.h"
-#    define sval_updater_busy() updater_active()
-#else
-#    define sval_updater_busy() false
-#endif
+#include "updater/updater_api.h"
 
 #define ROWS_PER_HAND 5
 
@@ -273,7 +267,7 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
     // Pacing gate (sweeps run unpaced so they finish quickly). An update in
     // progress gets the same treatment: full clock, no deep idle or long naps.
     uint32_t now = now_us();
-    if (!scanlab_active() && !sval_updater_busy()) {
+    if (!scanlab_active() && !updater_busy()) {
         uint32_t period  = sval_scan_period_now(&idle_stage);
         uint8_t  flags   = global_saved_values.idle_flags;
         // A config app mid-conversation needs the main loop running at its normal rate: the
@@ -322,12 +316,10 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
     led_on_acc_us  = 0;
 
     sval_scan_timing(&cur_prewait_us, &cur_postwait_us);
-#ifdef SVAL_UPDATER
     // While the chord is awaited, never shorter than Scan Lab's safe timing:
     // the timing above is the host's to choose.
     _Static_assert(SVAL_UPDATE_CHORD_PREWAIT_US >= SCANLAB_SAFE_PREWAIT_US && SVAL_UPDATE_CHORD_POSTWAIT_US >= SCANLAB_SAFE_POSTWAIT_US, "chord timing");
-    update_gesture_timing(&cur_prewait_us, &cur_postwait_us);
-#endif
+    updater_matrix_timing(&cur_prewait_us, &cur_postwait_us);
     // Set row, read cols
     for (uint8_t current_row = 0; current_row < (ROWS_PER_HAND); current_row++) {
         matrix_read_cols_on_row(curr_matrix, current_row);
@@ -346,11 +338,9 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
     extern void sval_perf_matrix(const matrix_row_t *rows, uint8_t count);
     sval_perf_matrix(curr_matrix, ROWS_PER_HAND);
 #endif
-#ifdef SVAL_UPDATER
     // The updater's confirmation chord is read here, and its keys removed,
     // before debounce and key processing see this frame.
-    update_gesture_scan(curr_matrix);
-#endif
+    updater_matrix_scan(curr_matrix);
 
     // While a Scan Lab sweep runs, frames feed the engine and never become key events.
     if (scanlab_active()) {

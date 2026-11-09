@@ -7,9 +7,7 @@
 #include "split_util.h"
 #include "flicker_latch.h"
 #include <string.h>
-#ifdef SVAL_UPDATER
-#    include "split_pause.h"
-#endif
+#include "updater/updater_api.h"
 
 #define HALF_ROWS (MATRIX_ROWS / 2)
 _Static_assert(MATRIX_COLS <= 8, "one byte per row");
@@ -67,9 +65,7 @@ bool sval_flicker_split_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, 
 
 // The other half's reply to [op][what], or false when it can't answer now.
 static bool remote(uint8_t what, uint8_t *reply) {
-#ifdef SVAL_UPDATER
-    if (sval_split_paused()) return false;
-#endif
+    if (updater_split_paused()) return false;
     if (!is_transport_connected()) return false;
     uint8_t req[2] = {SVAL_FLICKER_RPC_OP, what};
     return transaction_rpc_exec(KEYBOARD_SYNC_B, sizeof(req), req, SVAL_FLICKER_RPC_REPLY, reply) && reply[0] == SVAL_FLICKER_RPC_OP;

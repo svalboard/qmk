@@ -37,10 +37,10 @@
 #ifdef SVAL_PERF_STATS
 #    include "perf.h"
 #endif
+#include "updater/updater_api.h"
 #ifdef SVAL_UPDATER
-#    include "updater/updater.h"
-#    include "updater/update_split.h"
-#    include "split_pause.h"
+// The presence ping and reply carry updater fields only in updater builds
+// (svalboard.h): a data layout, so these stay compile-time.
 #    include "split_common/transport.h"
 _Static_assert(sizeof(((presence_rsp_t *)0)->update) == UPDATE_PRESENCE_BYTES, "presence reply: update_presence_t");
 _Static_assert(sizeof(presence_rsp_t) <= RPC_S2M_BUFFER_SIZE, "presence reply fits the split RPC buffer");
@@ -877,9 +877,7 @@ void keyboard_post_init_kb(void) {
     set_dpi_from_eeprom();
     keyboard_post_init_user();
     scanlab_init();
-#ifdef SVAL_UPDATER
-    update_split_init(); // before kb_sync_listener can answer a presence ping
-#endif
+    updater_kb_init(); // before kb_sync_listener can answer a presence ping
     transaction_register_rpc(KEYBOARD_SYNC_A, kb_sync_listener);
     transaction_register_rpc(KEYBOARD_SYNC_B, scanlab_rpc_listener);
     if (is_keyboard_master()) {
@@ -1142,30 +1140,18 @@ void housekeeping_task_kb(void) {
 #ifdef SVAL_KEYTEST
     keytest_task();
 #endif
-#ifdef SVAL_UPDATER
     // The updater owns the LEDs and the flash while active: no idle dimming,
     // and no identity reboot. On the half without USB, the session the other
     // half runs over KEYBOARD_UPDATE does its slow work here first (M2).
-    if (!is_keyboard_master()) update_split_slave_task();
-    updater_task();
-    if (!updater_active()) identity_task();
-#else
-    identity_task();
-#endif
+    updater_kb_task();
+    if (!updater_busy()) identity_task();
 
     if (is_keyboard_master()) {
-#ifdef SVAL_UPDATER
-        if (!updater_active())
-#endif
-            sval_rgb_idle_task();
+        if (!updater_busy()) sval_rgb_idle_task();
         static uint32_t last_ping = 0;
-#ifdef SVAL_UPDATER
         // No presence ping while the split link is paused (D15); the first
         // pass after the resume pings.
-        if (timer_elapsed(last_ping) > 500 && !sval_split_paused()) {
-#else
-        if (timer_elapsed(last_ping) > 500) {
-#endif
+        if (timer_elapsed(last_ping) > 500 && !updater_split_paused()) {
             presence_rpc_t rpcout;
             presence_fill(&rpcout, sval_link_quiet() ? SVAL_LINK_QUIET_SUSPEND : 0);
             if (rgb_resyncs) { // a few pings after a pairing: resend the whole lighting state
@@ -1195,18 +1181,13 @@ void housekeeping_task_kb(void) {
                     is_connected = true;
                     sval_rgb_resync(); // the other half may have restarted (it is powered over the cable)
                     rgb_resyncs = SVAL_RGB_SYNC_PINGS;
-#ifdef SVAL_UPDATER
                     // D21: no settings write while an update runs (the other
                     // half reconnects after its commit, while this one may be
                     // staging its own update).
-                    if (!updater_active())
-#endif
-                        sval_on_reconnect();
+                    if (!updater_busy()) sval_on_reconnect();
                 }
             } else {
-#ifdef SVAL_UPDATER
-                update_split_presence_result(false, NULL, 0);
-#endif
+                updater_kb_presence_lost();
                 sval_other_board_set(NULL);
 #ifdef SVAL_EITHER_HAND
                 sval_side_other_set(false, false, SVAL_SIDE_UNKNOWN);
@@ -1340,12 +1321,7 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
         identity_via_command(data, length);
         return;
     }
-#    ifdef SVAL_UPDATER
-    if (data[1] == UPDATE_CHANNEL) {
-        updater_via_command(data, length);
-        return;
-    }
-#    endif
+    if (updater_kb_via_command(data, length)) return;
     uint8_t  command    = data[0];
     uint8_t *value_id   = &data[2];
     uint8_t *value_data = &data[3];

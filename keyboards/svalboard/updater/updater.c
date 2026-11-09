@@ -172,11 +172,9 @@
 #include "update_build_info.h"
 #include "update_gesture.h"
 #include "update_led.h"
-#include "link_light.h"
 #include "update_commit.h"
 #include "update_split.h"
 #include "update_pair.h"   // the boot relay of a pair UF2 (docs/pair-uf2.md)
-#include "build_reset.h" // BUILD_RESET_TO_* (SETTINGS_RESET modes, D44)
 #include "sha512.h" // vendor/: SHA-512 from Monocypher
 
 #ifdef SVAL_UPDATER_HOST_TEST
@@ -1433,7 +1431,6 @@ void updater_host_reset(void) {
 #    include "client_wrapper.h"
 _Static_assert(WRAPPER_BYTES == CLIENT_WRAPPER_OVERHEAD, "the client wrapper's header");
 #    include "scanlab.h"
-#    include "build_reset.h"
 #    include "quantum.h" // soft_reset_keyboard
 #    include "hardware/structs/rosc.h"
 #    ifdef EEPROM_WEAR_LEVELING

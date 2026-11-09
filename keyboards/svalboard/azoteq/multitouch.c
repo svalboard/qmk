@@ -24,12 +24,7 @@
 #    include "split_util.h"
 #    include "svalboard.h"
 #    include <string.h>
-#    ifdef SVAL_UPDATER
-#        include "updater/updater.h"
-#        define mt_updater_busy() updater_active()
-#    else
-#        define mt_updater_busy() false
-#    endif
+#    include "updater/updater_api.h"
 static inline uint32_t mt_now_us(void) {
     return (uint32_t)chVTGetSystemTimeX();
 }
@@ -356,7 +351,7 @@ static bool remote_rpc(const uint8_t *req, uint8_t req_len, uint8_t *reply) {
 #endif
 }
 static bool remote_rpc_exec(const uint8_t *req, uint8_t req_len, uint8_t *reply) {
-    if (mt_updater_busy() || !is_transport_connected()) return false;
+    if (updater_busy() || !is_transport_connected()) return false;
 #ifdef SVAL_PERF_STATS
     uint8_t perf_prev = sval_perf_enter(SVAL_PERF_GAP_FETCH);
     bool    ok        = transaction_rpc_exec(KEYBOARD_SYNC_B, req_len, req, SVAL_MT_RPC_REPLY, reply);
@@ -397,7 +392,7 @@ static void poll_remote(void) {
         remote_seen = remote_lost = remote_hints = remote_empty = false;
         return;
     }
-    if (mt_updater_busy()) { // the update owns the split link: lift, fetch nothing
+    if (updater_busy()) { // the update owns the split link: lift, fetch nothing
         remote_gone(pad);
         return;
     }
@@ -577,7 +572,7 @@ static void check_pads(void) {
 
 void sval_mt_task(void) {
     // A chip that reset is set up again (on either half), never in a loop.
-    if (reinit_pending && !mt_updater_busy() && (!reinit_done || timer_elapsed32(reinit_at) >= MT_REINIT_MIN_MS)) {
+    if (reinit_pending && !updater_busy() && (!reinit_done || timer_elapsed32(reinit_at) >= MT_REINIT_MIN_MS)) {
         reinit_pending = false;
         reinit_done    = true;
         reinit_at      = timer_read32();
@@ -586,7 +581,7 @@ void sval_mt_task(void) {
     }
     if (!is_keyboard_master()) return;
     check_pads();
-    sval_ptp_set_paused(mt_updater_busy());
+    sval_ptp_set_paused(updater_busy());
     // The other half's pad is fetched while the touchpad wants frames, and,
     // to find out that it can be part of it, whenever the owner is native.
     const uint8_t remote_hand = is_keyboard_left() ? 2 : 1;
