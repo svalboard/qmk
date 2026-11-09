@@ -75,7 +75,7 @@ int main(void) {
         drain++;
     }
     CHECK(drain <= 40);
-    printf("worst-case drain %d reports (%d ms at 1 ms polling)\n", drain, drain);
+    printf("worst-case drain %d reports\n", drain);
 
     // Turning back drops the old backlog: the first report already goes the new way.
     p = (sval_wheel_pace_t){0};
