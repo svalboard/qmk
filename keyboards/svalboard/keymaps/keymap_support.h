@@ -56,15 +56,51 @@ enum my_keycodes {
     SV_BOOST_5_TG,      // pos 29
     SV_VELOCITY_SCROLL, // pos 30 — hold: pointer offset sets a scroll speed (velocity_scroll.h)
     SV_VELOCITY_SCROLL_TOGGLE, // pos 31 — tap on, tap off; otherwise as SV_VELOCITY_SCROLL. The GUI cap is QK_USER_31 inclusive: this is the last slot
-    KC_NORMAL_HOLD = SAFE_RANGE,
-    KC_FUNC_HOLD,
-    SV_SAFE_RANGE, // Keycodes over this are safe on Svalboard.
+    // First keycode a custom keymap may define. SAFE_RANGE (QK_USER_0) is
+    // not safe here: QK_USER_0..QK_USER_31 are the Svalboard keycodes above.
+    // Start custom keymap keycodes at SV_SAFE_RANGE, for example
+    // `enum { MY_KEY = SV_SAFE_RANGE, MY_OTHER_KEY };`.
+    SV_SAFE_RANGE = QK_USER_31 + 1,
 };
 
 #define MH_AUTO_BUTTONS_LAYER (DYNAMIC_KEYMAP_LAYER_COUNT - 1)
 
-_Static_assert((int)SV_VELOCITY_SCROLL == (int)QK_USER_30, "sval.json customKeycodes position 30");
-_Static_assert((int)SV_VELOCITY_SCROLL_TOGGLE == (int)QK_USER_31, "sval.json customKeycodes position 31, the last the GUI addresses");
+// Every SV_ keycode keeps its QK_USER_n value: sval.json's customKeycodes
+// (keymaps/*/sval.json) address them by position n.
+#define SV_KC_AT(kc, n) _Static_assert((int)(kc) == (int)QK_USER_##n, #kc " must be QK_USER_" #n " (sval.json customKeycodes position " #n ")")
+SV_KC_AT(SV_LEFT_DPI_INC, 0);
+SV_KC_AT(SV_LEFT_DPI_DEC, 1);
+SV_KC_AT(SV_RIGHT_DPI_INC, 2);
+SV_KC_AT(SV_RIGHT_DPI_DEC, 3);
+SV_KC_AT(SV_LEFT_SCROLL_TOGGLE, 4);
+SV_KC_AT(SV_RIGHT_SCROLL_TOGGLE, 5);
+SV_KC_AT(SV_RECALIBRATE_POINTER, 6);
+SV_KC_AT(SV_MH_CHANGE_TIMEOUTS, 7);
+SV_KC_AT(SV_CAPS_WORD, 8);
+SV_KC_AT(SV_AXIS_SCROLL_LOCK, 9);
+SV_KC_AT(SV_TOGGLE_23_67, 10);
+SV_KC_AT(SV_TOGGLE_45_67, 11);
+SV_KC_AT(SV_SNIPER_2, 12);
+SV_KC_AT(SV_SNIPER_3, 13);
+SV_KC_AT(SV_SNIPER_5, 14);
+SV_KC_AT(SV_SCROLL_HOLD, 15);
+SV_KC_AT(SV_SCROLL_TOGGLE, 16);
+SV_KC_AT(SV_OUTPUT_STATUS, 17);
+SV_KC_AT(SV_TOGGLE_AUTOMOUSE, 18);
+SV_KC_AT(SV_TURBO_SCAN, 19);
+SV_KC_AT(SV_NATURAL_SCROLL_TOGGLE, 20);
+SV_KC_AT(SV_SNIPER_2_TG, 21);
+SV_KC_AT(SV_SNIPER_3_TG, 22);
+SV_KC_AT(SV_SNIPER_5_TG, 23);
+SV_KC_AT(SV_BOOST_2, 24);
+SV_KC_AT(SV_BOOST_3, 25);
+SV_KC_AT(SV_BOOST_5, 26);
+SV_KC_AT(SV_BOOST_2_TG, 27);
+SV_KC_AT(SV_BOOST_3_TG, 28);
+SV_KC_AT(SV_BOOST_5_TG, 29);
+SV_KC_AT(SV_VELOCITY_SCROLL, 30);
+SV_KC_AT(SV_VELOCITY_SCROLL_TOGGLE, 31);
+_Static_assert((int)SV_SAFE_RANGE > (int)SV_VELOCITY_SCROLL_TOGGLE, "SV_SAFE_RANGE must be past the last Svalboard keycode");
 
 // Velocity Scroll is on (its key held, its toggle on, or the touchpad dev command).
 bool velocity_scroll_active(void);

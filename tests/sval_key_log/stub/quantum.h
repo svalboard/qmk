@@ -31,3 +31,6 @@ extern bool debug_enable;
 // The console: QMK's uprintf goes to the console HID interface.
 int console_printf(const char *fmt, ...);
 #define uprintf(...) console_printf(__VA_ARGS__)
+
+// QMK's get_keycode_string (quantum/keycode_string.h); the test returns a fixed name.
+const char *get_keycode_string(uint16_t keycode);
