@@ -24,7 +24,7 @@
 #endif
 
 #ifndef SVAL_FW_VERSION
-#    define SVAL_FW_VERSION 0 // numeric release version: rules.mk sets it from updater/fw_version.txt (D17, D32)
+#    define SVAL_FW_VERSION 0 // numeric release version: updater/updater.mk sets it from updater/fw_version.txt (D17, D32)
 #endif
 
 // From housekeeping, every pass. Runs the timeouts, one slice of slow work and

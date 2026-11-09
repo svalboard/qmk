@@ -1074,8 +1074,6 @@ void update_split_host_master_reset(void) {
 #    include "split_common/transactions.h"
 #    include "synchronization_util.h"
 #    include "version.h" // QMK_GIT_HASH
-#    include "split_pause.h"
-#    include "build_reset.h"
 #    include "updater.h"
 #    include "hardware/sync.h"
 #    include "hardware/regs/addressmap.h"
