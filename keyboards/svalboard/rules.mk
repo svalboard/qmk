@@ -89,6 +89,17 @@ ifeq ($(strip $(SVAL_PERF_STATS)), yes)
   SRC += perf.c
 endif
 
+# Scroll test motion (scroll_test.h: raw HID 0xFC op 0x44, synthetic sensor
+# motion for unattended wheel measurements). Dev builds only: opt in with
+# -e SVAL_SCROLL_TEST=yes; release builds refuse it.
+ifeq ($(strip $(SVAL_SCROLL_TEST)), yes)
+  ifeq ($(strip $(SVAL_UPDATE_RELEASE)), yes)
+    $(error SVAL_SCROLL_TEST cannot be part of a release build)
+  endif
+  OPT_DEFS += -DSVAL_SCROLL_TEST
+  SRC += scroll_test.c
+endif
+
 # Bench builds that reset stored settings when flashed over other firmware; opt in with -e SVAL_TEST_WIPE=yes.
 ifeq ($(strip $(SVAL_TEST_WIPE)), yes)
   OPT_DEFS += -DSVAL_TEST_WIPE

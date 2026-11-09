@@ -26,6 +26,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "velocity_scroll.h"
 #include "pad_scroll.h"
 #include "scroll_speed.h"
+#ifdef SVAL_SCROLL_TEST
+#    include "scroll_test.h"
+#endif
 #include <string.h>
 #ifdef SVAL_NATIVE_PTP
 #    include "../azoteq/ptp.h"
@@ -179,6 +182,9 @@ static sval_pad_follow_t pad_follow[2];
 // saved setting in force (the OS owned it), so only the keys count.
 static bool hand_scrolling(uint8_t hand) {
     bool held = scroll_hold;
+#ifdef SVAL_SCROLL_TEST
+    if (sval_scroll_test_forces(hand)) return true;
+#endif
 #ifdef SVAL_NATIVE_PTP
     if (pad_driven[hand & 1]) return held != scroll_toggle;
 #endif

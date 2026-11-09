@@ -13,7 +13,7 @@
 extern void sval_link_test_command(uint8_t *data, uint8_t length);
 #endif
 
-#if defined(SVAL_TOUCH_DEV) || defined(SVAL_PERF_STATS)
+#if defined(SVAL_TOUCH_DEV) || defined(SVAL_PERF_STATS) || defined(SVAL_SCROLL_TEST)
 // Touchpad dev builds only (keyboards/svalboard/azoteq/multitouch.mk).
 extern void sval_dev_command(uint8_t *data, uint8_t length);
 #endif
@@ -164,7 +164,7 @@ bool client_wrapper_receive(uint8_t *data, uint8_t length) {
     uint8_t protocol = data[5];
 
     switch (protocol) {
-#if defined(SVAL_TOUCH_DEV) || defined(SVAL_PERF_STATS)
+#if defined(SVAL_TOUCH_DEV) || defined(SVAL_PERF_STATS) || defined(SVAL_SCROLL_TEST)
         case 0xFC: // Touchpad dev command and timing counters; never in a release.
             sval_dev_command(data, length);
             host_raw_hid_send(data, length);
