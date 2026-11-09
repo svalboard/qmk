@@ -76,12 +76,18 @@ The module also defines `ONESHOT_TIMEOUT`, `ONESHOT_TAP_TOGGLE` and all four `GR
 | `quantum/action_util.c` | 6 | The three timed-out tests read `GET_ONESHOT_TIMEOUT()` and treat 0 as no timeout | One line each |
 | `quantum/action_tapping.c` | 2 | Speculative hold delay | One line |
 | `quantum/quantum.c` | 2 | `tap_code16()` delays | One line |
-| `quantum/send_string/send_string.c`, `.h` | 14, 16 | Default delay from the getter. With `RUNTIME_QMK_SETTINGS` the interval type `send_string_interval_t` is `uint16_t`, so stored delays above 255 ms aren't cut short; otherwise it stays upstream's `uint8_t` | Keep every `send_string*_with_delay*()` signature on `send_string_interval_t` |
+| `quantum/send_string/send_string.c`, `.h` | 17, 16 | Default delay from the getter. With `RUNTIME_QMK_SETTINGS` the interval type `send_string_interval_t` is `uint16_t`, so stored delays above 255 ms aren't cut short; otherwise it stays upstream's `uint8_t` | Keep every `send_string*_with_delay*()` signature on `send_string_interval_t` |
 | `quantum/process_keycode/process_auto_shift.c` | 43 | Release delay from the getter, guarded by `defined(RUNTIME_QMK_SETTINGS) \|\| TAP_CODE_DELAY > 0`. The `#ifndef AUTO_SHIFT_MODIFIERS` press branch runs only when `GET_AUTO_SHIFT_MODIFIERS()` is false. With `RUNTIME_QMK_SETTINGS`, `autoshift_toggle()` and `autoshift_disable()` first finish a pending key (`autoshift_end_pending()`), so switching Auto Shift off from QMK Settings never sends that key shifted later | `autoshift_end()` and `autoshift_flags` are static: keep the helper next to them |
 | `quantum/process_keycode/process_combo.c` | 8 | Key-buffer delay from the getter, with the same guard as Auto Shift | One line plus the guard |
 | `quantum/process_keycode/process_grave_esc.c` | 8 | Each override also tests its bit in `GET_GRAVE_ESC_OVERRIDES()` | One line each |
 | `quantum/process_keycode/process_haptic.c`, `process_quantum.c`, `process_tap_dance.c` | 2, 10, 4 | Tapping toggle and tap code delay from the getters | One line each |
 | `quantum/pointing_device/pointing_device_auto_mouse.c` | 2 | The `TT()` tap count from the getter | One line |
+
+### Macro text
+
+| File | Lines | Change | Check on merge |
+|---|---|---|---|
+| `quantum/send_string/send_string.c` | 3 (of the 17 above) | `send_char_with_delay()` skips bytes of 128 and above with no keypress. The ASCII lookup tables have 128 entries, so a UTF-8 character typed into a dynamic macro read past them and typed junk. Every macro and `send_string()` path reaches the tables through this function. Host test: `RuntimeTap.NonAsciiBytesAreSkippedWithoutAKeypress` in `tests/sval_runtime_tap` | Upstream PR candidate. Keep the check ahead of the table reads |
 
 ### Context layers
 
