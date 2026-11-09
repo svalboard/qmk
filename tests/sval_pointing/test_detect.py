@@ -99,6 +99,15 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertIn('pad_scroll OK', result.stdout)
 
+    def test_wheel_pace(self):
+        # wheel_pace.c: at most one detent per axis per report, totals kept, backlog bounded, a Mac untouched.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'wheel_pace'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'wheel_pace_test.c'), str(ROOT / 'keyboards/svalboard/wheel_pace.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('wheel_pace OK', result.stdout)
+
     def test_scroll_speed_math(self):
         # scroll_speed.c: the trackball scaler, the saved record, the migration that keeps every hand's output, pad DPI normalization.
         with tempfile.TemporaryDirectory() as directory:

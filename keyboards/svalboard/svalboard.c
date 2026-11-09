@@ -21,6 +21,7 @@
 #include "pad_gestures.h"
 #include "scroll_speed.h"
 #include "pointer_speed.h"
+#include "wheel_pace.h"
 #include "sval.h"
 #include "pointing_motion.h" // after sval.h: needs the generated fragment ids
 #include "identity.h"
@@ -1216,6 +1217,20 @@ void sval_pointing_motion_kb(uint8_t *out, uint8_t length) {
         out[SVAL_MOTION_FACTORS_OFF + 2] = modes.boost_mult > 255 ? 255 : (uint8_t)modes.boost_mult;
     }
     memset(motion_acc, 0, sizeof(motion_acc));
+}
+#endif
+
+#ifdef POINTING_DEVICE_ENABLE
+// Every source's wheel counts, at most one detent per axis per report, the
+// rest carried (wheel_pace.h). A Mac reads counts as lines: no change there.
+static sval_wheel_pace_t wheel_pace;
+report_mouse_t           pointing_device_task_kb(report_mouse_t mouse_report) {
+    int16_t      h  = mouse_report.h, v = mouse_report.v;
+    os_variant_t os = detected_host_os();
+    sval_wheel_pace(&wheel_pace, &h, &v, os == OS_MACOS || os == OS_IOS);
+    mouse_report.h = h;
+    mouse_report.v = v;
+    return pointing_device_task_user(mouse_report);
 }
 #endif
 
