@@ -9,7 +9,7 @@ base=$(git merge-base HEAD qmk/master)
 git diff --stat $base -- quantum tmk_core platforms drivers builddefs
 ```
 
-As of the merge base `7a1bbf37c5` (QMK master, October 2, 2026), 50 core files differ: 49 under `quantum/`, `tmk_core/`, `platforms/` and `drivers/` (10 of them wear-leveling tests), plus one line in `builddefs/common_features.mk`. The repo also carries Svalboard workflows in `.github/`, docs in `docs/`, scripts in `util/` and host tests in `tests/sval_*`; none of those are firmware.
+As of the merge base `7a1bbf37c5` (QMK master, October 2, 2026), 60 core files differ: 59 under `quantum/`, `tmk_core/`, `platforms/` and `drivers/` (10 of them wear-leveling tests), plus `builddefs/common_features.mk`. The repo also carries Svalboard workflows in `.github/`, docs in `docs/`, scripts in `util/` and host tests in `tests/sval_*`; none of those are firmware.
 
 No core file tests `SVAL_ENABLE`. Core code reads Svalboard behavior only through the switches below, which the Sval module sets in `modules/svalboard/core/sval_runtime_settings.h` (included from its `post_config.h`). With none of them defined, every patched file builds as upstream, apart from the opt-in features listed further down.
 
