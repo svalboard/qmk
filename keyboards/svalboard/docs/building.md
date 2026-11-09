@@ -138,10 +138,29 @@ python3 -I keyboards/svalboard/tools/check_ram_funcs.py \
   runs an updater build. Copy the file onto the second half too if it does not
   (it is harmless if it does).
 
+## Before opening a PR
+
+Pull requests run no checks on GitHub. Run them locally, in Ubuntu or WSL,
+and get them clean before you open or update a pull request:
+
+```sh
+keyboards/svalboard/tools/pre_pr.sh
+```
+
+It checks the formatting of every Svalboard file (`keyboards/svalboard`,
+`modules/svalboard`, `tests/sval_*`), validates the Svalboard keyboard
+definitions, targets and aliases, and runs the updater, storage and native
+touchpad host tests. It needs docker (the formatters run in the `qmk_cli`
+image), `cc` and `python3`, and it exits nonzero on any failure.
+`pre_pr.sh --fix` applies the formatting first.
+
 ## What the workflow does
 
 `.github/workflows/release.yml` runs on a tag named `v<N>` or `x<N>`
-(`x3`, `v3.1`). `build-firmware.yml` then builds four release updater
+(`x3`, `v3.1`). Before anything builds, it runs the updater, storage and
+native touchpad tests and the Svalboard format and lint check
+(`svalboard-lint.yml`); a failure stops the release.
+`build-firmware.yml` then builds four release updater
 builds in a pinned container with the 13.2 toolchain: `either` with the `sval`
 and `blank` keymaps as pair UF2s (`make_update.py pair --release`, then
 `verify-pair --build release`), and `sval` for the left and right halves as
