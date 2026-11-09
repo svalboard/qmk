@@ -17,23 +17,23 @@
 
 static int checks, failures;
 
-#define CHECK(cond)                                                                   \
-    do {                                                                              \
-        checks++;                                                                     \
-        if (!(cond)) {                                                                \
-            failures++;                                                               \
+#define CHECK(cond)                                                                  \
+    do {                                                                             \
+        checks++;                                                                    \
+        if (!(cond)) {                                                               \
+            failures++;                                                              \
             fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond); \
-        }                                                                             \
+        }                                                                            \
     } while (0)
 
-#define CHECK_EQ(a, b)                                                                                                       \
-    do {                                                                                                                     \
-        long long _a = (long long)(a), _b = (long long)(b);                                                                  \
-        checks++;                                                                                                            \
-        if (_a != _b) {                                                                                                      \
-            failures++;                                                                                                      \
+#define CHECK_EQ(a, b)                                                                                                        \
+    do {                                                                                                                      \
+        long long _a = (long long)(a), _b = (long long)(b);                                                                   \
+        checks++;                                                                                                             \
+        if (_a != _b) {                                                                                                       \
+            failures++;                                                                                                       \
             fprintf(stderr, "%s:%d: CHECK_EQ failed: %s == %lld, expected %s == %lld\n", __FILE__, __LINE__, #a, _a, #b, _b); \
-        }                                                                                                                    \
+        }                                                                                                                     \
     } while (0)
 
 // ---- QMK mocks for split_pause.c ----------------------------------------------------------
@@ -133,7 +133,7 @@ static void pause_fresh(void) {
     thatHand = 0;
     master = link_up = true;
     post_scans = scan_kbs = wd_updates = shared_sets = presses = releases = 0;
-    wd_last = true;
+    wd_last                                                               = true;
     memset(&shared_report, 0, sizeof(shared_report));
 }
 
@@ -170,8 +170,8 @@ static void test_pause(void) {
     CHECK(task());
     CHECK_EQ(releases, 1);
     CHECK_EQ(matrix[thatHand + 1], 0);
-    CHECK_EQ(post_scans, 2); // no exchange
-    CHECK_EQ(scan_kbs, 3);   // matrix_scan_kb() still runs every scan
+    CHECK_EQ(post_scans, 2);         // no exchange
+    CHECK_EQ(scan_kbs, 3);           // matrix_scan_kb() still runs every scan
     CHECK_EQ(shared_sets, sets + 1); // the other half's pointer motion is dropped
     CHECK(shared_report.x == 0 && shared_report.y == 0 && shared_report.buttons == 0);
     // Later paused scans: no change, nothing from the other half, no exchange.
@@ -181,7 +181,8 @@ static void test_pause(void) {
     CHECK_EQ(post_scans, 2);
     CHECK_EQ(scan_kbs, 5);
     CHECK_EQ(shared_sets, sets + 1);
-    for (int r = 0; r < MATRIX_ROWS_PER_HAND; r++) CHECK_EQ(matrix[thatHand + r], 0);
+    for (int r = 0; r < MATRIX_ROWS_PER_HAND; r++)
+        CHECK_EQ(matrix[thatHand + r], 0);
     // This half's keys keep working while paused.
     local_rows[3] = 0x10;
     CHECK(task());
@@ -289,7 +290,7 @@ static void test_presence(void) {
     o.updater_proto++;
     usplit_presence_encode(&p, &o, false);
     CHECK_EQ(usplit_presence_compare(&p, sizeof(p), &my_id, NULL), UPDATE_PRESENCE_VERSION);
-    o = other;
+    o      = other;
     o.hand = my_id.hand;
     usplit_presence_encode(&p, &o, false);
     CHECK_EQ(usplit_presence_compare(&p, sizeof(p), &my_id, NULL), UPDATE_PRESENCE_SAME_HAND);
@@ -301,13 +302,13 @@ static void test_presence(void) {
     CHECK_EQ(usplit_presence_compare(&p, sizeof(p), &my_id, NULL), UPDATE_PRESENCE_MATCH);
 }
 
-
 // ---- KEYBOARD_UPDATE frames ------------------------------------------------------------
 
 static void test_wire(void) {
     uint8_t      buf[USPLIT_MSG_MAX], data[32];
     usplit_req_t r;
-    for (int i = 0; i < 32; i++) data[i] = (uint8_t)(0x30 + i);
+    for (int i = 0; i < 32; i++)
+        data[i] = (uint8_t)(0x30 + i);
 
     // Response lengths per op; every frame fits the 32-byte RPC buffers.
     CHECK_EQ(usplit_rsp_len(USPLIT_OP_INFO), 4 + 15 + 2);
@@ -319,7 +320,8 @@ static void test_wire(void) {
     CHECK_EQ(usplit_rsp_len(USPLIT_OP_ABORT), 6);
     CHECK_EQ(usplit_rsp_len(USPLIT_OP_COUNT), 0);
     CHECK_EQ(usplit_rsp_len(0xFF), 0);
-    for (uint8_t op = 0; op < USPLIT_OP_COUNT; op++) CHECK(usplit_rsp_len(op) <= USPLIT_MSG_MAX);
+    for (uint8_t op = 0; op < USPLIT_OP_COUNT; op++)
+        CHECK(usplit_rsp_len(op) <= USPLIT_MSG_MAX);
     CHECK_EQ(USPLIT_PAGE_DATA_MAX, 24);
     CHECK_EQ(USPLIT_BEGIN_DATA_MAX, 26);
 
@@ -368,22 +370,24 @@ static void test_wire(void) {
         f[i / 8] ^= (uint8_t)(1u << (i % 8));
         CHECK_EQ(usplit_req_parse(f, len, &r), UPDATE_INVALID);
     }
-    for (uint8_t l = 0; l < len; l++) CHECK_EQ(usplit_req_parse(buf, l, &r), UPDATE_INVALID);
+    for (uint8_t l = 0; l < len; l++)
+        CHECK_EQ(usplit_req_parse(buf, l, &r), UPDATE_INVALID);
     uint8_t big[40] = {0};
     memcpy(big, buf, len);
     CHECK_EQ(usplit_req_parse(big, 33, &r), UPDATE_INVALID);
     // A good CRC over a frame that breaks the op's rules: still INVALID.
-    uint8_t frame[USPLIT_MSG_MAX] = {USPLIT_OP_PAGE, 0, 0xF0, 0, 0, 17}; // 0xF0 + 17 crosses a page
-    uint8_t blen                  = 6 + 17;
-    uint16_t crc                  = usplit_crc16(frame, blen);
-    frame[blen]                   = crc & 0xFF;
-    frame[blen + 1]               = crc >> 8;
+    uint8_t  frame[USPLIT_MSG_MAX] = {USPLIT_OP_PAGE, 0, 0xF0, 0, 0, 17}; // 0xF0 + 17 crosses a page
+    uint8_t  blen                  = 6 + 17;
+    uint16_t crc                   = usplit_crc16(frame, blen);
+    frame[blen]                    = crc & 0xFF;
+    frame[blen + 1]                = crc >> 8;
     CHECK_EQ(usplit_req_parse(frame, blen + 2, &r), UPDATE_INVALID);
 
     // Responses: built and checked against the request's op and seq.
     usplit_rsp_t rs;
     uint8_t      pl[15];
-    for (int i = 0; i < 15; i++) pl[i] = (uint8_t)i;
+    for (int i = 0; i < 15; i++)
+        pl[i] = (uint8_t)i;
     CHECK_EQ(usplit_rsp_build(buf, sizeof(buf), UPDATE_OK, USPLIT_OP_INFO, 5, UPDATE_STATE_IDLE, pl), 21);
     CHECK_EQ(usplit_rsp_parse(buf, 21, USPLIT_OP_INFO, 5, &rs), UPDATE_OK);
     CHECK(rs.status == UPDATE_OK && rs.state == UPDATE_STATE_IDLE && rs.payload_len == 15 && memcmp(rs.payload, pl, 15) == 0);
@@ -403,7 +407,8 @@ static void test_wire(void) {
 static void test_pages(void) {
     static usplit_pages_t a;
     uint8_t               img[512 + 256];
-    for (size_t i = 0; i < sizeof(img); i++) img[i] = (uint8_t)(i * 7 + 3);
+    for (size_t i = 0; i < sizeof(img); i++)
+        img[i] = (uint8_t)(i * 7 + 3);
     usplit_pages_init(&a, 512);
     uint32_t done, off = 0;
     int      pages = 0;

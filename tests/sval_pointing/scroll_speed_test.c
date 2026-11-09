@@ -64,7 +64,7 @@ int main(void) {
     for (int mac = 0; mac < 2; mac++) {
         for (unsigned d = 0; d < 2; d++) {
             for (unsigned p = 0; p < 2; p++) {
-                sval_ball_scroll_t s = {0};
+                sval_ball_scroll_t s  = {0};
                 long               th = 0, tv = 0;
                 // three inches in steps of 8 counts
                 for (int i = 0; i < (int)dpis[d] * 3 / 8; i++) {
@@ -156,8 +156,9 @@ int main(void) {
         CHECK(sval_scroll_speed_record_read(rec, &l, &r) && l == 20 && r == 1000);
         rec[4] ^= 1;
         CHECK(!sval_scroll_speed_record_read(rec, &l, &r)); // a flipped check
-        for (int fill = 0; fill < 2; fill++) { // erased (0x00 here, 0xFF on other flash) is no record
-            for (int i = 0; i < SVAL_SCROLL_SPEED_RECORD_BYTES; i++) rec[i] = fill ? 0xFF : 0x00;
+        for (int fill = 0; fill < 2; fill++) {              // erased (0x00 here, 0xFF on other flash) is no record
+            for (int i = 0; i < SVAL_SCROLL_SPEED_RECORD_BYTES; i++)
+                rec[i] = fill ? 0xFF : 0x00;
             CHECK(!sval_scroll_speed_record_read(rec, &l, &r));
         }
         sval_scroll_speed_record_write(100, 100, rec);
@@ -180,21 +181,23 @@ int main(void) {
 
     // ---- migration: the Scroll speed from the DPI
     static const uint16_t ball_pct[N] = {25, 50, 75, 100, 150, 200, 300, 400, 600, 800, 1000, 1000};
-    for (unsigned i = 0; i < N; i++) CHECK(sval_scroll_speed_from_dpi(choices[i], SVAL_SCROLL_KIND_BALL) == ball_pct[i]);
+    for (unsigned i = 0; i < N; i++)
+        CHECK(sval_scroll_speed_from_dpi(choices[i], SVAL_SCROLL_KIND_BALL) == ball_pct[i]);
     CHECK(sval_scroll_speed_from_dpi(12000, SVAL_SCROLL_KIND_BALL) == 1000); // 15x is above the range
     CHECK(sval_scroll_speed_from_dpi(16000, SVAL_SCROLL_KIND_BALL) == 1000); // 20x too
     CHECK(sval_scroll_speed_from_dpi(1200, SVAL_SCROLL_KIND_PAD) == 150);
     CHECK(sval_scroll_speed_from_dpi(1600, SVAL_SCROLL_KIND_PAD) == 151); // capped at 1210 / 800
     CHECK(sval_scroll_speed_from_dpi(12000, SVAL_SCROLL_KIND_PAD) == 151);
     CHECK(sval_scroll_speed_from_dpi(400, SVAL_SCROLL_KIND_PAD) == 50);
-    for (unsigned i = 0; i < N; i++) CHECK(sval_scroll_speed_from_dpi(choices[i], SVAL_SCROLL_KIND_TRACKPOINT) == 100);
+    for (unsigned i = 0; i < N; i++)
+        CHECK(sval_scroll_speed_from_dpi(choices[i], SVAL_SCROLL_KIND_TRACKPOINT) == 100);
 
     // Migration keeps a trackball's output exactly: the same stream of counts
     // gives the same wheel counts, step by step, at every DPI up to 8000.
     for (unsigned i = 0; i < 10; i++) { // 200 to 6400; above 8000 the speed stops at 10x
         for (int mac = 0; mac < 2; mac++) {
-            sval_ball_scroll_t s    = {0};
-            int16_t            rx   = 0, ry = 0;
+            sval_ball_scroll_t s  = {0};
+            int16_t            rx = 0, ry = 0;
             uint16_t           pct;
             uint8_t            idx;
             sval_scroll_migrate(SVAL_SCROLL_KIND_BALL, (uint8_t)i, 0, choices, N, &pct, &idx);
@@ -213,8 +216,8 @@ int main(void) {
     // scrolls 5% faster up and down: one speed per hand).
     for (unsigned i = 0; i < 5; i++) { // 200 to 1200
         for (int mac = 0; mac < 2; mac++) {
-            sval_pad_scroll_t s   = {0};
-            int32_t           rv  = 0;
+            sval_pad_scroll_t s  = {0};
+            int32_t           rv = 0;
             uint16_t          pct;
             uint8_t           idx;
             sval_scroll_migrate(SVAL_SCROLL_KIND_PAD, (uint8_t)i, 0, choices, N, &pct, &idx);

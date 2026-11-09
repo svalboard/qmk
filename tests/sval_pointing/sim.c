@@ -26,8 +26,8 @@ static struct {
     int     bits;
     uint8_t addr, out;
     bool    reading;
-    bool    stuck;     // answers 0x00 until it gets Power_Up_Reset (0x5A)
-    uint8_t garbage;   // when not 0: answers this to every read until Power_Up_Reset
+    bool    stuck;   // answers 0x00 until it gets Power_Up_Reset (0x5A)
+    uint8_t garbage; // when not 0: answers this to every read until Power_Up_Reset
     bool    writing;
     uint8_t wdata;
     int     resets;

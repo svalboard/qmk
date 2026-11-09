@@ -74,16 +74,17 @@ void update_host_reg_wr(uint32_t addr, uint32_t v) {
     } else if (addr == WD_CTRL + REG_ALIAS_SET) {
         if (v & WD_CTRL_ENABLE) {
             // D9: PSM_WDSEL, scratch4, LOAD and the pause bits are all set up first.
-            armed_ok   = hw.wdsel == PSM_WDSEL_ALL_BUT_OSC && hw.scratch4 == 0 && hw.load == WD_LOAD_VALUE && !(hw.ctrl & WD_CTRL_PAUSE) && irq_off;
-            mock_wd_on = true;
+            armed_ok                = hw.wdsel == PSM_WDSEL_ALL_BUT_OSC && hw.scratch4 == 0 && hw.load == WD_LOAD_VALUE && !(hw.ctrl & WD_CTRL_PAUSE) && irq_off;
+            mock_wd_on              = true;
             enabled_before_first_op = flash_ops == 0 && noplog == 0;
         }
         hw.ctrl |= v;
         if (v & WD_CTRL_TRIGGER) {
             resets++;
-            reset_ok = hw.wdsel == PSM_WDSEL_ALL_BUT_OSC && hw.scratch4 == 0 && irq_off;
+            reset_ok             = hw.wdsel == PSM_WDSEL_ALL_BUT_OSC && hw.scratch4 == 0 && irq_off;
             at_reset_buf_nonzero = 0;
-            for (uint32_t i = 0; i < SECTOR / 4; i++) at_reset_buf_nonzero |= commit_sector_buf[i] != 0;
+            for (uint32_t i = 0; i < SECTOR / 4; i++)
+                at_reset_buf_nonzero |= commit_sector_buf[i] != 0;
             longjmp(commit_env, LAND_RESET);
         }
     } else {
@@ -138,7 +139,7 @@ void update_host_spin(void) {
 // The LEDs: latched once, with interrupts still on; the commit's ROM ops
 // begin after this (allow the firmware area from here on).
 static uint32_t commit_allow_hi;
-void update_led_commit_latch(void) {
+void            update_led_commit_latch(void) {
     latches++;
     if (irq_off) reg_errors++;
     allow_lo   = 0;
@@ -170,8 +171,10 @@ static void make_commit_image(uint32_t len) {
 }
 
 static void plant_ram0(void) {
-    for (uint32_t i = 0; i < UPDATE_HOST_RAM0_WORDS; i++) update_host_ram0[i] = i * 2654435761u;
-    for (uint32_t i = 5; i < UPDATE_HOST_RAM0_WORDS; i += 777) update_host_ram0[i] = 0xCAFEB0BAu; // stale double-tap magic
+    for (uint32_t i = 0; i < UPDATE_HOST_RAM0_WORDS; i++)
+        update_host_ram0[i] = i * 2654435761u;
+    for (uint32_t i = 5; i < UPDATE_HOST_RAM0_WORDS; i += 777)
+        update_host_ram0[i] = 0xCAFEB0BAu;                      // stale double-tap magic
     update_host_ram0[0]                          = 0xCAFEB0BAu; // and at both ends
     update_host_ram0[UPDATE_HOST_RAM0_WORDS - 1] = 0xCAFEB0BAu;
 }
@@ -190,7 +193,8 @@ static bool ram0_swept(void) {
 static void commit_setup(uint32_t len) {
     fresh(len);
     make_commit_image(len);
-    for (uint32_t i = 0; i < SVAL_UPDATE_MAX_IMAGE; i++) old_fw[i] = (uint8_t)(rnd() | 0x01);
+    for (uint32_t i = 0; i < SVAL_UPDATE_MAX_IMAGE; i++)
+        old_fw[i] = (uint8_t)(rnd() | 0x01);
     memcpy(old_fw, BOOT2_ROM, 256);
     memcpy(update_host_flash, old_fw, sizeof(old_fw));
     memcpy(update_host_flash + SVAL_UPDATE_BASE, img, len);
@@ -275,7 +279,8 @@ static void test_commit_happy(uint32_t len) {
     CHECK_EQ(hw.vtor, VTOR_TOKEN);
     CHECK(vtor_table == commit_vectors);
     CHECK_EQ(commit_vectors[0], UPDATE_HOST_INITIAL_SP);
-    for (int i = 1; i < VECTOR_SLOTS; i++) CHECK(commit_vectors[i] == (uintptr_t)commit_ram_reset);
+    for (int i = 1; i < VECTOR_SLOTS; i++)
+        CHECK(commit_vectors[i] == (uintptr_t)commit_ram_reset);
     // The watchdog: armed in order before the first flash op, fed after every
     // ROM call, never more than its period of worst-case flash time unfed.
     CHECK(armed_ok);
@@ -293,14 +298,16 @@ static void test_commit_happy(uint32_t len) {
     // of block 0, the other blocks; program each sector (sector 0 from page
     // 1); page 0 last.
     uint32_t sectors = (len + SECTOR - 1) / SECTOR, blocks = round_block(len) / BLOCK;
-    int      want    = 1 + 16 + (int)(blocks - 1) + (int)sectors + 1;
+    int      want = 1 + 16 + (int)(blocks - 1) + (int)sectors + 1;
     CHECK_EQ(noplog, want);
     if (noplog == want) {
         int k = 0;
         CHECK(oplog[k].op == 'P' && oplog[k].addr == 0 && oplog[k].count == 256 && oplog[k].zeros);
         k++;
-        for (uint32_t s = 0; s < 16; s++, k++) CHECK(oplog[k].op == 'E' && oplog[k].addr == s * SECTOR && oplog[k].count == SECTOR);
-        for (uint32_t b = 1; b < blocks; b++, k++) CHECK(oplog[k].op == 'E' && oplog[k].addr == b * BLOCK && oplog[k].count == BLOCK);
+        for (uint32_t s = 0; s < 16; s++, k++)
+            CHECK(oplog[k].op == 'E' && oplog[k].addr == s * SECTOR && oplog[k].count == SECTOR);
+        for (uint32_t b = 1; b < blocks; b++, k++)
+            CHECK(oplog[k].op == 'E' && oplog[k].addr == b * BLOCK && oplog[k].count == BLOCK);
         for (uint32_t s = 0; s < sectors; s++, k++) {
             uint32_t from = s ? s * SECTOR : PAGE, to = (s + 1) * SECTOR < len ? (s + 1) * SECTOR : len;
             CHECK(oplog[k].op == 'P' && oplog[k].addr == from && oplog[k].count == to - from);
@@ -315,29 +322,47 @@ static void test_commit_refusals(void) {
         const char     *what;
         update_status_t want;
     } cases[] = {
-        {"settings failing", UPDATE_UNAVAILABLE}, {"die not 16 MiB", UPDATE_UNAVAILABLE}, {"reserved byte", UPDATE_INVALID},
-        {"slot byte changed", UPDATE_BAD_HASH},   {"other CRC", UPDATE_BAD_HASH},         {"bad SP, hashed", UPDATE_BAD_IMAGE},
-        {"running boot2 bad", UPDATE_FLASH_ERR},  {"ROM pointer bad", UPDATE_UNAVAILABLE}, {"no watchdog tick", UPDATE_UNAVAILABLE},
-        {"epoch floor", UPDATE_EPOCH},            {"manifest hash differs", UPDATE_BAD_HASH},
+        {"settings failing", UPDATE_UNAVAILABLE}, {"die not 16 MiB", UPDATE_UNAVAILABLE}, {"reserved byte", UPDATE_INVALID}, {"slot byte changed", UPDATE_BAD_HASH}, {"other CRC", UPDATE_BAD_HASH}, {"bad SP, hashed", UPDATE_BAD_IMAGE}, {"running boot2 bad", UPDATE_FLASH_ERR}, {"ROM pointer bad", UPDATE_UNAVAILABLE}, {"no watchdog tick", UPDATE_UNAVAILABLE}, {"epoch floor", UPDATE_EPOCH}, {"manifest hash differs", UPDATE_BAD_HASH},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         commit_setup(0x3000);
         switch (i) {
-            case 0: port_failing = true; break;
-            case 1: capacity = 0x15; probed = false; break;
-            case 2: blob_manifest()->reserved0 = 1; break; // the manifest check runs again
-            case 3: update_host_flash[SVAL_UPDATE_BASE + 0x2345] ^= 0x04; break;
-            case 4: run_crc_xor = 0x10000; break;
+            case 0:
+                port_failing = true;
+                break;
+            case 1:
+                capacity = 0x15;
+                probed   = false;
+                break;
+            case 2:
+                blob_manifest()->reserved0 = 1;
+                break; // the manifest check runs again
+            case 3:
+                update_host_flash[SVAL_UPDATE_BASE + 0x2345] ^= 0x04;
+                break;
+            case 4:
+                run_crc_xor = 0x10000;
+                break;
             case 5:
                 put32(img + 0x100, 0x1FFFFFF0); // hashed as it is, but a bad SP
                 memcpy(update_host_flash + SVAL_UPDATE_BASE, img, img_len);
                 crypto_sha512(blob_manifest()->sha512, img, img_len);
                 break;
-            case 6: update_host_flash[100] ^= 0x01; break;
-            case 7: rom_bad = true; break;
-            case 8: hw.tick = 0; break;
-            case 9: self_dev.security_epoch = 1; break;
-            default: blob_manifest()->sha512[33] ^= 0x01; break; // the slot and its CRC as verified
+            case 6:
+                update_host_flash[100] ^= 0x01;
+                break;
+            case 7:
+                rom_bad = true;
+                break;
+            case 8:
+                hw.tick = 0;
+                break;
+            case 9:
+                self_dev.security_epoch = 1;
+                break;
+            default:
+                blob_manifest()->sha512[33] ^= 0x01;
+                break; // the slot and its CRC as verified
         }
         snap();
         CHECK_EQ(commit_go(), LAND_NONE);
@@ -371,7 +396,8 @@ static void test_commit_refusals(void) {
     CHECK(image_in_place(0x3000));
     // DMA channels configured but idle are fine.
     commit_setup(0x3000);
-    for (uint32_t ch = 0; ch < DMA_CHANNELS; ch++) hw.dma[ch] = 0x00F00021u;
+    for (uint32_t ch = 0; ch < DMA_CHANNELS; ch++)
+        hw.dma[ch] = 0x00F00021u;
     CHECK_EQ(commit_go(), LAND_RESET);
     CHECK(image_in_place(0x3000));
     CHECK_EQ(update_commit_available(), true);
@@ -427,7 +453,8 @@ static void test_commit_retry(void) {
     CHECK(image_in_place(len) && page0_valid());
     check_invariants(len);
     int retries = 0;
-    for (int k = 0; k < noplog; k++) retries += oplog[k].op == 'E' && oplog[k].addr == 3 * SECTOR && oplog[k].count == SECTOR;
+    for (int k = 0; k < noplog; k++)
+        retries += oplog[k].op == 'E' && oplog[k].addr == 3 * SECTOR && oplog[k].count == SECTOR;
     CHECK_EQ(retries, 2); // step 3, then the retry
     // ... in sector 0 (pages 1-15): the same, and page 0 still goes last
     commit_setup(len);
@@ -572,14 +599,11 @@ static void test_commit_guards(void) {
         bool     program;
         uint32_t len;
     } const bad[] = {
-        {SVAL_UPDATE_MAX_IMAGE, false, SECTOR}, {SVAL_UPDATE_MAX_IMAGE - SECTOR, false, BLOCK}, {SVAL_UPDATE_MAX_IMAGE, true, PAGE},
-        {SVAL_UPDATE_MAX_IMAGE - PAGE, true, 2 * PAGE}, {0xFFFFF000u, false, SECTOR}, {0xFFFFFF00u, true, PAGE},
-        {SVAL_UPDATE_BASE, false, SECTOR}, {SVAL_UPDATE_BASE, true, PAGE}, {IDENTITY_SECTOR_A, false, SECTOR},
-        {WEAR_LEVELING_RP2040_FLASH_BASE, false, BLOCK}, {0, false, 0}, {0, true, 0}, {0, false, 0x2000}, {0, false, PAGE},
-        {0x800, false, SECTOR}, {SECTOR, false, BLOCK}, {0x80, true, PAGE}, {0, true, 0x180}, {0, true, SECTOR + PAGE},
+        {SVAL_UPDATE_MAX_IMAGE, false, SECTOR}, {SVAL_UPDATE_MAX_IMAGE - SECTOR, false, BLOCK}, {SVAL_UPDATE_MAX_IMAGE, true, PAGE}, {SVAL_UPDATE_MAX_IMAGE - PAGE, true, 2 * PAGE}, {0xFFFFF000u, false, SECTOR}, {0xFFFFFF00u, true, PAGE}, {SVAL_UPDATE_BASE, false, SECTOR}, {SVAL_UPDATE_BASE, true, PAGE}, {IDENTITY_SECTOR_A, false, SECTOR}, {WEAR_LEVELING_RP2040_FLASH_BASE, false, BLOCK}, {0, false, 0}, {0, true, 0}, {0, false, 0x2000}, {0, false, PAGE}, {0x800, false, SECTOR}, {SECTOR, false, BLOCK}, {0x80, true, PAGE}, {0, true, 0x180}, {0, true, SECTOR + PAGE},
     };
     irq_off = true;
-    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) CHECK(!commit_ram_flash(bad[i].off, bad[i].program ? page : NULL, bad[i].len));
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+        CHECK(!commit_ram_flash(bad[i].off, bad[i].program ? page : NULL, bad[i].len));
     irq_off = false;
     CHECK_EQ(noplog, 0);
     CHECK(memcmp(before, update_host_flash, sizeof(before)) == 0);
@@ -599,7 +623,8 @@ static void test_commit_guards(void) {
     commit_setup(0x3000);
     hw.scratch4 = 0xB007C0D3u; // the boot ROM's 'boot to an address' magic
     hw.wdsel    = 0;
-    for (uint32_t i = 0; i < SECTOR / 4; i++) commit_sector_buf[i] = 0xCAFEB0BAu;
+    for (uint32_t i = 0; i < SECTOR / 4; i++)
+        commit_sector_buf[i] = 0xCAFEB0BAu;
     int land = setjmp(commit_env);
     if (land == 0) commit_ram_reset();
     CHECK_EQ(land, LAND_RESET);
@@ -632,7 +657,8 @@ static int full_update(uint32_t len, int cut_k, bool tear) {
             uint8_t c[6];
             commit_c6(c);
             if (send(CLIENT_A, UPDATE_OP_COMMIT, c, 6) != UPDATE_ACCEPTED) return LAND_NONE;
-            for (int i = 0; i < 1000; i++) pass();
+            for (int i = 0; i < 1000; i++)
+                pass();
             return LAND_NONE;
         }
         land = LAND_CUT;
@@ -656,7 +682,8 @@ static int update_after_reboot(void) {
             uint8_t c[6];
             commit_c6(c);
             if (send(CLIENT_B, UPDATE_OP_COMMIT, c, 6) == UPDATE_ACCEPTED) {
-                for (int i = 0; i < 1000; i++) pass();
+                for (int i = 0; i < 1000; i++)
+                    pass();
             }
         }
         return LAND_NONE;
@@ -734,8 +761,8 @@ static void test_commit_end_to_end(void) {
 }
 
 static void test_commit(void) {
-    int before_failures = failures;
-    const uint32_t lens[] = {0x200, 0x3000, 0xFF00, 0x10000, 0x10100, 0x13000, 0x30000, SVAL_UPDATE_MAX_IMAGE};
+    int            before_failures = failures;
+    const uint32_t lens[]          = {0x200, 0x3000, 0xFF00, 0x10000, 0x10100, 0x13000, 0x30000, SVAL_UPDATE_MAX_IMAGE};
     for (size_t i = 0; i < sizeof(lens) / sizeof(lens[0]); i++) {
         test_commit_happy(lens[i]);
         if (failures != before_failures) fprintf(stderr, "  (happy path 0x%x)\n", (unsigned)lens[i]);

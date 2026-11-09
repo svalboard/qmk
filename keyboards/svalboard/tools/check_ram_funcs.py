@@ -475,7 +475,8 @@ def main():
         total += len(fn.code)
         check_function(fn, ctx)
         by_start = {a: n for n, a, _ in funcs}
-        calls[name] = sorted({by_start[branch_target(ops)] for _, mnem, ops, _ in fn.code
+        calls[name] = sorted({by_start[branch_target(ops)]
+                              for _, mnem, ops, _ in fn.code
                               if mnem in ("bl",) and branch_target(ops) in by_start})
 
     frames, depths = check_stack(su, ram_set, calls, args.max_stack)

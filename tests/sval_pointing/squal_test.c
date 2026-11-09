@@ -37,7 +37,7 @@ static void test_bin(void) {
     CHECK(s.squal == 20 && s.squal_min == 10 && s.squal_max == 30);
     CHECK(s.rawsum == 104); // (100+102+110)/3 = 104
     CHECK(s.rawmax == 70 && s.rawmin == 5);
-    CHECK(s.shutter == 404); // (400+402+410)/3 = 404
+    CHECK(s.shutter == 404);       // (400+402+410)/3 = 404
     CHECK(s.moving == (1 | 0x80)); // one read with motion, the ball lifted at one read
 }
 

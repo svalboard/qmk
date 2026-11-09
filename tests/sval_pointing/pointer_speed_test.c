@@ -186,7 +186,8 @@ int main(void) {
         }
 
     // The pad's clamp is the pad normalization the scroll migration already did.
-    for (uint8_t i = 0; i < N; i++) CHECK(sval_dpi_index_clamp(choices, N, SVAL_DPI_MODULE_PAD, i) == sval_dpi_index_normalize_pad(choices, N, i));
+    for (uint8_t i = 0; i < N; i++)
+        CHECK(sval_dpi_index_clamp(choices, N, SVAL_DPI_MODULE_PAD, i) == sval_dpi_index_normalize_pad(choices, N, i));
 
     // ---- a TrackPoint's list starts at 800
     CHECK(sval_trackpoint_base_index(choices, N) == 3);

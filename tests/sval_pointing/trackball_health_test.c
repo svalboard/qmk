@@ -25,9 +25,9 @@ static struct {
     uint8_t  srom_id, config2, lift;
     uint16_t cpi;
     int      writes, writes_not_burst, inits;
-    int      cs_pulses, resets;  // selects of the chip (a CS pulse) and 0x5A writes
-    bool     drop_cpi;           // CPI writes are ignored
-    int      glitch_raw;         // the next CPI register reads return 0
+    int      cs_pulses, resets; // selects of the chip (a CS pulse) and 0x5A writes
+    bool     drop_cpi;          // CPI writes are ignored
+    int      glitch_raw;        // the next CPI register reads return 0
     bool     glitching;
 } chip;
 #define DEFAULT_CPI 1600
@@ -64,9 +64,12 @@ uint8_t pmw33xx_read(uint8_t s, uint8_t reg) {
     if (chip.state == GONE || chip.state == STUCK) return 0x00;
     if (chip.state == BADID) return reg == REG_Product_ID || reg == REG_Inverse_Product_ID ? 0x22 : 0x00;
     switch (reg) {
-        case REG_Product_ID: return 0x47;
-        case REG_Inverse_Product_ID: return 0xB8;
-        case REG_Config2: return chip.config2;
+        case REG_Product_ID:
+            return 0x47;
+        case REG_Inverse_Product_ID:
+            return 0xB8;
+        case REG_Config2:
+            return chip.config2;
 #ifdef SIM_PMW3360
         case REG_Config1:
             if (chip.glitch_raw > 0) {
@@ -89,8 +92,10 @@ uint8_t pmw33xx_read(uint8_t s, uint8_t reg) {
             }
             return cpi_raw(chip.cpi) >> 8;
 #endif
-        case REG_SROM_ID: return 0; // reads 0 on a healthy sensor too
-        case REG_Lift_Config: return chip.lift;
+        case REG_SROM_ID:
+            return 0; // reads 0 on a healthy sensor too
+        case REG_Lift_Config:
+            return chip.lift;
     }
     return 0;
 }
@@ -138,12 +143,12 @@ void sval_squal_record(const sval_squal_read_t *q) {
 }
 
 static int fails;
-#define CHECK(c)                                                    \
-    do {                                                            \
-        if (!(c)) {                                                 \
-            printf("FAIL line %d: %s\n", __LINE__, #c);             \
-            fails++;                                                \
-        }                                                           \
+#define CHECK(c)                                        \
+    do {                                                \
+        if (!(c)) {                                     \
+            printf("FAIL line %d: %s\n", __LINE__, #c); \
+            fails++;                                    \
+        }                                               \
     } while (0)
 
 // Main loop passes of 1 ms for ms milliseconds.
@@ -158,35 +163,35 @@ static void run(uint32_t ms) {
 static void cold(int state) {
     memset(&chip, 0, sizeof(chip));
     sensor_init_ok = sensor_was_running = sensor_gave_up = sensor_saw_pair = false;
-    sensor_probe_starts = 0;
-    sensor_recover_fails = 0;
+    sensor_probe_starts                                                    = 0;
+    sensor_recover_fails                                                   = 0;
     sensor_recover_wait = sensor_recover_at = sensor_check_at = 0;
     sensor_product_id = sensor_inverse_product_id = 0;
-    sim_ms = 1000; // uptime in ms, so the probes' 30 s waits count from boot
-    sim_stall_us = 0;
-    sim_status = POINTING_DEVICE_STATUS_UNKNOWN;
-    global_saved_values.idle_flags = SVAL_IDLE_POINTER_REST;
-    trackball_cached_cpi           = 0;
+    sim_ms                                        = 1000; // uptime in ms, so the probes' 30 s waits count from boot
+    sim_stall_us                                  = 0;
+    sim_status                                    = POINTING_DEVICE_STATUS_UNKNOWN;
+    global_saved_values.idle_flags                = SVAL_IDLE_POINTER_REST;
+    trackball_cached_cpi                          = 0;
     chip_start();
     chip.state = state;
 }
 static void fresh(uint8_t idle_flags, uint16_t cpi) {
     memset(&chip, 0, sizeof(chip));
     sensor_init_ok = sensor_was_running = sensor_gave_up = sensor_saw_pair = false;
-    sensor_probe_starts = 0;
-    sensor_recover_fails = 0;
+    sensor_probe_starts                                                    = 0;
+    sensor_recover_fails                                                   = 0;
     sensor_recover_wait = sensor_recover_at = sensor_check_at = 0;
     sensor_product_id = sensor_inverse_product_id = 0;
-    sim_status = POINTING_DEVICE_STATUS_SUCCESS;
-    sim_ms = 100000;
-    sim_stall_us = 0;
-    global_saved_values.idle_flags = idle_flags;
-    trackball_cached_cpi           = 0;
+    sim_status                                    = POINTING_DEVICE_STATUS_SUCCESS;
+    sim_ms                                        = 100000;
+    sim_stall_us                                  = 0;
+    global_saved_values.idle_flags                = idle_flags;
+    trackball_cached_cpi                          = 0;
     chip_start();
     if (cpi) pointing_device_driver_set_cpi(cpi);
     CHECK(pointing_device_driver_init());
     if (cpi) pointing_device_driver_set_cpi(cpi);
-    chip.inits = 0;
+    chip.inits  = 0;
     chip.writes = chip.writes_not_burst = 0;
 }
 
@@ -202,16 +207,16 @@ static void healthy_is_only_read(void) {
 static void power_reset_is_caught(void) {
     // Reset puts Config2 and the CPI at their defaults and drops the SROM.
     fresh(SVAL_IDLE_POINTER_REST, 800);
-    chip.state = RESET; // IDs still answer
-    chip.config2 = 0x20; // reset value of Config2 is the rest-mode value
+    chip.state   = RESET; // IDs still answer
+    chip.config2 = 0x20;  // reset value of Config2 is the rest-mode value
     chip.cpi     = DEFAULT_CPI;
     chip.lift    = 0x02;
     run(4500);
     CHECK(chip.inits == 1);
     CHECK(sensor_init_ok);
     CHECK(chip.state == HEALTHY && chip.lift == 0x00); // start settings back
-    CHECK(chip.cpi == 800);                               // the asked CPI back
-    CHECK(chip.config2 == 0x20);                          // rest mode back
+    CHECK(chip.cpi == 800);                            // the asked CPI back
+    CHECK(chip.config2 == 0x20);                       // rest mode back
 
     // Reset to the same Config2 and the default CPI as what we run: only Lift_Config tells.
     fresh(SVAL_IDLE_POINTER_REST, DEFAULT_CPI);
@@ -233,7 +238,7 @@ static void stuck_is_caught(void) {
 static void never_started_is_left_to_the_search(void) {
     fresh(0, 0);
     sensor_init_ok = sensor_was_running = sensor_saw_pair = false; // this half never had a sensor
-    chip.state = GONE;
+    chip.state                                            = GONE;
     run(120000);
     CHECK(chip.inits == 0);
     CHECK(sim_stall_us == 0);
@@ -241,7 +246,7 @@ static void never_started_is_left_to_the_search(void) {
 
 static void gone_is_given_up_on(void) {
     fresh(SVAL_IDLE_POINTER_REST, 800);
-    chip.state = GONE;
+    chip.state   = GONE;
     sim_stall_us = 0;
     run(120000);
     CHECK(!sensor_init_ok);
@@ -281,7 +286,6 @@ static void gone_then_stuck_gets_reset_by_the_slow_probe(void) {
     run(65000);
     CHECK(sensor_init_ok && !sensor_gave_up);
 }
-
 
 // What QMK does with the status (quantum/pointing_device/pointing_device.c): init sets it from the
 // driver's start, then pointing_device_init_kb(); pointing_device_task() returns before it reads

@@ -41,6 +41,11 @@ name: Release QMK Firmware
 #   version  the tag and keyboards/svalboard/updater/fw_version.txt (D32):
 #            the tag must be a release tag (above), and the number must go
 #            up past every published release, x tags included
+#   tests    before anything builds: the updater host tests and storage
+#            tests (updater-tests.yml), the native touchpad host tests,
+#            gtests and test images (native-touchpad.yml), and the Svalboard
+#            format and lint check (svalboard-lint.yml). A failing test stops
+#            the release: nothing builds or publishes
 #   build    4 release updater builds (pinned image and toolchain); each
 #            checks its RAM commit code and uploads its ELF and its pair UF2
 #            (make_update.py pair --release, then verify-pair) or, for a
@@ -121,8 +126,20 @@ jobs:
         python3 -I keyboards/svalboard/tools/release_version.py "$GITHUB_REF_NAME" \
           --repo "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT"
 
+  updater-tests:
+    if: github.repository == 'svalboard/qmk'
+    uses: ./.github/workflows/updater-tests.yml
+
+  native-touchpad:
+    if: github.repository == 'svalboard/qmk'
+    uses: ./.github/workflows/native-touchpad.yml
+
+  svalboard-lint:
+    if: github.repository == 'svalboard/qmk'
+    uses: ./.github/workflows/svalboard-lint.yml
+
   build:
-    needs: version
+    needs: [ version, updater-tests, native-touchpad, svalboard-lint ]
     permissions:
       contents: read
     uses: ./.github/workflows/build-firmware.yml

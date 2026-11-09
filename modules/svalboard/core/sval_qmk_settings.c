@@ -467,18 +467,18 @@ void sval_qmk_settings_reset(void) {
 #ifdef ONESHOT_TIMEOUT
     settings.osk_timeout = ONESHOT_TIMEOUT;
 #else
-    settings.osk_timeout         = 5000;
+    settings.osk_timeout = 5000;
 #endif
 #ifdef ONESHOT_TAP_TOGGLE
     settings.osk_tap_toggle = ONESHOT_TAP_TOGGLE;
 #else
-    settings.osk_tap_toggle      = 5;
+    settings.osk_tap_toggle = 5;
 #endif
     settings.auto_shift_timeout = default_auto_shift_timeout();
 #ifdef TAP_CODE_DELAY
     settings.tap_code_delay = TAP_CODE_DELAY;
 #else
-    settings.tap_code_delay      = 10;
+    settings.tap_code_delay = 10;
 #endif
 #ifdef TAP_HOLD_CAPS_DELAY
     settings.tap_hold_caps_delay = TAP_HOLD_CAPS_DELAY;
@@ -488,12 +488,12 @@ void sval_qmk_settings_reset(void) {
 #ifdef TAPPING_TOGGLE
     settings.tapping_toggle = TAPPING_TOGGLE;
 #else
-    settings.tapping_toggle      = 5;
+    settings.tapping_toggle = 5;
 #endif
 #ifdef QUICK_TAP_TERM
     settings.quick_tap_term = QUICK_TAP_TERM;
 #else
-    settings.quick_tap_term      = TAPPING_TERM;
+    settings.quick_tap_term = TAPPING_TERM;
 #endif
 
     // Tapping behavior defaults - keyboards can override via defines
