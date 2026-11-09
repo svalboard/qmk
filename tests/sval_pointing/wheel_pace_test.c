@@ -35,7 +35,7 @@ int main(void) {
     }
 
     // Reports as measured on Windows (median 420, up to 1510, every 10 ms of
-    // 1 ms reports) in one direction: every report capped, the total kept.
+    // reports) in one direction: every report capped, the total kept.
     p              = (sval_wheel_pace_t){0};
     int64_t in_sum = 0, out_sum = 0, in_h = 0, out_h = 0;
     for (int ms = 0; ms < 20000; ms++) {
@@ -57,7 +57,7 @@ int main(void) {
     CHECK(in_h == out_h);
     CHECK(p.h == 0 && p.v == 0);
 
-    // A fast spin at 1000% (1510 counts every 1 ms report): the backlog stops
+    // A fast spin at 1000% (1510 counts in every report): the backlog stops
     // at SVAL_WHEEL_PACE_BACKLOG and drains within 40 reports of stopping.
     p = (sval_wheel_pace_t){0};
     for (int ms = 0; ms < 2000; ms++) {
