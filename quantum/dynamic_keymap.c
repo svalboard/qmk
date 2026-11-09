@@ -29,7 +29,7 @@
 #endif
 
 #ifndef DYNAMIC_KEYMAP_MACRO_DELAY
-#    define DYNAMIC_KEYMAP_MACRO_DELAY get_tap_code_delay()
+#    define DYNAMIC_KEYMAP_MACRO_DELAY GET_TAP_CODE_DELAY()
 #endif
 
 uint8_t dynamic_keymap_get_layer_count(void) {

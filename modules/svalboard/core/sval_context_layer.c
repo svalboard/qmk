@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "sval.h"
+#include "action.h"
 #include "action_layer.h"
 #include "dynamic_keymap.h"
 #include "timer.h"
@@ -21,6 +22,23 @@ uint8_t sval_context_layer(void) {
         app_transaction = 0;
     }
     return app_layer;
+}
+
+// QMK calls this first in layer_switch_get_layer() (quantum/sval_hooks.h,
+// LAYER_SWITCH_GET_LAYER_OVERRIDE). The host owns a separate, temporary
+// contribution. Never feed it into layer_state: MO/TG/TO and tri-layer hooks
+// must operate only on manual state. UINT8_MAX leaves the key to QMK's normal
+// lookup, which supplies the existing default/base fallback.
+uint8_t layer_switch_get_layer_override(keypos_t key) {
+    uint8_t layer = sval_context_layer();
+    if (layer != UINT8_MAX) {
+        layer_state_t manual = layer_state & ~(default_layer_state | (layer_state_t)1);
+        for (int8_t i = MAX_LAYER - 1; i >= 0; i--) {
+            if ((manual & ((layer_state_t)1 << i)) && action_for_key(i, key).code != ACTION_TRANSPARENT) return i;
+        }
+        if (action_for_key(layer, key).code != ACTION_TRANSPARENT) return layer;
+    }
+    return UINT8_MAX;
 }
 
 static void write_u32(uint8_t *data, uint32_t value) {

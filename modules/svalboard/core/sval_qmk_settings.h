@@ -27,14 +27,20 @@ uint16_t sval_get_combo_term(void);
 uint16_t sval_get_leader_timeout(void);
 bool     sval_get_leader_per_key_timing(void);
 
-// Runtime values for QMK's TAP_CODE_DELAY, TAP_HOLD_CAPS_DELAY, TAPPING_TOGGLE,
-// GRAVE_ESC_*_OVERRIDE and AUTO_SHIFT_* (declared again where quantum/ uses them)
-uint16_t sval_tap_code_delay(void);
-uint16_t sval_tap_hold_caps_delay(void);
-uint8_t  sval_tapping_toggle(void);
-uint8_t  sval_grave_esc_override(void);
-uint8_t  sval_auto_shift(void);
+// The stored Auto Shift bits (QSID 3), as Keybard writes them. Bit 0 (on)
+// is applied in sval_qmk_settings.c, the rest in sval_auto_shift.c.
+#define AUTO_SHIFT_MODIFIERS_BIT 1
+#define AUTO_SHIFT_NO_SPECIAL_BIT 2
+#define AUTO_SHIFT_NO_NUMERIC_BIT 3
+#define AUTO_SHIFT_NO_ALPHA_BIT 4
+#define AUTO_SHIFT_REPEAT_BIT 5
+#define AUTO_SHIFT_NO_AUTO_REPEAT_BIT 6
+uint8_t sval_auto_shift(void);
+
+// The runtime values of QMK's TAP_CODE_DELAY, TAP_HOLD_CAPS_DELAY,
+// TAPPING_TOGGLE, ONESHOT_TIMEOUT, ONESHOT_TAP_TOGGLE, GRAVE_ESC_*_OVERRIDE
+// and AUTO_SHIFT_MODIFIERS are the get_*() getters declared in
+// quantum/sval_hooks.h.
 
 // One-shot keys (QMK settings 5 and 6), also reached through Sval commands 0x09/0x0A
-uint8_t sval_oneshot_tap_toggle(void);
-void    sval_qmk_settings_set_one_shot(uint16_t timeout, uint8_t tap_toggle);
+void sval_qmk_settings_set_one_shot(uint16_t timeout, uint8_t tap_toggle);

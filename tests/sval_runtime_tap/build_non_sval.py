@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory(prefix='runtime_tap_', dir=ROOT / 'keyboards/ha
     path = Path(directory)
     (path / 'keymap.c').write_text(
         '''#include QMK_KEYBOARD_H
-#ifdef SVAL_ENABLE
+#if defined(SVAL_ENABLE) || defined(RUNTIME_QMK_SETTINGS)
 #error This validation keyboard must not enable Svalboard
 #endif
 const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {

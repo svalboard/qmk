@@ -884,7 +884,7 @@ void speculative_key_settled(keyrecord_t *record) {
         }
 
         send_keyboard_report();
-        wait_ms(get_tap_code_delay());
+        wait_ms(GET_TAP_CODE_DELAY());
 
         ac_dprintf("Speculative Hold: canceled %02x, ", cleared_mods);
         debug_speculative_keys();

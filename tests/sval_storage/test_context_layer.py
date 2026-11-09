@@ -21,7 +21,7 @@ def layer_function(name):
 
 MOCKS = r'''
 #include <limits.h>
-#define SVAL_ENABLE
+#define LAYER_SWITCH_GET_LAYER_OVERRIDE
 #define DYNAMIC_KEYMAP_LAYER_COUNT 16
 #define MAX_LAYER 32
 #define MAX_LAYER_BITS 5

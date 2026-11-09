@@ -6,9 +6,6 @@
 #include "encoder.h"
 #include "util.h"
 #include "action_layer.h"
-#ifdef SVAL_ENABLE
-#    include "sval.h"
-#endif
 
 /** \brief Default Layer State
  */
@@ -347,18 +344,9 @@ uint8_t layer_switch_get_layer(keypos_t key) {
     action_t action;
     action.code = ACTION_TRANSPARENT;
 
-#    ifdef SVAL_ENABLE
-    // The host owns a separate, temporary contribution. Never feed it into
-    // layer_state: MO/TG/TO and tri-layer hooks must operate only on manual state.
-    uint8_t app_layer = sval_context_layer();
-    if (app_layer != UINT8_MAX) {
-        layer_state_t manual = layer_state & ~(default_layer_state | (layer_state_t)1);
-        for (int8_t i = MAX_LAYER - 1; i >= 0; i--) {
-            if ((manual & ((layer_state_t)1 << i)) && action_for_key(i, key).code != ACTION_TRANSPARENT) return i;
-        }
-        if (action_for_key(app_layer, key).code != ACTION_TRANSPARENT) return app_layer;
-        // The normal lookup below supplies the existing default/base fallback.
-    }
+#    ifdef LAYER_SWITCH_GET_LAYER_OVERRIDE
+    uint8_t override = layer_switch_get_layer_override(key);
+    if (override != UINT8_MAX) return override;
 #    endif
     layer_state_t layers = layer_state | default_layer_state;
     /* check top layer first */
