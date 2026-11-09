@@ -9,26 +9,26 @@ using testing::InSequence;
 
 static uint16_t     code_delay, caps_delay;
 static uint8_t      toggle_count, overrides, auto_shift_bits;
-extern "C" uint16_t sval_tap_code_delay(void) {
+extern "C" uint16_t get_tap_code_delay(void) {
     return code_delay;
 }
-extern "C" uint16_t sval_tap_hold_caps_delay(void) {
+extern "C" uint16_t get_tap_hold_caps_delay(void) {
     return caps_delay;
 }
-extern "C" uint8_t sval_tapping_toggle(void) {
+extern "C" uint8_t get_tapping_toggle(void) {
     return toggle_count ? toggle_count : 1;
 }
-extern "C" uint8_t sval_grave_esc_override(void) {
+extern "C" uint8_t get_grave_esc_overrides(void) {
     return overrides;
 }
 extern "C" uint8_t sval_auto_shift(void) {
     return auto_shift_bits;
 }
-extern "C" uint8_t sval_oneshot_tap_toggle(void) {
+extern "C" uint8_t get_oneshot_tap_toggle(void) {
     return 0;
 }
-extern "C" uint8_t sval_context_layer(void) {
-    return UINT8_MAX;
+extern "C" uint16_t get_oneshot_timeout(void) {
+    return 0;
 }
 
 class RuntimeTap : public TestFixture {

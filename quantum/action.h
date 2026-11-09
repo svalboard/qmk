@@ -23,6 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "keyboard.h"
 #include "keycode.h"
 #include "action_code.h"
+#include "sval_hooks.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,26 +34,6 @@ extern "C" {
 #endif
 #ifndef TAP_HOLD_CAPS_DELAY
 #    define TAP_HOLD_CAPS_DELAY 80
-#endif
-
-#ifdef SVAL_ENABLE
-// Svalboard: both delays are runtime QMK Settings; the defines above are only
-// the reset defaults.
-uint16_t               sval_tap_code_delay(void);
-uint16_t               sval_tap_hold_caps_delay(void);
-static inline uint16_t get_tap_code_delay(void) {
-    return sval_tap_code_delay();
-}
-static inline uint16_t get_tap_hold_caps_delay(void) {
-    return sval_tap_hold_caps_delay();
-}
-#else
-static inline uint16_t get_tap_code_delay(void) {
-    return TAP_CODE_DELAY;
-}
-static inline uint16_t get_tap_hold_caps_delay(void) {
-    return TAP_HOLD_CAPS_DELAY;
-}
 #endif
 
 /* tapping count and state */

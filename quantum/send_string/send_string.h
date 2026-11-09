@@ -25,9 +25,9 @@
 
 #include <stdint.h>
 
-// Svalboard stores millisecond delays as uint16_t. Preserve their range through
-// the string/macro path; other keyboards retain the upstream uint8_t API.
-#ifdef SVAL_ENABLE
+// With RUNTIME_QMK_SETTINGS the tap code delay is a uint16_t (sval_hooks.h), so
+// the string and macro path keeps its full range; otherwise the upstream uint8_t.
+#ifdef RUNTIME_QMK_SETTINGS
 typedef uint16_t send_string_interval_t;
 #else
 typedef uint8_t send_string_interval_t;

@@ -32,21 +32,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "debug.h"
 #include "quantum.h"
 
-#if !defined(NO_ACTION_ONESHOT) && ((defined(ONESHOT_TAP_TOGGLE) && ONESHOT_TAP_TOGGLE > 1) || defined(SVAL_ENABLE))
-#    define ONESHOT_TAP_TOGGLE_SUPPORT
-#    ifdef SVAL_ENABLE
-// Svalboard: the tap count is a runtime setting; values of 0 or 1 disable toggling.
-uint8_t               sval_oneshot_tap_toggle(void);
-static inline uint8_t oneshot_tap_toggle(void) {
-    return sval_oneshot_tap_toggle();
-}
-#    else
-static inline uint8_t oneshot_tap_toggle(void) {
-    return ONESHOT_TAP_TOGGLE;
-}
-#    endif
-#endif
-
 #ifdef BACKLIGHT_ENABLE
 #    include "backlight.h"
 #endif
@@ -123,7 +108,7 @@ void action_exec(keyevent_t event) {
 
 #ifndef NO_ACTION_ONESHOT
     if (keymap_config.oneshot_enable) {
-#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
         if (has_oneshot_layer_timed_out()) {
             clear_oneshot_layer_state(ONESHOT_OTHER_KEY_PRESSED);
         }
@@ -492,8 +477,8 @@ void process_action(keyrecord_t *record, action_t action) {
                             } else if (tap_count == 1) {
                                 ac_dprintf("MODS_TAP: Oneshot: start\n");
                                 add_oneshot_mods(mods);
-#        ifdef ONESHOT_TAP_TOGGLE_SUPPORT
-                            } else if (oneshot_tap_toggle() > 1 && tap_count == oneshot_tap_toggle()) {
+#        if defined(ONESHOT_TAP_TOGGLE) && ONESHOT_TAP_TOGGLE > 1
+                            } else if (GET_ONESHOT_TAP_TOGGLE() > 1 && tap_count == GET_ONESHOT_TAP_TOGGLE()) {
                                 ac_dprintf("MODS_TAP: Toggling oneshot");
                                 register_mods(mods);
                                 del_oneshot_mods(mods);
@@ -506,8 +491,8 @@ void process_action(keyrecord_t *record, action_t action) {
                                 unregister_mods(mods);
                                 del_oneshot_mods(mods);
                                 del_oneshot_locked_mods(mods);
-#        ifdef ONESHOT_TAP_TOGGLE_SUPPORT
-                            } else if (oneshot_tap_toggle() > 1 && tap_count == 1 && (mods & get_mods())) {
+#        if defined(ONESHOT_TAP_TOGGLE) && ONESHOT_TAP_TOGGLE > 1
+                            } else if (GET_ONESHOT_TAP_TOGGLE() > 1 && tap_count == 1 && (mods & get_mods())) {
                                 unregister_mods(mods);
                                 del_oneshot_mods(mods);
                                 del_oneshot_locked_mods(mods);
@@ -519,11 +504,11 @@ void process_action(keyrecord_t *record, action_t action) {
 #    endif
                 case MODS_TAP_TOGGLE:
                     if (event.pressed) {
-                        if (tap_count <= get_tapping_toggle()) {
+                        if (tap_count <= GET_TAPPING_TOGGLE()) {
                             register_mods(mods);
                         }
                     } else {
-                        if (tap_count < get_tapping_toggle()) {
+                        if (tap_count < GET_TAPPING_TOGGLE()) {
                             unregister_mods(mods);
                         }
                     }
@@ -555,9 +540,9 @@ void process_action(keyrecord_t *record, action_t action) {
                         if (tap_count > 0) {
                             ac_dprintf("MODS_TAP: Tap: unregister_code\n");
                             if (action.layer_tap.code == KC_CAPS_LOCK) {
-                                wait_ms(get_tap_hold_caps_delay());
+                                wait_ms(GET_TAP_HOLD_CAPS_DELAY());
                             } else {
-                                wait_ms(get_tap_code_delay());
+                                wait_ms(GET_TAP_CODE_DELAY());
                             }
                             unregister_code(action.key.code);
                         } else {
@@ -656,11 +641,11 @@ void process_action(keyrecord_t *record, action_t action) {
                 case OP_TAP_TOGGLE:
                     /* tap toggle */
                     if (event.pressed) {
-                        if (tap_count < get_tapping_toggle()) {
+                        if (tap_count < GET_TAPPING_TOGGLE()) {
                             layer_invert(action.layer_tap.val);
                         }
                     } else {
-                        if (tap_count <= get_tapping_toggle()) {
+                        if (tap_count <= GET_TAPPING_TOGGLE()) {
                             layer_invert(action.layer_tap.val);
                         }
                     }
@@ -685,19 +670,19 @@ void process_action(keyrecord_t *record, action_t action) {
                             layer_off(action.layer_tap.val);
                         }
                     } else {
-#        ifdef ONESHOT_TAP_TOGGLE_SUPPORT
-                        if (oneshot_tap_toggle() > 1) {
+#        if defined(ONESHOT_TAP_TOGGLE) && ONESHOT_TAP_TOGGLE > 1
+                        if (GET_ONESHOT_TAP_TOGGLE() > 1) {
                             do_release_oneshot = false;
                             if (event.pressed) {
                                 if (get_oneshot_layer_state() == ONESHOT_TOGGLED) {
                                     reset_oneshot_layer();
                                     layer_off(action.layer_tap.val);
                                     break;
-                                } else if (tap_count < oneshot_tap_toggle()) {
+                                } else if (tap_count < GET_ONESHOT_TAP_TOGGLE()) {
                                     set_oneshot_layer(action.layer_tap.val, ONESHOT_START);
                                 }
                             } else {
-                                if (tap_count >= oneshot_tap_toggle()) {
+                                if (tap_count >= GET_ONESHOT_TAP_TOGGLE()) {
                                     reset_oneshot_layer();
                                     set_oneshot_layer(action.layer_tap.val, ONESHOT_TOGGLED);
                                 } else {
@@ -738,9 +723,9 @@ void process_action(keyrecord_t *record, action_t action) {
                         if (tap_count > 0) {
                             ac_dprintf("KEYMAP_TAP_KEY: Tap: unregister_code\n");
                             if (action.layer_tap.code == KC_CAPS_LOCK) {
-                                wait_ms(get_tap_hold_caps_delay());
+                                wait_ms(GET_TAP_HOLD_CAPS_DELAY());
                             } else {
-                                wait_ms(get_tap_code_delay());
+                                wait_ms(GET_TAP_CODE_DELAY());
                             }
                             unregister_code(action.layer_tap.code);
                         } else {
@@ -755,9 +740,9 @@ void process_action(keyrecord_t *record, action_t action) {
                     } else {
                         ac_dprintf("KEYMAP_TAP_KEY: Tap: unregister_code\n");
                         if (action.layer_tap.code == KC_CAPS) {
-                            wait_ms(get_tap_hold_caps_delay());
+                            wait_ms(GET_TAP_HOLD_CAPS_DELAY());
                         } else {
-                            wait_ms(get_tap_code_delay());
+                            wait_ms(GET_TAP_CODE_DELAY());
                         }
                         unregister_code(action.layer_tap.code);
                     }
@@ -812,7 +797,7 @@ void process_action(keyrecord_t *record, action_t action) {
                             swap_hands = !swap_hands;
                         }
                     } else {
-                        if (tap_count < get_tapping_toggle()) {
+                        if (tap_count < GET_TAPPING_TOGGLE()) {
                             swap_hands = !swap_hands;
                         }
                     }
@@ -827,7 +812,7 @@ void process_action(keyrecord_t *record, action_t action) {
                         if (event.pressed) {
                             register_code(action.swap.code);
                         } else {
-                            wait_ms(get_tap_code_delay());
+                            wait_ms(GET_TAP_CODE_DELAY());
                             unregister_code(action.swap.code);
                             *record = (keyrecord_t){}; // hack: reset tap mode
                         }
@@ -893,9 +878,9 @@ void process_action(keyrecord_t *record, action_t action) {
                     process_auto_shift(action.layer_tap.code, record);
 #        else
                     register_mods(retro_tap_curr_mods);
-                    wait_ms(get_tap_code_delay());
+                    wait_ms(GET_TAP_CODE_DELAY());
                     tap_code(action.layer_tap.code);
-                    wait_ms(get_tap_code_delay());
+                    wait_ms(GET_TAP_CODE_DELAY());
                     // Only unregister the mods that were active at the time of
                     // the tap and are not independently held by other keys.
                     unregister_mods(retro_tap_curr_mods & ~curr_mods);
@@ -948,7 +933,7 @@ __attribute__((weak)) void register_code(uint8_t code) {
 #    endif
         add_key(KC_CAPS_LOCK);
         send_keyboard_report();
-        wait_ms(get_tap_hold_caps_delay());
+        wait_ms(GET_TAP_HOLD_CAPS_DELAY());
         del_key(KC_CAPS_LOCK);
         send_keyboard_report();
 
@@ -1075,7 +1060,7 @@ __attribute__((weak)) void tap_code_delay(uint8_t code, uint16_t delay) {
  * \param code The basic keycode to tap. If `code` is `KC_CAPS_LOCK`, the delay will be `TAP_HOLD_CAPS_DELAY`, otherwise `TAP_CODE_DELAY`, if defined.
  */
 __attribute__((weak)) void tap_code(uint8_t code) {
-    tap_code_delay(code, code == KC_CAPS_LOCK ? get_tap_hold_caps_delay() : get_tap_code_delay());
+    tap_code_delay(code, code == KC_CAPS_LOCK ? GET_TAP_HOLD_CAPS_DELAY() : GET_TAP_CODE_DELAY());
 }
 
 /** \brief Adds the given physically pressed modifiers and sends a keyboard report immediately.

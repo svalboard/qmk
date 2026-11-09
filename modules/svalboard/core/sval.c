@@ -684,7 +684,7 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
             uint16_t timeout = get_oneshot_timeout();
             data[2]          = timeout & 0xFF;
             data[3]          = (timeout >> 8) & 0xFF;
-            data[4]          = sval_oneshot_tap_toggle();
+            data[4]          = get_oneshot_tap_toggle();
             break;
         }
 
