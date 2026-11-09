@@ -1,8 +1,6 @@
 name: Context Layer Firmware Draft
 
 on:
-  push:
-    branches: [feat/context-layers]
   workflow_dispatch:
 
 permissions:

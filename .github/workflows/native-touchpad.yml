@@ -12,35 +12,6 @@ permissions:
   contents: read
 
 on:
-  push:
-    branches:
-    - '**'
-    paths:
-    - 'keyboards/svalboard/**'
-    - 'drivers/sensors/azoteq_iqs5xx.*'
-    - 'modules/svalboard/**'
-    - 'tmk_core/protocol/usb_ptp.h'
-    - 'tmk_core/protocol/usb_descriptor.*'
-    - 'tmk_core/protocol/chibios/usb_main.c'
-    - 'tmk_core/protocol/chibios/usb_endpoints.*'
-    - 'tests/sval_native_ptp/**'
-    - 'tests/pointing/azoteq_multitouch/**'
-    - 'util/test_native_ptp.sh'
-    - '.github/workflows/native-touchpad.yml'
-  pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
-    paths:
-    - 'keyboards/svalboard/**'
-    - 'drivers/sensors/azoteq_iqs5xx.*'
-    - 'modules/svalboard/**'
-    - 'tmk_core/protocol/usb_ptp.h'
-    - 'tmk_core/protocol/usb_descriptor.*'
-    - 'tmk_core/protocol/chibios/usb_main.c'
-    - 'tmk_core/protocol/chibios/usb_endpoints.*'
-    - 'tests/sval_native_ptp/**'
-    - 'tests/pointing/azoteq_multitouch/**'
-    - 'util/test_native_ptp.sh'
-    - '.github/workflows/native-touchpad.yml'
   workflow_dispatch:
 
 jobs:

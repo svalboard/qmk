@@ -8,9 +8,7 @@ permissions:
   contents: write
 
 on:
-  push:
-    branches:
-    - 'tools/format-svalboard'
+  workflow_dispatch:
 
 jobs:
   format:
