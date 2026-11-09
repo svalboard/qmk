@@ -26,6 +26,11 @@ static struct {
     int     bits;
     uint8_t addr, out;
     bool    reading;
+    bool    stuck;     // answers 0x00 until it gets Power_Up_Reset (0x5A)
+    uint8_t garbage;   // when not 0: answers this to every read until Power_Up_Reset
+    bool    writing;
+    uint8_t wdata;
+    int     resets;
 } pmw;
 static void pmw_update(void) {
     if (!pmw.on) return;
@@ -34,14 +39,31 @@ static void pmw_update(void) {
         pmw.bits    = 0;
         pmw.addr    = 0;
         pmw.reading = false;
+        pmw.writing = false;
     }
     if (!sel) dev_drive[GP24] = -1;
-    if (sel && sck && !pmw.sck && !pmw.reading) { // rising edge: address bit in
+    if (sel && sck && !pmw.sck && pmw.writing) { // rising edge: data bit in
+        pmw.wdata = (pmw.wdata << 1) | line(GP27);
+        if (++pmw.bits == 8) {
+            if ((pmw.addr & 0x7F) == 0x3A && pmw.wdata == 0x5A) {
+                pmw.stuck   = false;
+                pmw.garbage = 0;
+                pmw.resets++;
+            }
+            pmw.writing = false;
+            pmw.bits    = 9; // done
+        }
+    } else if (sel && sck && !pmw.sck && !pmw.reading && pmw.bits < 8) { // rising edge: address bit in
         pmw.addr = (pmw.addr << 1) | line(GP27);
         if (++pmw.bits == 8) {
-            pmw.reading = true;
-            pmw.bits    = 0;
-            pmw.out     = (pmw.addr & 0x7F) == 0x00 ? pmw.pid : (pmw.addr & 0x7F) == 0x3F ? pmw.inv : 0x55;
+            pmw.bits = 0;
+            if (pmw.addr & 0x80) {
+                pmw.writing = true;
+                pmw.wdata   = 0;
+            } else {
+                pmw.reading = true;
+                pmw.out     = pmw.stuck ? 0x00 : pmw.garbage ? pmw.garbage : (pmw.addr & 0x7F) == 0x00 ? pmw.pid : (pmw.addr & 0x7F) == 0x3F ? pmw.inv : 0x55;
+            }
         }
     } else if (sel && !sck && pmw.sck && pmw.reading && pmw.bits < 8) { // falling edge: next data bit out
         dev_drive[GP24] = (pmw.out >> (7 - pmw.bits++)) & 1;
@@ -447,25 +469,88 @@ static void skipped_i2c_pins_untouched(void) {
     CHECK(host[GP16] == H_HIGH && host[GP17] == H_HIGH);
 }
 
+// A sensor stuck through an MCU restart (answers 0x00): the first search sends the power-up
+// reset and still finds nothing, the next one finds it. A healthy one is never reset.
+static void stuck_sensor(void) {
+    reset();
+    pmw.on    = true;
+    pmw.pid   = 0x47;
+    pmw.inv   = 0xB8;
+    pmw.stuck = true;
+    CHECK(sval_probe_bus(SVAL_BUS_SPI, false).detected == SVAL_SENSOR_NO_RESPONSE);
+    CHECK(pmw.resets == 1);
+    CHECK(sval_probe_bus(SVAL_BUS_SPI, false).detected == SVAL_SENSOR_PMW3389);
+    CHECK(pmw.resets == 1);
+    all_released();
+    reset();
+    pmw.on  = true;
+    pmw.pid = 0x47;
+    pmw.inv = 0xB8;
+    CHECK(sval_probe_bus(SVAL_BUS_SPI, false).detected == SVAL_SENSOR_PMW3389);
+    CHECK(pmw.resets == 0);
+    all_released();
+}
+
+// A sensor left answering IDs that aren't a pair (the field's 0x22 0x22, from a sensor that
+// stayed powered through a restart or a power dip) is no answer, not another device: the
+// search resets it (CS pulse, then 0x5A to Power_Up_Reset) and the next search finds it.
+static void bad_pair_sensor(uint8_t garbage) {
+    reset();
+    pmw.on      = true;
+    pmw.pid     = 0x47;
+    pmw.inv     = 0xB8;
+    pmw.garbage = garbage;
+    int pulses  = cs_driven_low;
+    CHECK(sval_probe_bus(SVAL_BUS_SPI, false).detected == SVAL_SENSOR_NO_RESPONSE);
+    CHECK(pmw.resets == 1);
+    CHECK(cs_driven_low - pulses >= 5); // the probe's pulse, two reads, the reset's pulse, the write
+    all_released();
+    sval_probe_result_t r = sval_probe_bus(SVAL_BUS_SPI, false);
+    CHECK(r.detected == SVAL_SENSOR_PMW3389 && r.id0 == 0x47 && r.id1 == 0xB8);
+    CHECK(pmw.resets == 1);
+    all_released();
+}
+
+// Another device's real answer (Inverse_Product_ID is Product_ID inverted) is never reset.
+static void other_device_not_reset(void) {
+    reset();
+    pmw.on  = true;
+    pmw.pid = 0x12;
+    pmw.inv = 0xED;
+    CHECK(sval_probe_bus(SVAL_BUS_SPI, false).detected == SVAL_SENSOR_UNKNOWN);
+    CHECK(pmw.resets == 0);
+    all_released();
+}
+
 static void classify(void) {
     CHECK(sval_pmw33xx_classify(0x42, 0xBD) == SVAL_SENSOR_PMW3360);
     CHECK(sval_pmw33xx_classify(0x47, 0xB8) == SVAL_SENSOR_PMW3389);
     CHECK(sval_pmw33xx_classify(0x00, 0x00) == SVAL_SENSOR_NO_RESPONSE);
     CHECK(sval_pmw33xx_classify(0xFF, 0xFF) == SVAL_SENSOR_NO_RESPONSE);
-    CHECK(sval_pmw33xx_classify(0x12, 0x34) == SVAL_SENSOR_UNKNOWN);
+    CHECK(sval_pmw33xx_classify(0x12, 0xED) == SVAL_SENSOR_UNKNOWN); // a pair: another device
+    CHECK(sval_pmw33xx_classify(0x12, 0x34) == SVAL_SENSOR_NO_RESPONSE);
+    CHECK(sval_pmw33xx_classify(0x22, 0x22) == SVAL_SENSOR_NO_RESPONSE); // the field's stuck sensor
+    CHECK(sval_pmw33xx_classify(0x47, 0x47) == SVAL_SENSOR_NO_RESPONSE);
+    CHECK(sval_pmw33xx_classify(0x00, 0xFF) == SVAL_SENSOR_NO_RESPONSE); // a line that changed between reads
+    CHECK(sval_pmw33xx_classify(0xFF, 0x00) == SVAL_SENSOR_NO_RESPONSE);
+    CHECK(sval_pmw33xx_classify(0x47, 0xB9) == SVAL_SENSOR_NO_RESPONSE);
 }
 
 int main(void) {
     nothing_attached();
     trackball(0x42, 0xBD, SVAL_SENSOR_PMW3360);
     trackball(0x47, 0xB8, SVAL_SENSOR_PMW3389);
-    trackball(0x12, 0x34, SVAL_SENSOR_UNKNOWN);
+    trackball(0x12, 0xED, SVAL_SENSOR_UNKNOWN);
     trackpad();
     trackpad_low_power(20000);
     trackpad_low_power(160000);
     trackpad_low_power(250000);
     trackpoint();
     skips_own_bus();
+    stuck_sensor();
+    bad_pair_sensor(0x22);
+    bad_pair_sensor(0x5A);
+    other_device_not_reset();
     classify();
     one_bus_costs();
     one_bus_finds_its_module();

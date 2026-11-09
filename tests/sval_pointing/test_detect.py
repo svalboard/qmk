@@ -136,6 +136,25 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('OK', result.stdout)
 
+    def test_trackball_health_check(self):
+        # trackball.c: the once-a-second check is read-only, catches a reset or stuck sensor,
+        # leaves a half that never had a sensor to the search, and gives up on a gone one.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'trackball_health'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(HERE / 'trackball_stubs'), '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'trackball_health_test.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # The PMW3360 driver's get_cpi writes Config1: the check must not use it.
+            binary = Path(directory) / 'trackball_health_3360'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-DSIM_PMW3360', '-I', str(HERE / 'trackball_stubs'), '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'trackball_health_test.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # The per-module build, which has the search's own retry (sval_pointer_retry_own).
+            binary = Path(directory) / 'trackball_health_nonauto'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-DSIM_NONAUTO', '-I', str(HERE / 'trackball_stubs'), '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'trackball_health_test.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_keycodes_are_positions_30_and_31_in_both_keymaps(self):
         for keymap in ('sval', 'blank'):
             data = json.loads((ROOT / f'keyboards/svalboard/keymaps/{keymap}/sval.json').read_text())
@@ -190,6 +209,17 @@ class PowerMenuTests(unittest.TestCase):
             self.assertFalse(menus['Pointing Device'] & self.SCAN_IDS, keymap)
             self.assertNotIn('Advanced', [g['label'] for m in data['menus'] for g in m['content']
                                           if 'content' in g and m['label'] == 'Pointing Device'])
+
+
+class PointingSensorTests(unittest.TestCase):
+    """pointing_squal.h: trackball sensor bins and the POINTING_SENSOR (0x39) SAMPLES and STATS packing."""
+    def test_squal_packing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'squal'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'squal_test.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('OK', result.stdout)
 
 
 if __name__ == '__main__':

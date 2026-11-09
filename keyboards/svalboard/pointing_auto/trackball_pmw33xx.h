@@ -19,6 +19,8 @@
 #define pmw33xx_srom_get_length PMW_NAME(srom_get_length)
 #define pmw33xx_upload_firmware PMW_NAME(upload_firmware)
 #define pmw33xx_write PMW_NAME(write)
+#define pmw33xx_burst_extra PMW_NAME(burst_extra)
+#define pmw33xx_burst_has_extra PMW_NAME(burst_has_extra)
 #define pmw33xx_firmware_signature PMW_NAME(firmware_signature)
 #define pmw33xx_get_cpi PMW_NAME(get_cpi)
 #define pmw33xx_set_cpi PMW_NAME(set_cpi)

@@ -12,6 +12,10 @@
 #include "../../keyboards/svalboard/debug_console.c"
 
 bool        debug_enable;
+
+const char *get_keycode_string(uint16_t keycode) {
+    return keycode == 0x0004 ? "KC_A" : "KC_?";
+}
 static char console[4096];
 static int  console_len;
 
@@ -65,7 +69,7 @@ static void test_debug_on_prints_kl(void) {
     d.tap.interrupted = true;
     d.tap.count       = 3;
     sval_key_log(0x0004, &d);
-    CHECK(strcmp(console, "KL: kc: 0x0004, col:  2, row:  6, pressed: 1, time:  1234, int: 1, count: 3\n") == 0);
+    CHECK(strcmp(console, "KL: kc: 0x0004 (KC_A), col:  2, row:  6, pressed: 1, time:  1234, int: 1, count: 3\n") == 0);
 }
 
 static void test_debug_off_again_stops(void) {

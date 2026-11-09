@@ -49,7 +49,7 @@ Check feature flags before using an extension, send one request at a time per co
 - Each half: `<flags> <built_for> <detected> <Product_ID> <Inverse_Product_ID>`.
   - `flags`: bit 0 the block holds a report, bit 1 the half is the left half, bit 2 the sensor driver initialized, bit 3 the firmware drives whichever module is attached (the plain `left`/`right` builds), so `built_for` is the module it chose after the probe, or `0` when none answered. Bit 4 (`SVAL_POINTER_OS_TOUCHPAD`, native touchpad builds): the computer has this pad as a touchpad now, the mode in force (clear with built-in gestures, `Touchpad mode`). Bit 5: the half has no side yet (one-image builds, see Side), and bit 1 means nothing. Bit 6 (`SVAL_POINTER_OS_ASKS`, native touchpad builds): the computer asked for this pad as a touchpad (Input Mode 3), whatever `Touchpad mode` says.
   - `built_for`: `0` no pointing module, `1` PMW3360 trackball, `2` PMW3389 trackball, `5` Azoteq trackpad, `6` TrackPoint.
-  - `detected`: `0` not checked yet, `1` PMW3360 (`42 BD`), `2` PMW3389 (`47 B8`), `3` no module answered, `4` the trackball bus answered with some other ID, `5` Azoteq (IDs: product number, high byte first), `6` TrackPoint (first ID byte: its PS/2 device ID).
+  - `detected`: `0` not checked yet, `1` PMW3360 (`42 BD`), `2` PMW3389 (`47 B8`), `3` no module answered, `4` the trackball bus answered with another device's ID pair (the second ID is the first inverted; IDs that aren't a pair count as `3`, and the half resets the sensor), `5` Azoteq (IDs: product number, high byte first), `6` TrackPoint (first ID byte: its PS/2 device ID).
   - Each build checks its own module at startup. When that module doesn't answer, or the build has none, the half checks the other modules' buses about 1.5 s after boot (PS/2, then I2C, then SPI), so `detected` names whatever is attached. Until then it reads `0` (no module build) or `3` (its own module missing). While nothing works, the half looks again, its own module first, then the other buses: 3, 6, 12 and 30 s after boot, and never after that, so a board with no pointing module isn't probed again. It stops sooner once a module works, once a per-module build finds a module it can't drive, or once a module that answers has failed to start four times. A half whose module works is never probed. So `detected`, `built_for` and bit 2 can change during a half's first 30 s, after a host has connected (the other half's block follows within a presence ping, 0.5 s); a host that shows `3` or `0` should read again until then.
 - The other half reports through the split link's half-second presence ping, so its block is zero while it is disconnected, for up to half a second after it connects, and when it runs firmware without this command.
 
@@ -265,6 +265,69 @@ Combos can have names on the board, like layers, tap dances and macros: one name
 - Both need the 64-byte report (34 bytes after `3D`); a client-wrapped 32-byte report is answered with status `3`.
 - A host that reads both ops on a schedule keeps a running count per switch; a switch's presses since the last read are its changes, halved, rounded up when it was up at the last read and down when it was down.
 
+## Pointing sensor
+
+`POINTING_SENSOR` (`0x39`) reports how a PMW3360 or PMW3389 trackball sensor sees its surface, for a characterization panel: SQUAL (surface quality), Raw_Data_Sum, Maximum and Minimum_Raw_data, and the shutter, with the share of time the ball moved. Values are the sensor's raw register values (SQUAL is not scaled).
+
+- Discovery: GET_INFO byte 21 (the fourth feature byte), bit 3 (`sval_flag4_pointing_sensor`, `0x08`). Older firmware leaves it zero, and answers `0x39` with the command byte `0xFF` (unknown command). A half without a PMW sensor answers format `0`.
+- Capture is on only while a host polls: the first request starts it, and it stops 1.5 s (`SVAL_HOST_ACTIVE_MS`) after the last one. While on, the sensor's motion burst, which the driver already reads, carries six more bytes (SQUAL, Raw_Data_Sum, Maximum_Raw_data, Minimum_Raw_data, Shutter_Upper, Shutter_Lower; about 24 microseconds at 2 MHz) on the same transaction. While off, the burst is the usual six bytes. The pointer report and its timing are unchanged. Samples are taken on every read, at rest too, so SQUAL shows with the ball idle. Polling this command counts as host activity, so the board stays out of deep idle and reads at full rate while a panel is open.
+- Each half folds its reads into bins of 50 ms (`SVAL_SQUAL_BIN_MS`) and keeps the newest 256 (12.8 s) in RAM. The half with USB answers for both hands; for the other hand it asks the other half over the split link (`KEYBOARD_SYNC_B`, first byte `0xB9`) only when it is asked. Nothing is pushed over the link. A reply for the other hand is empty (format `0`) while the link is down or paused for an update.
+- The first request after a pause (a new session) starts with an empty ring. Bins are numbered with a 16-bit sequence that keeps counting and wraps.
+- Request: `DF 39 <op> <hand> <arg lo> <arg hi>`. `hand`: `0` left, `1` right. `op` `0` SAMPLES: `arg` is the cursor, the sequence number of the next bin wanted. `op` `1` STATS: `arg` is how many of the newest bins to cover (`0` = all held).
+- Response: `DF 39` then 25 bytes (offsets from the first of them). Byte `0` is the format: `1`, or `0` for no data (the rest zero). Byte `1` is flags for both ops: bit 0 a PMW sensor runs on that hand, bit 1 it is a PMW3389, bit 2 lost (SAMPLES: the cursor was older than the ring, or ahead of it; the reply starts at the oldest bin), bit 3 more bins wait (SAMPLES), bit 4 the hand is the right one, bits 5-6 the op answered, bit 7 the newest bin saw the ball lifted (STATS only; SAMPLES carries it per bin).
+
+SAMPLES (`op 0`), at most two bins per reply:
+
+| off | size | field |
+|---|---|---|
+| 0 | 1 | format = `1` |
+| 1 | 1 | flags |
+| 2 | 2 | sequence number of the first bin returned, uint16 little-endian |
+| 4 | 1 | bins returned, `0` to `2` |
+| 5 | 2 | sequence number of the next bin to be made (the head), uint16 little-endian |
+| 7 | 9 each | bins, oldest first |
+
+Each bin:
+
+| off | size | field |
+|---|---|---|
+| 0 | 1 | SQUAL, mean of the bin's reads |
+| 1 | 1 | SQUAL, lowest read |
+| 2 | 1 | SQUAL, highest read |
+| 3 | 1 | Raw_Data_Sum, mean |
+| 4 | 1 | Maximum_Raw_data, highest read |
+| 5 | 1 | Minimum_Raw_data, lowest read |
+| 6 | 2 | shutter, mean, uint16 little-endian |
+| 8 | 1 | bits 0-6: reads with motion (127 at most); bit 7: the ball was lifted at some read |
+
+A host keeps its own cursor: ask with the head it was last given, and ask again at once while bit 3 is set. A bin is a mean of every read the pointing task made in its 50 ms (about 15 to 30 on current builds; STATS bytes 22-23 give the measured rate), so a panel that polls every 100 ms asks about once per two bins.
+
+STATS (`op 1`), over the newest bins:
+
+| off | size | field |
+|---|---|---|
+| 0 | 1 | format = `1` |
+| 1 | 1 | flags |
+| 2 | 2 | head, as above |
+| 4 | 2 | bins in the window, uint16 little-endian |
+| 6 | 1 | SQUAL lowest |
+| 7 | 1 | SQUAL highest |
+| 8 | 2 | SQUAL mean, times 256, uint16 little-endian |
+| 10 | 1 | Raw_Data_Sum lowest bin mean |
+| 11 | 1 | Raw_Data_Sum highest bin mean |
+| 12 | 1 | Raw_Data_Sum mean |
+| 13 | 1 | Maximum_Raw_data highest |
+| 14 | 1 | Minimum_Raw_data lowest |
+| 15 | 2 | shutter lowest bin mean |
+| 17 | 2 | shutter highest bin mean |
+| 19 | 2 | shutter mean |
+| 21 | 1 | percent of bins with any motion |
+| 22 | 2 | sensor reads per second, from the newest bin, uint16 little-endian (the rate the firmware really achieved) |
+| 24 | 1 | zero |
+
+- The SQUAL minimum and maximum are the lowest and highest single reads; the other lows and highs are of the bins' means (raw maximum and minimum are of single reads).
+- Reader: `keyboards/svalboard/tools/read_squal.py`.
+
 ## Debug console
 
 `DEBUG_CONSOLE` (`0x3E`) turns QMK's debug flag (`debug_enable`) on or off, and reads it. The firmware prints key events on the QMK debug console (usage page `0xFF31`) only while the flag is on, and any program on the computer can read that console. Keybard's Settings show it as "Debug console".
@@ -280,7 +343,7 @@ Combos can have names on the board, like layers, tap dances and macros: one name
 | 1 | 1 | status: `0` done, `1` unknown op (nothing changed), `2` the build has no console (nothing changed), `3` report too short, `0xFF` the keyboard has no handler for it (the module's default; nothing changed) |
 | 2 | 1 | the flag now: `0` off, `1` on |
 
-- While on, each key event prints one line, `KL: kc: 0x<keycode>, col: <c>, row: <r>, pressed: <0|1>, time: <ms>, int: <0|1>, count: <n>`, as do the firmware's other debug lines.
+- While on, each key event prints one line, `KL: kc: 0x<keycode> (<name>), col: <c>, row: <r>, pressed: <0|1>, time: <ms>, int: <0|1>, count: <n>`, as do the firmware's other debug lines.
 
 ## Debounce mode
 
