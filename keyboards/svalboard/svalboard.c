@@ -21,9 +21,13 @@
 #include "pad_gestures.h"
 #include "scroll_speed.h"
 #include "pointer_speed.h"
+#include "wheel_pace.h"
 #include "sval.h"
 #include "pointing_motion.h" // after sval.h: needs the generated fragment ids
 #include "identity.h"
+#ifdef SVAL_SCROLL_TEST
+#    include "scroll_test.h"
+#endif
 #include "build_reset.h"
 #include "link_light.h"
 #include "nvm_via.h"
@@ -1186,6 +1190,9 @@ report_mouse_t pointing_device_task_combined_kb(report_mouse_t left_report, repo
     if (!sval_side_row_allowed(0)) left_report = (report_mouse_t){0};
     if (!sval_side_row_allowed(MATRIX_ROWS / 2)) right_report = (report_mouse_t){0};
 #    endif
+#    ifdef SVAL_SCROLL_TEST
+    sval_scroll_test_motion(&left_report, &right_report);
+#    endif
     return pointing_device_task_combined_user(left_report, right_report);
 }
 
@@ -1219,6 +1226,20 @@ void sval_pointing_motion_kb(uint8_t *out, uint8_t length) {
 }
 #endif
 
+#ifdef POINTING_DEVICE_ENABLE
+// Every source's wheel counts, at most one detent per axis per report, the
+// rest carried (wheel_pace.h). A Mac reads counts as lines: no change there.
+static sval_wheel_pace_t wheel_pace;
+report_mouse_t           pointing_device_task_kb(report_mouse_t mouse_report) {
+    int16_t      h  = mouse_report.h, v = mouse_report.v;
+    os_variant_t os = detected_host_os();
+    sval_wheel_pace(&wheel_pace, &h, &v, os == OS_MACOS || os == OS_IOS);
+    mouse_report.h = h;
+    mouse_report.v = v;
+    return pointing_device_task_user(mouse_report);
+}
+#endif
+
 #ifdef SVAL_NATIVE_PTP
 // POINTING_CONTACTS (Sval 0x2F, docs/protocol.md): every touch contact on its
 // pad, from the native touchpad. Only the USB half has it.
@@ -1249,9 +1270,10 @@ static void sval_usb_wake_handler(void) {
     }
 }
 
-#if defined(SVAL_TOUCH_DEV) || defined(SVAL_PERF_STATS)
+#if defined(SVAL_TOUCH_DEV) || defined(SVAL_PERF_STATS) || defined(SVAL_SCROLL_TEST)
 // Raw HID 0xFC (modules/svalboard/core/client_wrapper.c): the dev builds'
-// touchpad command (op 0x42) and timing counters (op 0x43). Not a released
+// touchpad command (op 0x42), timing counters (op 0x43) and scroll test
+// motion (op 0x44). Not a released
 // protocol; release builds have neither.
 void sval_dev_command(uint8_t *data, uint8_t length) {
     if (length != RAW_EPSIZE) return;
@@ -1259,6 +1281,12 @@ void sval_dev_command(uint8_t *data, uint8_t length) {
 #    ifdef SVAL_PERF_STATS
     if (op == 0x43) {
         sval_perf_command(data, length);
+        return;
+    }
+#    endif
+#    ifdef SVAL_SCROLL_TEST
+    if (op == 0x44) {
+        sval_scroll_test_command(data, length);
         return;
     }
 #    endif

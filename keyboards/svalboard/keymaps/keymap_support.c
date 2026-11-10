@@ -26,6 +26,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "velocity_scroll.h"
 #include "pad_scroll.h"
 #include "scroll_speed.h"
+#ifdef SVAL_SCROLL_TEST
+#    include "scroll_test.h"
+#endif
 #include <string.h>
 #ifdef SVAL_NATIVE_PTP
 #    include "../azoteq/ptp.h"
@@ -57,7 +60,10 @@ void mouse_mode(bool);
 #if defined(POINTING_DEVICE_AUTO_MOUSE_MH_ENABLE)
 
 
-#define SCROLL_FREQUENCY_MS 10
+// Scroll goes out as it accrues, in the same pointing task (it was held for
+// 10 ms, so a report came every 15 ms and carried several detents).
+// wheel_pace.c keeps each report to one detent.
+#define SCROLL_FREQUENCY_MS 0
 bool mouse_mode_enabled = false;
 
 // Automouse threshold accumulator (normalized to 800 DPI, fixed point: AUTOMOUSE_FP_SCALE units per count)
@@ -179,6 +185,9 @@ static sval_pad_follow_t pad_follow[2];
 // saved setting in force (the OS owned it), so only the keys count.
 static bool hand_scrolling(uint8_t hand) {
     bool held = scroll_hold;
+#ifdef SVAL_SCROLL_TEST
+    if (sval_scroll_test_forces(hand)) return true;
+#endif
 #ifdef SVAL_NATIVE_PTP
     if (pad_driven[hand & 1]) return held != scroll_toggle;
 #endif
@@ -566,7 +575,7 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
         reportMouse1.v = reportMouse2.v = 0;
     }
 
-    if (scroll_timer_running && timer_elapsed(scroll_timer) > SCROLL_FREQUENCY_MS) {
+    if (scroll_timer_running && timer_elapsed(scroll_timer) >= SCROLL_FREQUENCY_MS) {
         if (global_saved_values.axis_scroll_lock && !is_mac) {
 	    update_axis_scroll_mode(m_scroll_accumulator_h, m_scroll_accumulator_v);
             if (axis_scroll_mode == SV_AXIS_LOCKED_V) {
