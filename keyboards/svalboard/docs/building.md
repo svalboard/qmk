@@ -45,6 +45,21 @@ and passes the release checks. A distribution's own `arm-none-eabi-gcc` can
 differ from Arm's build (different newlib, different defaults); if one fails,
 use the 13.2 tarball above and open an issue with the first error line.
 
+### Distribution toolchains
+
+Use Arm's tarball (13.2 or 15.2 above) and put it first on `PATH` for the
+shell that runs `make`. Check that the right compiler is picked up:
+
+```
+which arm-none-eabi-gcc
+arm-none-eabi-gcc -dumpversion
+```
+
+Some distributions build their `arm-none-eabi` toolchain on picolibc instead
+of newlib (Debian sid, for example). ChibiOS needs newlib, so with those the
+build stops in `lib/chibios/os/various/newlib_bindings/syscalls.c` with
+`'struct _reent' declared inside parameter list`. Use Arm's tarball instead.
+
 Python 3.9 or newer, in a virtual environment:
 
 ```
