@@ -278,6 +278,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define SVAL_DEFAULT_PERMISSIVE_HOLD 1
 #define SVAL_DEFAULT_CHORDAL_HOLD 1
 
+// Tap dance keys held at once. QMK shares a pool of states (3 by default) and
+// ignores a dance pressed while the pool is full; Vial kept one per dance.
+// Each state is 8 bytes of RAM.
+#define TAP_DANCE_MAX_SIMULTANEOUS 16
+
 #define USB_MAX_POWER_CONSUMPTION 500
 #define USB_SUSPEND_WAKEUP_DELAY 500
 #define SERIAL_USART_SPEED 1000000
