@@ -9,8 +9,8 @@
 #    qmk_cli image, so the formatter versions match svalboard-lint.yml.
 # 2. Keyboard lint: qmk info for every svalboard/ keyboard, and the Svalboard
 #    targets and aliases (qmk ci-validate-*).
-# 3. Fast host tests: util/updater_test/run.sh, tests/sval_storage and
-#    util/test_native_ptp.sh.
+# 3. Fast host tests: util/updater_test/run.sh, tests/sval_storage,
+#    util/test_native_ptp.sh, and make test:sval_tap_dance (in the qmk_cli image).
 #
 # Needs docker (for the qmk_cli image), cc and python3. Exits nonzero if any
 # step fails. Releases run the same checks, and more, in release.yml.
@@ -100,6 +100,12 @@ step "Storage tests (tests/sval_storage)"
 python3 -m unittest discover -s tests/sval_storage > "$log" 2>&1
 ec=$?; [ $ec -eq 0 ] && tail -1 "$log" || tail -30 "$log"
 result "storage tests" $ec
+
+step "Tap dance host tests (make test:sval_tap_dance, qmk_cli image)"
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp "${mounts[@]}" -w "$root" "$IMAGE" \
+    bash -c 'git config --global --add safe.directory "*"; make test:sval_tap_dance' > "$log" 2>&1
+ec=$?; [ $ec -eq 0 ] && grep -a PASSED "$log" | tail -1 || tail -30 "$log"
+result "tap dance host tests" $ec
 
 step "Native touchpad host tests (util/test_native_ptp.sh)"
 bash util/test_native_ptp.sh > "$log" 2>&1

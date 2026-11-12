@@ -151,6 +151,30 @@ static void on_dance_reset(tap_dance_state_t *state, void *user_data) {
     }
 }
 
+// Finish a dance on its release when no later tap can change the result, as
+// the Vial firmware did: a dance with only Tap and Hold on its first release,
+// and a dance with Double-tap on its second. Otherwise the dance waits for its
+// term, and a key pressed before then interrupts it: a fast double-tap followed
+// by another key gave Tap instead of Double-tap.
+static void on_dance_release(tap_dance_state_t *state, void *user_data) {
+    uint16_t index = (uintptr_t)user_data;
+    if (state->finished) return;
+    if (sval_get_tap_dance(index, &td_entry) != 0) return;
+    if (!TD_ENABLED(td_entry)) return;
+    bool tap_and_hold_only = td_entry.on_tap && td_entry.on_hold && !td_entry.on_double_tap && !td_entry.on_tap_hold;
+    if (!((state->count == 1 && tap_and_hold_only) || (state->count == 2 && td_entry.on_double_tap))) return;
+    // As process_tap_dance_action_on_dance_finished() (static in QMK) does.
+    // process_tap_dance() then resets the dance on this release.
+    state->pressed  = false;
+    state->finished = true;
+    add_weak_mods(state->weak_mods);
+#    ifndef NO_ACTION_ONESHOT
+    add_mods(state->oneshot_mods);
+#    endif
+    send_keyboard_report();
+    on_dance_finished(state, user_data);
+}
+
 // Storage for tap dance actions
 static tap_dance_action_t sval_tap_dance_actions[SVAL_TAP_DANCE_ENTRIES];
 
@@ -159,7 +183,7 @@ void sval_reload_tap_dance(void) {
         sval_tap_dance_actions[i].fn.on_each_tap       = on_dance;
         sval_tap_dance_actions[i].fn.on_dance_finished = on_dance_finished;
         sval_tap_dance_actions[i].fn.on_reset          = on_dance_reset;
-        sval_tap_dance_actions[i].fn.on_each_release   = NULL;
+        sval_tap_dance_actions[i].fn.on_each_release   = on_dance_release;
         sval_tap_dance_actions[i].user_data            = (void *)(uintptr_t)i;
     }
 }
