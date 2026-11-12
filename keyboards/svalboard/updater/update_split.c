@@ -990,8 +990,12 @@ static bool relay_step(void) {
                 return true;
             }
             // FAST, a small frame: the session that BEGIN opens next runs the
-            // fast path. A request went unanswered since its INFO: INFO again.
+            // fast path. A request went unanswered since its INFO: INFO again,
+            // as a new request. A FAST still pending (its answer lost) is
+            // dropped, so that step 0 never reads FAST's answer as INFO's;
+            // step 1's ABORT clears a FAST the other half did take.
             if (!rl.fast_ok) {
+                rl.pending    = false;
                 rl.start_step = 0;
                 return true;
             }

@@ -164,6 +164,21 @@ static void test_relay_fast_only(void) {
     update_relay_abort();
     relay_until(RELAY_IDLE, 5000);
 
+    // FAST's answer lost once: INFO again as a new request (never FAST's
+    // answer read as INFO's), and the relay still runs the fast path.
+    relay_fresh(0x13000);
+    drop_rsp_op   = USPLIT_OP_FAST;
+    drop_rsp_left = 1;
+    CHECK(update_relay_start(blob, img_len, body_crc()));
+    CHECK_EQ(relay_until(RELAY_VERIFIED, 600000), RELAY_VERIFIED);
+    CHECK_EQ(drop_rsp_left, 0);
+    CHECK(ri.fast);
+    CHECK(block_erases > 0);
+    CHECK(slot_is_img(img_len));
+    drop_rsp_op = -1;
+    update_relay_abort();
+    relay_until(RELAY_IDLE, 5000);
+
     // An ABORT while a block erases lands before the next block.
     relay_fresh(0x30000); // three blocks
     slave_irq_sim = true;

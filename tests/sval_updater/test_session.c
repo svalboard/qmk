@@ -166,7 +166,8 @@ static uint64_t sim_block_busy_us = 3 * SIM_ERASE_US; // a 64 KiB block erase, a
 // DMA busy when the other half programs a page (update_split_port_program_page).
 static uint32_t       dma_busy_pct, dma_refusals;
 static bool           slave_hk_frozen;  // the other half's housekeeping does not run (it is stuck)
-static int            drop_rsp_op = -1; // every answer to requests with this op is lost
+static int            drop_rsp_op   = -1; // every answer to requests with this op is lost
+static int            drop_rsp_left = -1; // with drop_rsp_op: answers still to lose (-1: every one)
 static bool           old_slave;        // the other half on protocol 3: KEYBOARD_UPDATE op 0x07 is unknown there
 static const uint8_t *master_slot;      // this half's slot for the relay; NULL: the die's
 static uint8_t        shadow[SVAL_UPDATE_MAX_IMAGE];
@@ -389,7 +390,8 @@ bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, ui
         hist_len[hist_n % 8] = req_len;
         hist_n++;
     }
-    if (chance(lk.drop_rsp) || (drop_rsp_op >= 0 && req[0] == drop_rsp_op)) { // the answer is lost
+    if (chance(lk.drop_rsp) || (drop_rsp_op >= 0 && req[0] == drop_rsp_op && drop_rsp_left != 0)) { // the answer is lost
+        if (drop_rsp_op >= 0 && req[0] == drop_rsp_op && drop_rsp_left > 0) drop_rsp_left--;
         lk.faults++;
         sim_us += rpc_fail_us;
         return false;
@@ -677,6 +679,7 @@ static void fresh(uint32_t len) {
     dma_busy_pct = dma_refusals = 0;
     slave_hk_frozen             = false;
     drop_rsp_op                 = -1;
+    drop_rsp_left               = -1;
     old_slave                   = false;
     master_fast = slave_fast = fast_default;
     oversize_to_old = oversize_rpcs = 0;
