@@ -511,7 +511,7 @@ exactly as in M1. Then:
 ABORT works up to the second COMMIT, and tells the other half. A relay
 failure latches ERROR with the reason: the other half's own refusal (INVALID,
 UNSUPPORTED, BAD_HASH, EPOCH, FLASH_ERR, ...), or UNAVAILABLE when it
-stopped answering for 2 s, or TIMEOUT when it stayed in COMMITTING past the
+stopped answering for 4 s, or TIMEOUT when it stayed in COMMITTING past the
 probes. The 30 s session timeout still applies while relaying and while
 RELAYED (D23: a host that went away stops the relay before the copy). While a
 session for one hand runs, the session ops for the other hand get BUSY. INFO
@@ -526,20 +526,27 @@ with USB):
 | Phase | Link | What happens |
 |---|---|---|
 | start, manifest | paused | ABORT (clears an old session there), then BEGIN: the 108-byte manifest in 5 fragments |
-| checking and erasing | paused | The other half checks the manifest against its own build itself (D7), then erases its slot a sector per pass; this half polls STATUS every 20 ms. A sector erase keeps the other half's interrupts off for about 50 ms, longer than the 20 ms serial timeout, so it erases a sector that needs it only after a request since its last erase and 5 ms after that request (`SVAL_UPDATE_SPLIT_ERASE_GAP_MS`): this half gets an answer between every two sectors, and an ABORT lands within a sector |
-| sending | running | PAGE fragments read from this half's slot, at most 4 ms of RPCs per main-loop pass; both halves type between them |
+| checking and erasing | paused | The other half checks the manifest against its own build itself (D7), then erases its slot a sector per pass; this half polls STATUS every 20 ms. A sector erase keeps the other half's interrupts off for about 50 ms, longer than the 20 ms serial timeout, so it erases a sector that needs it only after a request since its last erase and 5 ms after that request (`SVAL_UPDATE_SPLIT_ERASE_GAP_MS`): this half gets an answer between every two sectors, and an ABORT lands within a sector. After an answer that says it erases, the next poll comes 50 ms later (`SVAL_UPDATE_RELAY_ERASE_POLL_MS`) with the 3 ms serial deadline, so a poll that still finds it erasing costs 3 ms, not 20: about one poll per sector |
+| sending | paused | PAGE fragments read from this half's slot, request after request, with a main-loop pass every 15 ms (`SVAL_UPDATE_RELAY_STREAM_MS`): USB, Keybard and this half's keys keep going, and the longest pass stays under 50 ms (R13) even when an RPC times out. The other half's keys were released when the pause began |
 | end, verifying | paused | END; the other half hashes its slot (SHA-512 against the manifest, structure, CRC); its CRC must equal this half's |
 | verified | running | STATUS every 1 s keeps the other half's session alive until the host's COMMIT |
-| commit, hold | paused | COMMIT; the other half commits 100 ms later from housekeeping with the M1 routine; the link stays paused 4.5 s. An answer of IDLE to COMMIT (it already rebooted, or lost the session), or no valid answer for 2 s (COMMIT may have been taken with its answer lost), also leads to the hold: the probe decides |
+| commit, hold | paused | COMMIT; the other half commits 100 ms later from housekeeping with the M1 routine; the link stays paused 4.5 s. An answer of IDLE to COMMIT (it already rebooted, or lost the session), or no valid answer for 4 s (COMMIT may have been taken with its answer lost), also leads to the hold: the probe decides |
 | probe | paused | STATUS. ERROR, or IDLE with an error: it did not commit (failure). COMMITTING: it has not begun its copy; probe again every 500 ms, and if it then falls silent (its copy) the whole hold again; at most 20 probes, then TIMEOUT. IDLE without an error: done. No answer (a new release may not talk to this one, V): done, flagged unconfirmed (RELAY flags bit1) |
-| aborting | as it was | After an ABORT from the host, the session timeout, or a failure: ABORT once per pass until the other half answers (it may be erasing), for at most 2 s, and only then the link resumes. A relay whose link is already dead (no valid answer for 2 s) sends one ABORT and resumes at once |
+| aborting | as it was | After an ABORT from the host, the session timeout, or a failure: ABORT once per pass until the other half answers (it may be erasing), for at most 4 s, and only then the link resumes. A relay whose link is already dead (no valid answer for 4 s) sends one ABORT and resumes at once |
 
 A request without a valid answer is sent again unchanged (the other half
 answers a retry from its cache); INVALID is accepted as a refusal only on the
 fourth answer in a row, since a request damaged on the way is also answered
-INVALID. No valid answer for 2 s fails the relay with UNAVAILABLE, then this
-half sends one ABORT and resumes the link (in the commit phase it holds
-instead, above).
+INVALID. No valid answer for 4 s (`SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS`) fails
+the relay with UNAVAILABLE, then this half sends one ABORT and resumes the link
+(in the commit phase it holds instead, above). A shorter dropout is waited
+out: the other half keeps its session for 5 s, answers the request that was
+pending (from its cache if it had taken it), and the relay carries on from the
+offset it reports. The RELAY op counts these (dropouts survived), and keeps
+the last failure since boot: phase, error, bytes acknowledged, retries and ms
+since the last answer. The next relay reads the other half's STATUS before
+its ABORT and adds it to that record: TIMEOUT with no session means the other
+half stayed up and heard nothing; no session and no error means it restarted.
 
 After a relay ends done, INFO flags bit5 stays set until presence first reads
 MATCH, also while presence reads NONE: a release that changes the split table
@@ -1006,8 +1013,8 @@ pointing device and keymap, and accepted by `make_update.py verify-pair
   `test_relay.c` (in the `test_updater` and `test_commit` builds) runs both
   halves' code in one process over a simulated split link
   (`tests/sval_updater/test_session.c`): the relay start to finish (the other
-  half erases and verifies only behind the pause, the pause is never held
-  while the image streams, the per-pass budget holds), the other half's own
+  half erases and verifies only behind the pause, the image streams behind
+  it too, the per-pass budget holds), the other half's own
   refusals (including a version-1 manifest and a nonzero reserved byte), faults on every RPC (dropped, damaged, duplicated, stale and
   reordered requests and answers), the link pulled in each phase (this half
   fails within 2 s and resumes the link, the other half drops its session 5 s

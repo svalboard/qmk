@@ -181,6 +181,7 @@ static uint64_t last_ping_us;
 static uint64_t last_slave_rx_us; // when the other half last got a request
 #define SIM_RPC_US 600            // four transactions at 1 Mbaud, with the handshakes
 #define SIM_RPC_FAIL_US 20000     // a transaction that times out (SERIAL_USART_TIMEOUT)
+#define SIM_RPC_QUICK_FAIL_US 3000 // the same at the short deadline (SERIAL_USART_SHORT_TIMEOUT)
 
 uint32_t update_split_port_now_us(void) {
     return (uint32_t)sim_us;
@@ -296,6 +297,15 @@ static void slave_rpc(const uint8_t *in, uint8_t len, uint8_t *out, uint8_t out_
     sim_slave = was;
 }
 
+static uint32_t rpc_fail_us = SIM_RPC_FAIL_US; // what a transaction that times out costs now
+static uint32_t quick_rpcs;
+bool update_split_port_rpc_quick(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
+    quick_rpcs++;
+    rpc_fail_us = SIM_RPC_QUICK_FAIL_US;
+    bool ok     = update_split_port_rpc(req, req_len, rsp, rsp_len);
+    rpc_fail_us = SIM_RPC_FAIL_US;
+    return ok;
+}
 bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
     if (sim_slave || req_len > USPLIT_MSG_MAX || rsp_len > USPLIT_MSG_MAX) {
         lock_errors++;
@@ -304,12 +314,12 @@ bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, ui
     lk.n++;
     sim_us += SIM_RPC_US;
     if (!link_up || link_dead) {
-        sim_us += SIM_RPC_FAIL_US;
+        sim_us += rpc_fail_us;
         return false;
     }
     if (sim_us < slave_busy_until_us) { // its interrupts are off: no answer
         slave_busy_rpcs++;
-        sim_us += SIM_RPC_FAIL_US;
+        sim_us += rpc_fail_us;
         return false;
     }
     if (old_slave && req[0] == USPLIT_OP_SETTINGS_RESET) {
@@ -325,7 +335,7 @@ bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, ui
     memcpy(in, req, req_len);
     if (chance(lk.drop_req)) { // lost on the way: the other half never runs it
         lk.faults++;
-        sim_us += SIM_RPC_FAIL_US;
+        sim_us += rpc_fail_us;
         return false;
     }
     if (chance(lk.replay) && hist_n) { // an older request arrives first (reordered)
@@ -357,7 +367,7 @@ bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, ui
     }
     if (chance(lk.drop_rsp) || (drop_rsp_op >= 0 && req[0] == drop_rsp_op)) { // the answer is lost
         lk.faults++;
-        sim_us += SIM_RPC_FAIL_US;
+        sim_us += rpc_fail_us;
         return false;
     }
     if (chance(lk.flip_rsp) && rsp_len) {

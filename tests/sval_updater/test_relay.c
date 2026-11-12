@@ -35,15 +35,16 @@ static void                relay_get(void) {
 }
 
 // Invariants watched on every pass of a relay: the other half erases,
-// verifies and commits only behind the pause, and the pause is never held
-// while the image streams (both halves type then).
-static int  pause_violations, stream_paused;
+// verifies and commits only behind the pause, and the image streams behind
+// it too (requests back to back, a main-loop pass every
+// SVAL_UPDATE_RELAY_STREAM_MS).
+static int  pause_violations, stream_unpaused;
 static void watch(void) {
     uint8_t st   = update_split_slave_state();
     bool    slow = st == UPDATE_STATE_VERIFYING_MANIFEST || st == UPDATE_STATE_ERASING || st == UPDATE_STATE_VERIFYING_IMAGE || st == UPDATE_STATE_COMMITTING;
     relay_get();
     if (slow && !link_paused && update_relay_busy()) pause_violations++;
-    if (ri.phase == RELAY_PAGES && link_paused) stream_paused++;
+    if (ri.phase == RELAY_PAGES && !link_paused) stream_unpaused++;
 }
 
 // Erases happen behind the pause: checked at every ROM op (after_op).
@@ -78,7 +79,7 @@ static bool only_slot_changed(void) {
 
 static void test_relay_happy(uint32_t len) {
     relay_fresh(len);
-    pause_violations = stream_paused = erase_unpaused = 0;
+    pause_violations = stream_unpaused = erase_unpaused = 0;
     after_op                                          = erase_watch;
     CHECK(update_relay_start(blob, len, body_crc()));
     CHECK(link_paused); // from the start: the manifest check and erase follow the manifest
@@ -108,9 +109,9 @@ static void test_relay_happy(uint32_t len) {
     CHECK_EQ(ri.slave_to_erase, (len + 4095) / 4096);
     CHECK_EQ(ri.retries, 0);
     CHECK(!link_paused);
-    CHECK_EQ(pause_calls, 2); // the manifest and erase; END and the verify
+    CHECK_EQ(pause_calls, 1); // from the start to VERIFIED: manifest, erase, pages, END, verify
     CHECK_EQ(pause_violations, 0);
-    CHECK_EQ(stream_paused, 0);
+    CHECK_EQ(stream_unpaused, 0);
     CHECK_EQ(erase_unpaused, 0);
     CHECK_EQ(update_split_slave_state(), UPDATE_STATE_VERIFIED);
     CHECK(slot_is_img(len));
@@ -120,9 +121,9 @@ static void test_relay_happy(uint32_t len) {
     CHECK_EQ(outside_ops, 0);
     CHECK_EQ(lock_errors, 0);
     CHECK_EQ(lock_depth, 0);
-    // The per-pass budget while the image streams: SVAL_UPDATE_RELAY_PASS_MS,
+    // The per-pass budget while the image streams: SVAL_UPDATE_RELAY_STREAM_MS,
     // plus at most one RPC and one page program.
-    CHECK(pages_max_pass <= ((SVAL_UPDATE_RELAY_PASS_MS + 1) * 1000 + SIM_RPC_US + SIM_PAGE_PROGRAM_US)); // ms timer granularity
+    CHECK(pages_max_pass <= ((SVAL_UPDATE_RELAY_STREAM_MS + 1) * 1000 + SIM_RPC_US + SIM_PAGE_PROGRAM_US)); // ms timer granularity
     uint64_t relay_ms = (sim_us - t0) / 1000;
     // The time per phase (RELAY op): each phase measured, within the whole.
     CHECK(ri.erase_ms > 0 && ri.pages_ms > 0 && ri.verify_ms > 0);
@@ -266,7 +267,7 @@ static void test_relay_faults(void) {
         lk.dup           = 3;
         lk.stale         = 3;
         lk.replay        = hostile ? 2 : 0;
-        pause_violations = stream_paused = 0;
+        pause_violations = stream_unpaused = 0;
         CHECK(update_relay_start(blob, img_len, body_crc()));
         uint8_t ph = relay_until(RELAY_VERIFIED, 300000);
         if (ph == RELAY_VERIFIED) {
@@ -295,7 +296,7 @@ static void test_relay_faults(void) {
         }
         CHECK(only_slot_changed());
         CHECK_EQ(pause_violations, 0);
-        CHECK_EQ(stream_paused, 0);
+        CHECK_EQ(stream_unpaused, 0);
         CHECK_EQ(sequence_errors, 0);
         CHECK_EQ(lock_errors, 0);
         CHECK(slave_commit_runs <= 1);
@@ -1190,6 +1191,7 @@ static void test_relay_presence(void) {
 }
 
 #include "test_relay_review.c"
+#include "test_relay_speed.c"
 
 static void test_relay(void) {
     int before_failures = failures;
@@ -1206,6 +1208,7 @@ static void test_relay(void) {
     test_relay_cuts();
     test_relay_session();
     test_relay_review();
+    test_relay_speed();
     printf("relay tests: %s\n", failures == before_failures ? "pass" : "FAIL");
 }
 

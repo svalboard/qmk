@@ -80,7 +80,7 @@ typedef enum {
     RELAY_START,       // pause the link, clear any old session on the other half
     RELAY_MANIFEST,    // BEGIN: the manifest, in fragments
     RELAY_ERASE_WAIT,  // the other half checks the manifest and erases (paused)
-    RELAY_PAGES,       // PAGE: the image (the link runs: both halves type)
+    RELAY_PAGES,       // PAGE: the image (paused: requests back to back, a main-loop pass every 15 ms)
     RELAY_END,         // END (paused)
     RELAY_VERIFY_WAIT, // the other half verifies the image (paused)
     RELAY_VERIFIED,    // the other half holds the verified image; kept alive until COMMIT
@@ -103,7 +103,8 @@ bool update_relay_start(const uint8_t *manifest, uint32_t image_len, uint32_t cr
 // only a record that a UF2 copy in BOOTSEL wrote leads here.
 bool update_relay_start_self(const uint8_t *manifest, uint32_t image_len, uint32_t crc_body);
 
-// One pass: at most SVAL_UPDATE_RELAY_PASS_MS of relay work, or one poll.
+// One pass: at most SVAL_UPDATE_RELAY_PASS_MS of relay work (SVAL_UPDATE_RELAY_STREAM_MS
+// while the pages go), or one poll.
 void update_relay_task(void);
 
 // In RELAY_VERIFIED: pause and send COMMIT. False (nothing sent) otherwise, or
@@ -224,6 +225,9 @@ update_status_t update_split_port_settings_invalidate(uint8_t mode);
 void update_split_port_reboot(void);
 // Master: one KEYBOARD_UPDATE RPC (transaction_rpc_exec); the split pause (D15).
 bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len);
+// The same with the short serial deadline (SERIAL_USART_SHORT_TIMEOUT): a STATUS
+// poll that may find the other half's interrupts off fails in 3 ms, not 20.
+bool update_split_port_rpc_quick(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len);
 bool update_split_port_pause(bool on);
 // Master: n bytes of this half's slot at off (whole words), read uncached.
 bool update_split_port_slot_read(uint32_t off, uint8_t *dst, uint32_t n);

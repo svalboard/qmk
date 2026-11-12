@@ -525,6 +525,8 @@ void update_split_slave_task(void) {
 
 // ---- the relay, the half with USB -----------------------------------------------------
 
+_Static_assert(SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS < SVAL_UPDATE_SPLIT_SLAVE_TIMEOUT_MS, "a dropout the relay waits out leaves the other half's session open");
+
 #define RELAY_RESYNC_MAX 8
 // A request that arrives damaged is answered INVALID with its op and seq (when
 // those survived) and is not cached, so the same frame sent again runs; a
@@ -581,10 +583,11 @@ static uint32_t phase_ms(uint32_t since, uint32_t now) {
     return ms ? ms : 1;
 }
 
-// One KEYBOARD_UPDATE RPC from the relay, timed.
-static bool relay_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
+// One KEYBOARD_UPDATE RPC from the relay, timed. quick: with the short
+// serial deadline (a STATUS poll that may land in a sector erase).
+static bool relay_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len, bool quick) {
     uint32_t t0 = update_split_port_now_us();
-    bool     ok = update_split_port_rpc(req, req_len, rsp, rsp_len);
+    bool     ok = quick ? update_split_port_rpc_quick(req, req_len, rsp, rsp_len) : update_split_port_rpc(req, req_len, rsp, rsp_len);
     uint32_t us = update_split_port_now_us() - t0;
     if (us > rl.rpc_us_max) rl.rpc_us_max = us;
     if (rl.phase == RELAY_PAGES) {
@@ -710,7 +713,11 @@ static bool relay_exchange(usplit_rsp_t *r, uint8_t *buf) {
     uint8_t op   = rl.req[0];
     uint8_t want = usplit_rsp_len(op);
     memset(buf, 0, USPLIT_MSG_MAX);
-    bool     ok  = relay_rpc(rl.req, rl.req_len, buf, want) && usplit_rsp_parse(buf, want, op, rl.req[1], r) == UPDATE_OK;
+    // A poll while the other half erases a sector (interrupts off for about
+    // 50 ms) fails at the short deadline, so the next poll comes soon after
+    // the sector instead of 20 ms later.
+    bool     quick = op == USPLIT_OP_STATUS && rl.phase == RELAY_ERASE_WAIT && rl.slave_state == UPDATE_STATE_ERASING;
+    bool     ok    = relay_rpc(rl.req, rl.req_len, buf, want, quick) && usplit_rsp_parse(buf, want, op, rl.req[1], r) == UPDATE_OK;
     uint32_t now = update_split_port_now_ms();
     if (ok && r->status == UPDATE_INVALID && ++rl.invalids < RELAY_INVALID_TRIES) ok = false; // maybe damaged on the way: again
     if (ok) {
@@ -799,6 +806,10 @@ static bool relay_step(void) {
             if (r.status != UPDATE_OK) break;
             relay_status_payload(&r);
             rl.next_ms = now + (rl.phase == RELAY_VERIFIED ? SVAL_UPDATE_RELAY_KEEPALIVE_MS : SVAL_UPDATE_RELAY_POLL_MS);
+            // Erasing: it erases its next sector 5 ms after this answer, with
+            // its interrupts off for about 45-60 ms; the next poll comes once
+            // that is likely over (one poll per sector).
+            if (r.state == UPDATE_STATE_ERASING) rl.next_ms = update_split_port_now_ms() + SVAL_UPDATE_RELAY_ERASE_POLL_MS;
             if (r.state == UPDATE_STATE_ERROR) {
                 relay_lost();
                 return false;
@@ -809,9 +820,10 @@ static bool relay_step(void) {
                     relay_lost();
                     return false;
                 }
-                // Erased: the image goes over with the link running, so both
-                // halves keep typing between the RPCs.
-                relay_resume();
+                // Erased: the image goes over with the link still paused,
+                // request after request (SVAL_UPDATE_RELAY_STREAM_MS per pass).
+                // This half types meanwhile; the other half's keys were
+                // released when the pause began.
                 rl.phase    = RELAY_PAGES;
                 rl.off      = 0;
                 rl.erase_ms = phase_ms(rl.t_erase, now);
@@ -840,11 +852,7 @@ static bool relay_step(void) {
         case RELAY_PAGES: {
             if (!rl.pending) {
                 if (rl.off >= rl.image_len) {
-                    // All acknowledged: the other half verifies behind the pause.
-                    if (!relay_pause()) {
-                        relay_fail(UPDATE_UNAVAILABLE);
-                        return false;
-                    }
+                    // All acknowledged: the other half verifies, still behind the pause.
                     if (!relay_new(USPLIT_OP_END)) break;
                     rl.phase    = RELAY_END;
                     rl.pages_ms = phase_ms(rl.t_pages, now);
@@ -921,7 +929,7 @@ static bool relay_step(void) {
             if (!relay_new(USPLIT_OP_STATUS)) break;
             uint8_t want = usplit_rsp_len(USPLIT_OP_STATUS);
             memset(buf, 0, sizeof(buf));
-            bool answered = update_split_port_rpc(rl.req, rl.req_len, buf, want) && usplit_rsp_parse(buf, want, USPLIT_OP_STATUS, rl.req[1], &r) == UPDATE_OK;
+            bool answered = relay_rpc(rl.req, rl.req_len, buf, want, false) && usplit_rsp_parse(buf, want, USPLIT_OP_STATUS, rl.req[1], &r) == UPDATE_OK;
             rl.pending = false;
             rl.probes++;
             if (answered) {
@@ -1013,7 +1021,11 @@ bool update_relay_start_self(const uint8_t *manifest, uint32_t image_len, uint32
 void update_relay_task(void) {
     if (!update_relay_busy()) return;
     uint32_t t0 = update_split_port_now_ms();
-    while (relay_step() && update_relay_busy() && update_split_port_now_ms() - t0 < SVAL_UPDATE_RELAY_PASS_MS) {
+    // The pages go back to back with the link paused, and the main loop gets
+    // a pass every SVAL_UPDATE_RELAY_STREAM_MS (USB, Keybard's 50 ms, this
+    // half's keys).
+    uint32_t budget = rl.phase == RELAY_PAGES && rl.paused ? SVAL_UPDATE_RELAY_STREAM_MS : SVAL_UPDATE_RELAY_PASS_MS;
+    while (relay_step() && update_relay_busy() && update_split_port_now_ms() - t0 < budget) {
     }
 }
 
@@ -1249,6 +1261,15 @@ update_status_t update_split_port_program_page(uint32_t off, const uint8_t *page
 
 bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
     return transaction_rpc_exec(KEYBOARD_UPDATE, req_len, req, rsp_len, rsp);
+}
+
+extern volatile bool serial_transport_short_rpc; // platforms/chibios/drivers/serial_protocol.c (SERIAL_PIO_RX_DMA)
+
+bool update_split_port_rpc_quick(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
+    serial_transport_short_rpc = true;
+    bool ok                    = transaction_rpc_exec(KEYBOARD_UPDATE, req_len, req, rsp_len, rsp);
+    serial_transport_short_rpc = false;
+    return ok;
 }
 
 bool update_split_port_pause(bool on) {

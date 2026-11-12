@@ -113,14 +113,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // from the master since the last one, and this long after it: the master
 // gets an answer between every two sectors.
 #define SVAL_UPDATE_SPLIT_ERASE_GAP_MS 5
-// The half with USB: relay work per main-loop pass while the link runs (its
-// own keys keep scanning between passes), how long it retries a request with
-// no valid answer before the relay fails, how often it polls the other half
-// while that half erases or verifies, and how often it pings a verified other
-// half (so its timeout does not fire while the host decides to commit).
+// The half with USB: relay work per main-loop pass (its own keys keep
+// scanning between passes), and while the pages stream with the link paused;
+// how long it retries a request with no valid answer before the relay fails
+// (under the other half's 5 s session timeout, so a shorter dropout resumes
+// where it stopped); how often it polls the other half while that half checks
+// the manifest or verifies, and after an answer while it erases (one poll per
+// sector); and how often it pings a verified other half (so its timeout does
+// not fire while the host decides to commit). The stream's budget plus one
+// failed RPC (20 ms) stays inside Keybard's 50 ms (R13).
 #define SVAL_UPDATE_RELAY_PASS_MS 4
-#define SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS 2000
+#define SVAL_UPDATE_RELAY_STREAM_MS 15
+#define SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS 4000
 #define SVAL_UPDATE_RELAY_POLL_MS 20
+#define SVAL_UPDATE_RELAY_ERASE_POLL_MS 50
 #define SVAL_UPDATE_RELAY_KEEPALIVE_MS 1000
 // A run of requests with no valid answer this long, then an answer again,
 // counts as a dropout the relay survived (the RELAY op's resumes).
