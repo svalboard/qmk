@@ -116,6 +116,15 @@ typedef enum {
 #define UPDATE_ARM_NO_CHORD 0x04     // pre-approved because this is a no-chord dev build (D43)
 #define UPDATE_ARM_PAIR 0x08         // a pair ARM: the chord approves both manifests
 
+// INFO page 0 rsp[26]: faster uploads (protocol 4 still; a host that does not
+// know the byte reads 0 from an older build and uses one CHUNK per round trip).
+#define UPDATE_CAP_CHUNK_WINDOW 0x01 // CHUNKs may be sent back to back, up to rsp[27] in flight; each is answered, in order
+#define UPDATE_CAP_REUSE_STAGED 0x02 // BEGIN takes a flags byte (UPDATE_BEGIN_*)
+#define UPDATE_CHUNK_WINDOW 16       // rsp[27]: CHUNKs a host may have in flight
+
+// BEGIN request flags (req[5], after the nonce; UPDATE_CAP_REUSE_STAGED).
+#define UPDATE_BEGIN_REUSE 0x01 // keep the slot's image when it is this manifest's: no erase, no CHUNKs
+
 // ---- status codes ------------------------------------------------------------------
 // The first three keep the values of the sibling sets (identity_status_t: OK 0,
 // INVALID 1, UNAVAILABLE 2; FLASH_ERR takes IDENTITY_WRITE_FAILED's 3).

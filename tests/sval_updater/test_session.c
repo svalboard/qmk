@@ -287,10 +287,12 @@ void update_split_port_reboot(void) {
 
 // The other half's callback, as the SlaveThread runs it.
 static void slave_rpc(const uint8_t *in, uint8_t len, uint8_t *out, uint8_t out_len) {
-    bool was  = sim_slave;
-    sim_slave = true;
+    bool     was    = sim_slave;
+    uint32_t writes = slot_writes; // its own die: this half's slot write count stays
+    sim_slave       = true;
     update_split_slave_rpc(in, len, out, out_len);
-    sim_slave = was;
+    sim_slave   = was;
+    slot_writes = writes;
 }
 
 bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
@@ -376,9 +378,11 @@ static void slave_reboot(void) {
 static void slave_hk(void) {
     if (sim_us < slave_busy_until_us || slave_hk_frozen) return; // still erasing, or committing
     int erases = erase_ops, commits = slave_commit_runs;
-    sim_slave = true;
+    uint32_t writes = slot_writes; // its own die (see slave_rpc)
+    sim_slave       = true;
     update_split_slave_task();
-    sim_slave = false;
+    sim_slave   = false;
+    slot_writes = writes;
     if (slave_irq_sim && erase_ops != erases) slave_busy_until_us = sim_us + SIM_ERASE_US;
     if (slave_irq_sim && slave_commit_runs != commits) slave_busy_until_us = sim_us + SIM_SLAVE_COMMIT_US;
     if (slave_reset_pending) {
@@ -697,7 +701,10 @@ static void test_session_info_and_wrapper(void) {
     CHECK_EQ(rsp[23], T_CHUNK);
     CHECK_EQ(rsp[24], T_MPIECE);
     CHECK_EQ(rsp[25], T_REPORT);
-    for (int i = 26; i < T_VALUE; i++)
+    // faster uploads: a CHUNK window of 16 and BEGIN reuse; nothing after them
+    CHECK_EQ(rsp[26], UPDATE_CAP_CHUNK_WINDOW | UPDATE_CAP_REUSE_STAGED);
+    CHECK_EQ(rsp[27], UPDATE_CHUNK_WINDOW);
+    for (int i = 28; i < T_VALUE; i++)
         CHECK_EQ(rsp[i], 0);
     // INFO page 1 (M3): the version from the build-info record; no wrapper needed
     const uint8_t page1 = 1, page2 = 2;

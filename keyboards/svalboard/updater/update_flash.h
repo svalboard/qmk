@@ -22,6 +22,10 @@ void update_flash_init(void);      // reads the JEDEC ID once; safe to call repe
 bool update_flash_available(void); // the die is 16 MiB, so the slot exists (D26)
 void update_flash_jedec(uint8_t id[UPDATE_JEDEC_BYTES]); // manufacturer, type, capacity
 
+// Counts every erase and program of the slot (wraps). A verified image is
+// still in the slot only while this has not moved since it was verified.
+uint32_t update_flash_writes(void);
+
 // Whether [off, off + len) lies inside the slot (no wrap-around).
 bool update_slot_range_ok(uint32_t off, uint32_t len);
 

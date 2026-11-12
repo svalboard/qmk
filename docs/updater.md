@@ -177,10 +177,10 @@ byte layouts are in the comment at the top of `kb/updater/updater.c`. In short:
 
 | Op | Request after `[hand]` | Reply after `[status]` / rule |
 |---|---|---|
-| `0x00 INFO` | page (0, the default) | state, protocol (4), slot base/size and max image (4 KiB units), JEDEC ID, pointing ID, hand, fw version, storage format, security epoch, flags (bit0 16 MiB die, bit1 settings writes failing, bit2 release build, bit3 test hooks, bit4 reserved, bit5 the other half's version differs, bit6 reserved, bit7 a no-chord dev build, D43), last error, then the largest CHUNK data (50), the largest MANIFEST piece (52) and the report size (64), for either half. Page 1 (this half only): `1`, fw version u32, the 16-character version string from the build-info record. Other pages: INVALID |
+| `0x00 INFO` | page (0, the default) | state, protocol (4), slot base/size and max image (4 KiB units), JEDEC ID, pointing ID, hand, fw version, storage format, security epoch, flags (bit0 16 MiB die, bit1 settings writes failing, bit2 release build, bit3 test hooks, bit4 reserved, bit5 the other half's version differs, bit6 reserved, bit7 a no-chord dev build, D43), last error, then the largest CHUNK data (50), the largest MANIFEST piece (52) and the report size (64), for either half; then the upload flags (bit0 CHUNK window, bit1 BEGIN reuse; see "Faster uploads") and the CHUNK window (16). A build from before them sends 0 there. Page 1 (this half only): `1`, fw version u32, the 16-character version string from the build-info record. Other pages: INVALID |
 | `0x01 MANIFEST` | off, n ≤ 52, bytes | bytes filled, of 108. In order; offset 0 restarts. Bytes past 108 are INVALID. Ties the load to this client |
 | `0x02 ARM` | mode (protocol 4: 0 single, the default; 1 pair) | nonce u32 and the first 4 bytes of SHA-512(manifest), which the host shows; then (protocol 4) the first 4 bytes of SHA-512(the pair manifest) for a pair ARM (else 0), and flags: bit0 PRE_APPROVED (BEGIN needs no chord, no blue light), bit1 BY_PAIR, bit2 NO_CHORD, bit3 PAIR. Needs all 108 bytes. Checks the manifest fields, binds the session to client ID + nonce, starts the 30 s chord window. BUSY, with nothing changed, while a Scan Lab sweep runs. A pair ARM also needs the whole pair manifest and checks it against this half (see "One chord for both halves") |
-| `0x03 BEGIN` | nonce | ACCEPTED once the chord is made: the manifest is checked again, then the erase, one 4 KiB sector per main-loop pass |
+| `0x03 BEGIN` | nonce, flags u8 (bit0 reuse; 0 from older hosts) | ACCEPTED once the chord is made: the manifest is checked again, then the erase, one 4 KiB sector per main-loop pass. With reuse, and the slot's verified image is this manifest's: no erase, every byte staged (see "Faster uploads") |
 | `0x04 CHUNK` | off u24, n ≤ 50, bytes | next offset. Strictly in order; an earlier chunk is acknowledged and not written again |
 | `0x05 END` | nonce | ACCEPTED: SHA-512, structure checks and CRC of the staged image, 2 KiB per pass |
 | `0x06 STATUS` | - | state, bytes staged, image length, erase progress, last error, reserved u16 (0), verify ms, longest sector erase ms, CRC low 16 bits once VERIFIED, flags, the other half by split presence (see below), then (protocol 4) flags2: bit0 an approval is held for this half's next install, bit1 this session was pre-approved |
@@ -607,6 +607,39 @@ with (`kb/updater/fw_version.txt` unless `make ... SVAL_FW_VERSION=N`), and
 manifest, so the two agree unless `--fw-version` says otherwise (which it
 refuses when the record has a nonzero number). For an A/B pair of test images
 build twice with `SVAL_FW_VERSION=2101` and `2102`.
+
+## Faster uploads
+
+INFO page 0 byte 26 says what a build adds for uploads; it stays protocol 4,
+and a host that does not read the byte (or reads 0 from an older build) uploads
+as before: one CHUNK, then its reply, then the next.
+
+- **CHUNK window** (bit0). A host may send up to INFO byte 27 (16) CHUNKs back
+  to back before it waits for their replies. The board takes each in order and
+  answers each, in order, with the next offset, exactly as before. Raw HID OUT
+  reports wait in the endpoint queue (the endpoint NAKs while it is full), so
+  none is lost on the way in. A CHUNK past the next offset is OUT_OF_ORDER and
+  changes nothing; the host goes back to that offset and sends from there. A
+  repeat is acknowledged and not written again. So a reply that goes missing
+  costs a resend, never a wrong byte, and the SHA-512 at END still checks the
+  whole image before anything is committed. One report per 1 ms USB frame is
+  the ceiling of a full-speed interrupt endpoint: about 50 KB/s of image
+  (50 data bytes per frame; measured figures are in the PR).
+- **BEGIN reuse** (bit1). BEGIN takes a flags byte after the nonce; bit0 asks
+  to keep the image already in the slot. The board keeps it only when a session
+  verified it there (END's SHA-512, structure and build-info checks), the slot
+  has not been erased or programmed since (`update_flash_writes()`), no reset
+  came between (the record is RAM only), and that session's manifest (its
+  SHA-512) and length are this one's. Then BEGIN goes straight to RECEIVING
+  with every byte staged: no erase, no CHUNKs. END verifies the slot again
+  before COMMIT, as always. Otherwise BEGIN erases as before, and STATUS's
+  staged count (0) tells the host to send the image.
+
+A pair update of one image for both halves (`svalboard/either`) uses both:
+the image goes to the half with USB once, in a window, is relayed to the other
+half, and the half with USB then installs that same staged image on the held
+approval (one manifest, so the same SHA-512), after its own verify. Per-hand
+images have two manifests, so the half with USB is sent its own image.
 
 ## One chord for both halves (protocol 4, D41)
 

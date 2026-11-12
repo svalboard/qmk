@@ -27,7 +27,10 @@
 //                                                counts as confirmed, D43), last error; then (protocol 3) the
 //                                                largest CHUNK data u8 (CHUNK_DATA_MAX, 50), the
 //                                                largest MANIFEST piece u8 (MANIFEST_DATA_MAX, 52)
-//                                                and the raw HID report size u8 (RAW_EPSIZE, 64).
+//                                                and the raw HID report size u8 (RAW_EPSIZE, 64);
+//                                                then the upload flags u8 (bit0 CHUNK window, bit1
+//                                                BEGIN reuse: see "Faster uploads") and the CHUNK
+//                                                window u8 (UPDATE_CHUNK_WINDOW, 16).
 //                                                Status UNAVAILABLE when bit0 is clear or bit1 set.
 //                page 1 (M3; this half only)     1, fw_version u32, version string (16 chars, NUL-padded:
 //                                                the release tag). Other pages: INVALID.
@@ -36,7 +39,7 @@
 //                1 pair; see "One approval")     first 4 bytes of sha512(the pair manifest) (pair; else 0),
 //                                                flags (bit0 PRE_APPROVED: BEGIN needs no chord, bit1
 //                                                BY_PAIR, bit2 NO_CHORD, bit3 PAIR; update_manifest.h)
-//  0x03 BEGIN    nonce u32                       state
+//  0x03 BEGIN    nonce u32, flags u8 (bit0 reuse) state
 //  0x04 CHUNK    off u24, n 1..50, bytes         next offset u24
 //  0x05 END      nonce u32                       state
 //  0x06 STATUS   -                               state, staged u24, image_len u24, sectors erased u16,
@@ -72,6 +75,25 @@
 //  0x0E SETTINGS_RESET 'R' 'S' 'E' 'T', scope u8 done u8 (bit0 this half, bit1 the other half).
 //                (0 this half, 1 both),          Protocol 4, D42: see "Settings reset"
 //                mode u8 (0 defaults, 1 blank: D44)
+//
+// Faster uploads (INFO rsp[26]; still protocol 4: a host that does not read
+// the byte gets 0 from an older build and keeps to one CHUNK per round trip).
+// - CHUNK window (bit0): a host may send up to rsp[27] CHUNKs back to back
+//   without waiting for each reply. Nothing else changes: each CHUNK is still
+//   taken in order and answered, in order, with the next offset; a CHUNK past
+//   the next offset is OUT_OF_ORDER and changes nothing, so a host that sees
+//   one resends from that offset (raw HID OUT reports wait in the endpoint
+//   queue, NAKed while it is full, so none is dropped on the way in).
+// - BEGIN reuse (bit1): BEGIN's flags bit0 asks to keep the image already in
+//   the slot. It is kept only when a session verified it there, the slot has
+//   not been erased or programmed since (update_flash_writes()), and its
+//   manifest (SHA-512 of the 108 bytes) and length are this session's: then
+//   the session goes from VERIFYING_MANIFEST straight to RECEIVING with every
+//   byte staged, and END verifies the slot again (SHA-512, structure, build
+//   info) before COMMIT, as for an image sent in CHUNKs. Otherwise BEGIN erases
+//   as usual and the host sends the image; STATUS's staged count tells which.
+//   A pair update uses it for the half with USB: the image relayed to the
+//   other half is still in this half's slot (one image for both halves).
 //
 // Protocol 3 is protocol 2 in 64-byte reports: the same ops and fields, with
 // larger MANIFEST and CHUNK pieces and the three sizes at the end of INFO page
@@ -195,7 +217,7 @@ enum { id_custom_set_value = 0x07, id_custom_get_value = 0x08 };
 #define HAND_SELF 0xFF                              // INFO only
 #define MANIFEST_DATA_MAX (VALUE_BYTES - 3)         // after [hand][off][n]: 52
 #define CHUNK_DATA_MAX (VALUE_BYTES - 5)            // after [hand][off u24][n]: 50
-#define INFO_BYTES 26                               // INFO page 0's reply, [status] through the report size
+#define INFO_BYTES 28                               // INFO page 0's reply, [status] through the CHUNK window
 _Static_assert(VALUE_BYTES >= INFO_BYTES, "INFO page 0 fits the value bytes");
 _Static_assert(MANIFEST_DATA_MAX <= UPDATE_MANIFEST_BYTES && MANIFEST_DATA_MAX <= 0xFF, "a MANIFEST piece fits its u8 count");
 _Static_assert(CHUNK_DATA_MAX <= 0xFF, "a CHUNK fits its u8 count");
@@ -229,7 +251,17 @@ typedef struct {
     bool    pre_approved; // ARM counted the chord as made (no-chord build, or the held approval)
     uint8_t pair_hash[UPDATE_SHA512_BYTES]; // sha512(pair manifest), at the pair ARM
     update_build_scan_t bi;                 // VERIFYING_IMAGE: the image's build-info records (D45)
+    bool                reuse;              // BEGIN asked to keep the slot's verified image
 } session_t;
+
+// The image a session last verified in the slot (BEGIN reuse): RAM only, and
+// good only while update_flash_writes() still reads `writes`.
+static struct {
+    bool     valid;
+    uint32_t writes;
+    uint32_t len;
+    uint8_t  manifest_hash[UPDATE_SHA512_BYTES];
+} kept;
 
 // The held approval (D41): RAM only, so a reset clears it.
 typedef enum { HELD_NONE = 0, HELD_PENDING, HELD_READY } held_state_t;
@@ -388,6 +420,8 @@ static void info_sizes(uint8_t *rsp) {
     rsp[23] = CHUNK_DATA_MAX;
     rsp[24] = MANIFEST_DATA_MAX;
     rsp[25] = RAW_EPSIZE;
+    rsp[26] = UPDATE_CAP_CHUNK_WINDOW | UPDATE_CAP_REUSE_STAGED;
+    rsp[27] = UPDATE_CHUNK_WINDOW;
 }
 
 static update_status_t op_info(const uint8_t *req, uint8_t *rsp) {
@@ -588,6 +622,7 @@ static update_status_t op_begin(uint32_t client, const uint8_t *req) {
     if (!update_gesture_done(NULL)) return UPDATE_NOT_CONFIRMED;
     held_capture(); // a pair session: the chord approved this half's install too (D41)
     update_gesture_disarm();
+    s.reuse = (req[5] & UPDATE_BEGIN_REUSE) != 0;
     s.state = UPDATE_STATE_VERIFYING_MANIFEST;
     return UPDATE_ACCEPTED;
 }
@@ -971,6 +1006,15 @@ void updater_via_command(uint8_t *data, uint8_t length) {
 
 // ---- slow work, one slice per pass ---------------------------------------------------------
 
+// BEGIN reuse: the slot still holds the image a session verified, and it is
+// this session's (the same manifest, so the same SHA-512 and length).
+static bool reusable(void) {
+    if (!kept.valid || kept.writes != update_flash_writes() || kept.len != s.image_len) return false;
+    uint8_t hash[UPDATE_SHA512_BYTES];
+    crypto_sha512(hash, manifest, UPDATE_MANIFEST_BYTES);
+    return memcmp(hash, kept.manifest_hash, UPDATE_SHA512_BYTES) == 0;
+}
+
 static void verify_manifest(void) {
     update_device_t dev;
     if (s.relay) {
@@ -981,6 +1025,13 @@ static void verify_manifest(void) {
     update_status_t st = update_manifest_check(MANIFEST, &dev);
     if (st != UPDATE_OK) {
         fail(st);
+        return;
+    }
+    if (s.reuse && reusable()) {
+        // The slot holds this very image, verified (see "Faster uploads"):
+        // no erase and no CHUNKs. END verifies it again before COMMIT.
+        s.staged = s.image_len;
+        s.state  = UPDATE_STATE_RECEIVING;
         return;
     }
     // Erase [0, image_len) rounded up to whole sectors; sectors that already
@@ -1039,9 +1090,15 @@ static void verify_image_step(void) {
     if (st == UPDATE_OK) st = update_image_build_check(&s.bi, &s.dev);
     s.verify_ms = ms16(updater_port_now_ms() - s.work_ms);
     if (st != UPDATE_OK) {
+        kept.valid = false;
         fail(st);
         return;
     }
+    // What the slot holds now, for a later BEGIN reuse.
+    kept.valid  = true;
+    kept.writes = update_flash_writes();
+    kept.len    = s.image_len;
+    crypto_sha512(kept.manifest_hash, manifest, UPDATE_MANIFEST_BYTES);
     s.state = UPDATE_STATE_VERIFIED;
 }
 
@@ -1421,6 +1478,7 @@ void updater_host_reset(void) {
     rx_n     = 0;
     reset_session();
     held_clear();
+    memset(&kept, 0, sizeof(kept)); // RAM: gone with a reset
     reset_due = false;
 }
 #endif
