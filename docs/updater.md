@@ -554,7 +554,7 @@ on; protocol 1 builds, never released, used that bit for their test key). The
 relay reads that INFO at the start of every relay and then sends FAST, which
 makes the session that BEGIN opens next (within 1 s) a fast one:
 
-- the other half erases its slot in 64 KiB blocks (about 150 ms each with its
+- the other half erases its slot in 64 KiB blocks (about 400 ms each with its
   interrupts off, 2 s at the datasheet maximum, inside the 4 s link timeout);
   this half polls 150 ms after each answer, at the 3 ms deadline;
 - the pages go as PAGE2, up to 240 image bytes a request, which may cross a

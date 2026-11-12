@@ -165,11 +165,11 @@ static uint32_t slave_busy_rpcs; // RPCs that failed for it
 static uint64_t sim_block_busy_us = 3 * SIM_ERASE_US; // a 64 KiB block erase, about 150 ms (2 s at most)
 // DMA busy when the other half programs a page (update_split_port_program_page).
 static uint32_t       dma_busy_pct, dma_refusals;
-static bool           slave_hk_frozen;  // the other half's housekeeping does not run (it is stuck)
+static bool           slave_hk_frozen;    // the other half's housekeeping does not run (it is stuck)
 static int            drop_rsp_op   = -1; // every answer to requests with this op is lost
 static int            drop_rsp_left = -1; // with drop_rsp_op: answers still to lose (-1: every one)
-static bool           old_slave;        // the other half on protocol 3: KEYBOARD_UPDATE op 0x07 is unknown there
-static const uint8_t *master_slot;      // this half's slot for the relay; NULL: the die's
+static bool           old_slave;          // the other half on protocol 3: KEYBOARD_UPDATE op 0x07 is unknown there
+static const uint8_t *master_slot;        // this half's slot for the relay; NULL: the die's
 static uint8_t        shadow[SVAL_UPDATE_MAX_IMAGE];
 static bool           auto_shadow; // the relay's pause takes a copy of the die's slot as this half's (tool tests)
 static struct {
