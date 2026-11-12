@@ -594,7 +594,8 @@ image, `sval_update.py`; ms, the mean of the runs):
 |---|---|---|---|---|---|
 | old, old (before this change) | 3 | 3,535 | 12,950 | 856 | 17,459 |
 | new, old (the sender's changes only) | 10 | 3,048 | 8,208 | 852 | 12,217 |
-| new, new (the fast path) | 3 | 1,228 | 4,288 | 20 | 5,682 |
+| old, new | 3 | 3,534 | 12,831 | 854 | 17,330 |
+| new, new (the fast path) | 20 | 1,228 | 4,283 | 21 | 5,630 |
 
 The commit phase (COMMIT to done) is the fixed 4.5 s hold either way. A page
 RPC takes 0.9 ms with 24 bytes and 4.4 ms with 240; erasing is the other
