@@ -576,7 +576,12 @@ after that relay's INFO said so, and after any request that went unanswered
 INFO again, a small frame, before the next PAGE2. It never tries a large
 frame to see what happens. Builds with the fast path also bound those
 lengths in the core callback: one past the buffer moves no data and runs no
-callback. No split transaction ID was added (P1).
+callback. No split transaction ID was added (P1). The split table golden
+(`tools/split_table_golden.json`) changes in two fields only: the default
+size of `PUT_RPC_REQ_DATA` (ID 9), which both halves set again before every
+RPC (`transaction_rpc_exec`, `slave_rpc_info_callback`), and the offset of
+`GET_RPC_RESP_DATA`'s buffer (ID 11), which is local memory. Neither is on
+the wire, and halves on the old and the new table were tested together.
 
 A half without the fast path at either end gets the old relay: a new half
 with USB streams 24-byte PAGEs with the link paused (above), and a new other
@@ -588,7 +593,7 @@ image, `sval_update.py`; ms, the mean of the runs):
 | Sender, receiver | Runs | Erase | Pages | Verify | Relay, start to verified |
 |---|---|---|---|---|---|
 | old, old (before this change) | 3 | 3,535 | 12,950 | 856 | 17,459 |
-| new, old (sender changes only) | 13 | (see the PR) | | | |
+| new, old (the sender's changes only) | 10 | 3,048 | 8,208 | 852 | 12,217 |
 | new, new (the fast path) | 3 | 1,228 | 4,288 | 20 | 5,682 |
 
 The commit phase (COMMIT to done) is the fixed 4.5 s hold either way. A page
