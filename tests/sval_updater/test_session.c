@@ -182,6 +182,9 @@ static uint64_t last_slave_rx_us; // when the other half last got a request
 #define SIM_RPC_US 600            // four transactions at 1 Mbaud, with the handshakes
 #define SIM_RPC_FAIL_US 20000     // a transaction that times out (SERIAL_USART_TIMEOUT)
 
+uint32_t update_split_port_now_us(void) {
+    return (uint32_t)sim_us;
+}
 uint32_t update_split_port_now_ms(void) {
     return (uint32_t)(sim_us / 1000);
 }

@@ -561,8 +561,38 @@ static struct {
     bool            unconfirmed;    // DONE without an answer after COMMIT (the probe went unanswered)
     uint32_t        page_off; // the slot page in page[], or UINT32_MAX
     bool            from_self; // the boot relay (update_pair.c): this half's own image, not the slot
+    // Timing (the RELAY op): when each phase began (0: not yet), and the RPCs.
+    uint32_t        t_erase, t_pages, t_end, t_verified, t_commit;
+    uint32_t        erase_ms, pages_ms, verify_ms, commit_ms;
+    uint32_t        page_rpcs, page_rpc_us, rpc_us_max;
+    uint16_t        busy;
+    uint8_t         resumes;
+    bool            failing; // no valid answer since fail_since_ms
+    uint32_t        fail_since_ms;
+    bool            after_pending; // a failure record waits for the other half's next STATUS
     uint8_t         page[UPDATE_FLASH_PAGE] __attribute__((aligned(4)));
 } rl;
+
+static update_relay_fail_t last_fail; // since boot, kept until the next failure
+
+// A phase ends at now: its length, at least 1 ms so 0 reads "not reached".
+static uint32_t phase_ms(uint32_t since, uint32_t now) {
+    uint32_t ms = now - since;
+    return ms ? ms : 1;
+}
+
+// One KEYBOARD_UPDATE RPC from the relay, timed.
+static bool relay_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
+    uint32_t t0 = update_split_port_now_us();
+    bool     ok = update_split_port_rpc(req, req_len, rsp, rsp_len);
+    uint32_t us = update_split_port_now_us() - t0;
+    if (us > rl.rpc_us_max) rl.rpc_us_max = us;
+    if (rl.phase == RELAY_PAGES) {
+        rl.page_rpcs++;
+        rl.page_rpc_us += us;
+    }
+    return ok;
+}
 
 bool update_relay_busy(void) {
     return rl.phase != RELAY_IDLE && rl.phase != RELAY_DONE && rl.phase != RELAY_FAILED;
@@ -627,6 +657,17 @@ static void relay_stop(uint8_t to, bool link_dead) {
 static void relay_fail_how(update_status_t st, bool link_dead) {
     if (!update_relay_busy() || rl.phase == RELAY_ABORTING) return;
     rl.error = st;
+    // The evidence, kept until the next failure (RELAY op).
+    uint8_t count = last_fail.count < UINT8_MAX ? last_fail.count + 1 : UINT8_MAX;
+    memset(&last_fail, 0, sizeof(last_fail));
+    last_fail.count       = count;
+    last_fail.phase       = rl.phase;
+    last_fail.error       = st;
+    last_fail.off         = rl.acked;
+    last_fail.retries     = rl.retries;
+    last_fail.since_ok_ms = update_split_port_now_ms() - rl.last_ok_ms;
+    last_fail.slave_state = rl.slave_state;
+    last_fail.slave_error = rl.slave_error;
     relay_stop(RELAY_FAILED, link_dead);
 }
 
@@ -669,14 +710,20 @@ static bool relay_exchange(usplit_rsp_t *r, uint8_t *buf) {
     uint8_t op   = rl.req[0];
     uint8_t want = usplit_rsp_len(op);
     memset(buf, 0, USPLIT_MSG_MAX);
-    bool     ok  = update_split_port_rpc(rl.req, rl.req_len, buf, want) && usplit_rsp_parse(buf, want, op, rl.req[1], r) == UPDATE_OK;
+    bool     ok  = relay_rpc(rl.req, rl.req_len, buf, want) && usplit_rsp_parse(buf, want, op, rl.req[1], r) == UPDATE_OK;
     uint32_t now = update_split_port_now_ms();
     if (ok && r->status == UPDATE_INVALID && ++rl.invalids < RELAY_INVALID_TRIES) ok = false; // maybe damaged on the way: again
     if (ok) {
+        if (rl.failing && (int32_t)(now - rl.fail_since_ms) >= SVAL_UPDATE_RELAY_DROPOUT_MS && rl.resumes < UINT8_MAX) rl.resumes++;
+        rl.failing     = false;
         rl.pending     = false;
         rl.last_ok_ms  = now;
         rl.slave_state = r->state;
         return true;
+    }
+    if (!rl.failing) {
+        rl.failing       = true;
+        rl.fail_since_ms = now;
     }
     rl.retries++;
     if ((int32_t)(now - rl.last_ok_ms) >= SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS) relay_timeout(now);
@@ -698,6 +745,20 @@ static bool relay_step(void) {
     memset(&r, 0, sizeof(r)); // a request that could not be built fails as INVALID below
     switch (rl.phase) {
         case RELAY_START:
+            if (rl.after_pending) {
+                // After a failure: what the other half says now, before the
+                // ABORT below clears it (the failure record).
+                if (!rl.pending && !relay_new(USPLIT_OP_STATUS)) break;
+                if (!relay_exchange(&r, buf)) return false;
+                rl.after_pending = false;
+                if (r.status == UPDATE_OK) {
+                    last_fail.after_read    = true;
+                    last_fail.after_state   = r.state;
+                    last_fail.after_error   = r.payload[0];
+                    last_fail.after_session = r.payload[10] & 0x01;
+                }
+                return true;
+            }
             // An old session on the other half (a failed relay whose ABORT was
             // lost) would refuse BEGIN: clear it first. ABORT never erases.
             if (!rl.pending && !relay_new(USPLIT_OP_ABORT)) break;
@@ -722,6 +783,7 @@ static bool relay_step(void) {
             if (rl.off < UPDATE_MANIFEST_BYTES) return true;
             // The other half now checks the manifest and erases, behind the pause.
             rl.phase   = RELAY_ERASE_WAIT;
+            rl.t_erase = now;
             rl.next_ms = now + SVAL_UPDATE_RELAY_POLL_MS;
             return false;
         }
@@ -750,8 +812,10 @@ static bool relay_step(void) {
                 // Erased: the image goes over with the link running, so both
                 // halves keep typing between the RPCs.
                 relay_resume();
-                rl.phase = RELAY_PAGES;
-                rl.off   = 0;
+                rl.phase    = RELAY_PAGES;
+                rl.off      = 0;
+                rl.erase_ms = phase_ms(rl.t_erase, now);
+                rl.t_pages  = now;
                 return true;
             }
             if (rl.phase == RELAY_VERIFY_WAIT) {
@@ -765,8 +829,9 @@ static bool relay_step(void) {
                     return false;
                 }
                 relay_resume();
-                rl.phase   = RELAY_VERIFIED;
-                rl.next_ms = now + SVAL_UPDATE_RELAY_KEEPALIVE_MS;
+                rl.phase     = RELAY_VERIFIED;
+                rl.verify_ms = phase_ms(rl.t_end, now);
+                rl.next_ms   = now + SVAL_UPDATE_RELAY_KEEPALIVE_MS;
                 return false;
             }
             if (r.state != UPDATE_STATE_VERIFIED) relay_lost(); // RELAY_VERIFIED: still holding it?
@@ -781,7 +846,9 @@ static bool relay_step(void) {
                         return false;
                     }
                     if (!relay_new(USPLIT_OP_END)) break;
-                    rl.phase = RELAY_END;
+                    rl.phase    = RELAY_END;
+                    rl.pages_ms = phase_ms(rl.t_pages, now);
+                    rl.t_end    = now;
                     return true;
                 }
                 uint32_t base = rl.off - rl.off % UPDATE_FLASH_PAGE;
@@ -810,7 +877,10 @@ static bool relay_step(void) {
                 rl.off = next;
                 return true;
             }
-            if (r.status == UPDATE_BUSY) return false; // a new request next pass
+            if (r.status == UPDATE_BUSY) {
+                if (rl.busy < UINT16_MAX) rl.busy++;
+                return false; // a new request next pass
+            }
             if (r.state == UPDATE_STATE_IDLE) {
                 relay_fail(UPDATE_UNAVAILABLE); // it lost the session: rebooted, or timed out
                 return false;
@@ -888,6 +958,7 @@ static bool relay_step(void) {
             }
             rl.phase       = RELAY_DONE;
             rl.end_ms      = update_split_port_now_ms();
+            rl.commit_ms   = phase_ms(rl.t_commit, rl.end_ms);
             awaiting_match = true;
             relay_resume();
             return false;
@@ -923,6 +994,7 @@ static bool relay_start(const uint8_t *manifest, uint32_t image_len, uint32_t cr
     rl.page_off  = UINT32_MAX;
     rl.from_self = from_self;
     rl.start_ms = rl.last_ok_ms = update_split_port_now_ms();
+    rl.after_pending            = last_fail.count && !last_fail.after_read;
     // Paused from the start: the other half's manifest check and erase come
     // straight after the manifest.
     if (!relay_pause()) return false;
@@ -955,7 +1027,7 @@ bool update_relay_commit(void) {
     }
     rl.phase = RELAY_COMMIT;
     // COMMIT gets the whole link timeout, not what is left of the keepalive's.
-    rl.last_ok_ms = update_split_port_now_ms();
+    rl.last_ok_ms = rl.t_commit = update_split_port_now_ms();
     return true;
 }
 
@@ -987,6 +1059,19 @@ void update_relay_info(update_relay_info_t *info) {
     info->elapsed_ms     = rl.phase == RELAY_IDLE ? 0 : (update_relay_busy() ? update_split_port_now_ms() : rl.end_ms) - rl.start_ms;
     info->paused         = rl.paused;
     info->unconfirmed    = rl.phase == RELAY_DONE && rl.unconfirmed;
+    info->erase_ms       = rl.erase_ms;
+    info->pages_ms       = rl.pages_ms;
+    info->verify_ms      = rl.verify_ms;
+    info->commit_ms      = rl.commit_ms;
+    info->page_rpcs      = rl.page_rpcs;
+    info->page_rpc_us    = rl.page_rpc_us;
+    info->rpc_us_max     = rl.rpc_us_max;
+    info->busy           = rl.busy;
+    info->resumes        = rl.resumes;
+}
+
+void update_relay_last_failure(update_relay_fail_t *f) {
+    *f = last_fail;
 }
 
 update_status_t update_split_other_info(uint8_t payload[USPLIT_INFO_PAYLOAD], uint8_t *state) {
@@ -1046,6 +1131,7 @@ void update_split_host_reset(void) {
     memset(&sl, 0, sizeof(sl));
     memset(&hk, 0, sizeof(hk));
     memset(&rl, 0, sizeof(rl));
+    memset(&last_fail, 0, sizeof(last_fail));
     master_seq     = 0;
     presence       = UPDATE_PRESENCE_NONE;
     awaiting_match = false;
@@ -1061,6 +1147,7 @@ void update_split_host_slave_reset(void) {
 // This half's RAM after a reset (pair: its own commit).
 void update_split_host_master_reset(void) {
     memset(&rl, 0, sizeof(rl));
+    memset(&last_fail, 0, sizeof(last_fail));
     presence       = UPDATE_PRESENCE_NONE;
     awaiting_match = false;
     memset(&presence_last, 0, sizeof(presence_last));
@@ -1080,6 +1167,7 @@ void update_split_host_master_reset(void) {
 #    include "hardware/sync.h"
 #    include "hardware/regs/addressmap.h"
 #    include "hardware/regs/dma.h"
+#    include "hardware/structs/timer.h"
 #    include "hardware/platform_defs.h"
 
 static update_build_id_t self_id;
@@ -1129,6 +1217,10 @@ bool update_split_port_updating(void) {
 
 uint32_t update_split_port_now_ms(void) {
     return timer_read32();
+}
+
+uint32_t update_split_port_now_us(void) {
+    return timer_hw->timerawl;
 }
 
 void update_split_port_lock(void) {

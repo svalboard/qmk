@@ -124,6 +124,14 @@ static void test_relay_happy(uint32_t len) {
     // plus at most one RPC and one page program.
     CHECK(pages_max_pass <= ((SVAL_UPDATE_RELAY_PASS_MS + 1) * 1000 + SIM_RPC_US + SIM_PAGE_PROGRAM_US)); // ms timer granularity
     uint64_t relay_ms = (sim_us - t0) / 1000;
+    // The time per phase (RELAY op): each phase measured, within the whole.
+    CHECK(ri.erase_ms > 0 && ri.pages_ms > 0 && ri.verify_ms > 0);
+    CHECK_EQ(ri.commit_ms, 0); // not yet
+    CHECK(ri.erase_ms + ri.pages_ms + ri.verify_ms <= ri.elapsed_ms);
+    CHECK(ri.page_rpcs >= (len + USPLIT_PAGE_DATA_MAX - 1) / USPLIT_PAGE_DATA_MAX);
+    CHECK(ri.page_rpc_us >= ri.page_rpcs * SIM_RPC_US);
+    CHECK(ri.rpc_us_max >= SIM_RPC_US);
+    CHECK_EQ(ri.resumes, 0);
 
     // Kept alive while the host decides: no timeout on the other half.
     for (int i = 0; i < 12000; i++)
@@ -149,6 +157,7 @@ static void test_relay_happy(uint32_t len) {
         if (ri.phase == RELAY_DONE || ri.phase == RELAY_FAILED) break;
     }
     CHECK_EQ(ri.phase, RELAY_DONE);
+    CHECK(ri.commit_ms >= SVAL_UPDATE_SPLIT_COMMIT_MS + SVAL_UPDATE_SPLIT_REBOOT_MS);
     CHECK_EQ(slave_commit_runs, 1);
     CHECK_EQ(slave_commit_crc, body_crc());
     CHECK_EQ(slave_commit_len, len);
@@ -361,6 +370,15 @@ static void test_relay_link_loss(void) {
             CHECK(slave_idle_at - last_slave_rx_us >= (uint64_t)SVAL_UPDATE_SPLIT_SLAVE_TIMEOUT_MS * 1000);
             CHECK(slave_idle_at - last_slave_rx_us <= (uint64_t)SVAL_UPDATE_SPLIT_SLAVE_TIMEOUT_MS * 1000 + 2000);
             CHECK_EQ(led_now, UPDATE_LED_NONE); // its LEDs are back
+            // The failure record: where, and how long without an answer.
+            update_relay_fail_t f;
+            update_relay_last_failure(&f);
+            CHECK(f.count > 0);
+            CHECK_EQ(f.phase, want);
+            CHECK_EQ(f.error, UPDATE_UNAVAILABLE);
+            CHECK(f.since_ok_ms >= SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS);
+            CHECK(!f.after_read);
+            if (want == RELAY_PAGES) CHECK(f.off >= img_len / 2 && f.off < img_len);
         }
         CHECK(!link_paused);
         CHECK(only_slot_changed());
@@ -370,6 +388,16 @@ static void test_relay_link_loss(void) {
             slave_commit_resets = true;
             CHECK(update_relay_start(blob, img_len, body_crc()));
             CHECK_EQ(relay_until(RELAY_VERIFIED, 60000), RELAY_VERIFIED);
+            if (want != RELAY_COMMIT) {
+                // The new relay asked the other half first: it stayed up, and
+                // its session timed out (no session, TIMEOUT).
+                update_relay_fail_t f;
+                update_relay_last_failure(&f);
+                CHECK(f.after_read);
+                CHECK(!f.after_session);
+                CHECK_EQ(f.after_state, UPDATE_STATE_IDLE);
+                CHECK_EQ(f.after_error, UPDATE_TIMEOUT);
+            }
             CHECK(slot_is_img(img_len));
             CHECK(update_relay_commit());
             CHECK_EQ(relay_until(RELAY_DONE, 20000), RELAY_DONE);

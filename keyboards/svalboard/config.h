@@ -122,6 +122,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS 2000
 #define SVAL_UPDATE_RELAY_POLL_MS 20
 #define SVAL_UPDATE_RELAY_KEEPALIVE_MS 1000
+// A run of requests with no valid answer this long, then an answer again,
+// counts as a dropout the relay survived (the RELAY op's resumes).
+#define SVAL_UPDATE_RELAY_DROPOUT_MS 500
 // After the other half accepts COMMIT, the link stays paused for its commit
 // (M1 #13: about 1-2 s from COMMIT to the reset) plus 2.5 s for its reboot
 // (R18: the 500 ms double-tap window and the 2 s USB detect).
