@@ -44,7 +44,7 @@
 //  0x05 END      nonce u32                       state
 //  0x06 STATUS   -                               state, staged u24, image_len u24, sectors erased u16,
 //                                                sectors to erase u16, last error, reserved u16 (0),
-//                                                image verify ms u16, longest sector erase ms u16,
+//                                                image verify ms u16, longest erase step ms u16,
 //                                                image CRC low 16 bits (once VERIFIED), flags (bit0
 //                                                chord made, bit1 session bound, bit2 settings writes
 //                                                failing), the other half by split presence
@@ -1034,24 +1034,38 @@ static void verify_manifest(void) {
         s.state  = UPDATE_STATE_RECEIVING;
         return;
     }
-    // Erase [0, image_len) rounded up to whole sectors; sectors that already
-    // read erased are skipped.
+    // Erase [0, image_len) rounded up to whole sectors: whole 64 KiB blocks,
+    // then sectors for the tail that doesn't fill one (see erase_step). Blocks
+    // and sectors that already read erased are skipped.
     s.erase_off = 0;
     s.erase_end = (s.image_len + UPDATE_FLASH_SECTOR - 1) / UPDATE_FLASH_SECTOR * UPDATE_FLASH_SECTOR;
     s.state     = UPDATE_STATE_ERASING;
 }
 
+// The slot starts on a 64 KiB block (static assert below), so the erase runs
+// whole blocks from offset 0 and sectors only for a tail shorter than a block.
+// A block erase keeps interrupts off for about 400 ms on these dies (2 s at the
+// datasheet maximum) against about 50 ms for a sector: USB requests wait in
+// the controller until it finishes, and the host sees ERASING in STATUS (CHUNK
+// and END are BUSY) the whole time. It never reaches past erase_end, which is
+// inside the slot, and update_flash.c checks the range again.
+_Static_assert(SVAL_UPDATE_BASE % UPDATE_FLASH_BLOCK == 0, "the slot starts on a 64 KiB block");
+static bool erase_by_block(uint32_t off, uint32_t end) {
+    return off % UPDATE_FLASH_BLOCK == 0 && end > off && end - off >= UPDATE_FLASH_BLOCK;
+}
+
 static void erase_step(void) {
     if (s.erase_off < s.erase_end) {
-        uint32_t        t0 = updater_port_now_ms();
-        update_status_t st = update_flash_erase_sector(s.erase_off);
+        bool            block = erase_by_block(s.erase_off, s.erase_end);
+        uint32_t        t0    = updater_port_now_ms();
+        update_status_t st    = block ? update_flash_erase_block(s.erase_off) : update_flash_erase_sector(s.erase_off);
         uint16_t        ms = ms16(updater_port_now_ms() - t0);
         if (ms > s.erase_ms_max) s.erase_ms_max = ms;
         if (st != UPDATE_OK) {
             fail(st == UPDATE_UNAVAILABLE ? UPDATE_UNAVAILABLE : UPDATE_FLASH_ERR);
             return;
         }
-        s.erase_off += UPDATE_FLASH_SECTOR;
+        s.erase_off += block ? UPDATE_FLASH_BLOCK : UPDATE_FLASH_SECTOR;
     }
     if (s.erase_off >= s.erase_end) {
         s.staged = 0;
