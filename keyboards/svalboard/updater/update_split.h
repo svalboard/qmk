@@ -72,6 +72,10 @@ void update_split_slave_task(void);
 // update_state_t of the slave's session.
 uint8_t update_split_slave_state(void);
 bool    update_split_slave_active(void); // not IDLE: full clock, the updater's LEDs
+// A fast-path session from the manifest check to the end of its verify: this
+// half does not scan its keys (split_pause.c), so the pages and the hash get
+// the time, and nothing it holds is reported when the link resumes.
+bool update_split_slave_frozen(void);
 
 // ---- the relay, the half with USB --------------------------------------------------------
 
@@ -80,7 +84,7 @@ typedef enum {
     RELAY_START,       // pause the link, clear any old session on the other half
     RELAY_MANIFEST,    // BEGIN: the manifest, in fragments
     RELAY_ERASE_WAIT,  // the other half checks the manifest and erases (paused)
-    RELAY_PAGES,       // PAGE: the image (the link runs: both halves type)
+    RELAY_PAGES,       // PAGE: the image (paused: requests back to back, a main-loop pass every 15 ms)
     RELAY_END,         // END (paused)
     RELAY_VERIFY_WAIT, // the other half verifies the image (paused)
     RELAY_VERIFIED,    // the other half holds the verified image; kept alive until COMMIT
@@ -103,7 +107,8 @@ bool update_relay_start(const uint8_t *manifest, uint32_t image_len, uint32_t cr
 // only a record that a UF2 copy in BOOTSEL wrote leads here.
 bool update_relay_start_self(const uint8_t *manifest, uint32_t image_len, uint32_t crc_body);
 
-// One pass: at most SVAL_UPDATE_RELAY_PASS_MS of relay work, or one poll.
+// One pass: at most SVAL_UPDATE_RELAY_PASS_MS of relay work (SVAL_UPDATE_RELAY_STREAM_MS
+// while the pages go), or one poll.
 void update_relay_task(void);
 
 // In RELAY_VERIFIED: pause and send COMMIT. False (nothing sent) otherwise, or
@@ -136,7 +141,39 @@ typedef struct {
     uint32_t        elapsed_ms;   // since the start (frozen once it ends)
     bool            paused;       // the link is paused by the relay now
     bool            unconfirmed;  // DONE, but the other half never answered after COMMIT
+    // Time per phase, ms (0 until the phase ends): the other half's manifest
+    // check and erase (manifest sent to RECEIVING), the pages (RECEIVING to
+    // all acknowledged), its verify (END to VERIFIED), and its commit (COMMIT
+    // to DONE, the hold included).
+    uint32_t erase_ms, pages_ms, verify_ms, commit_ms;
+    uint32_t page_rpcs;   // RPCs in the page phase, answered or not
+    uint32_t page_rpc_us; // time inside those RPCs
+    uint32_t rpc_us_max;  // the longest single RPC of the relay
+    uint16_t busy;        // BUSY answers to PAGE (a DMA channel busy there: sent again)
+    uint8_t  resumes;     // answers again after a dropout of SVAL_UPDATE_RELAY_DROPOUT_MS or more
+    bool     fast;        // the fast path: the other half's INFO said it has it (USPLIT_INFO_FAST)
 } update_relay_info_t;
+
+// The last relay failure since boot, kept until the next one (the RELAY op).
+// After it, the next relay's first STATUS records what the other half says
+// once it answers again: TIMEOUT there means it stayed up and heard nothing;
+// no session and no error means it restarted.
+typedef struct {
+    uint8_t  count;         // relay failures since boot (saturating); 0: no record
+    uint8_t  phase;         // relay_phase_t when it failed
+    uint8_t  error;         // update_status_t, the relay's error
+    uint32_t off;           // the image bytes the other half had acknowledged
+    uint16_t retries;       // requests sent again in that relay
+    uint32_t since_ok_ms;   // since the last valid answer
+    uint8_t  slave_state;   // the other half's state and error at its last answer
+    uint8_t  slave_error;
+    bool     after_read;    // the next relay's STATUS was answered:
+    bool     after_session; // a session was open there
+    uint8_t  after_state;
+    uint8_t  after_error;
+} update_relay_fail_t;
+
+void update_relay_last_failure(update_relay_fail_t *f);
 
 void update_relay_info(update_relay_info_t *info);
 bool update_relay_busy(void); // between START and DONE/FAILED (ABORTING is busy)
@@ -174,6 +211,7 @@ void     update_split_port_build_id(update_build_id_t *id);
 uint8_t  update_split_port_info_flags(void); // INFO flags byte, see update_split_wire.h
 bool     update_split_port_updating(void);   // updater_active()
 uint32_t update_split_port_now_ms(void);
+uint32_t update_split_port_now_us(void); // the relay's RPC timing (RELAY op) only
 // The split shared-memory lock: the slave's housekeeping takes it around its
 // mailbox copies (the callback already holds it).
 void update_split_port_lock(void);
@@ -192,6 +230,9 @@ update_status_t update_split_port_settings_invalidate(uint8_t mode);
 void update_split_port_reboot(void);
 // Master: one KEYBOARD_UPDATE RPC (transaction_rpc_exec); the split pause (D15).
 bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len);
+// The same with the short serial deadline (SERIAL_USART_SHORT_TIMEOUT): a STATUS
+// poll that may find the other half's interrupts off fails in 3 ms, not 20.
+bool update_split_port_rpc_quick(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len);
 bool update_split_port_pause(bool on);
 // Master: n bytes of this half's slot at off (whole words), read uncached.
 bool update_split_port_slot_read(uint32_t off, uint8_t *dst, uint32_t n);

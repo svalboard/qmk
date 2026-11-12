@@ -64,8 +64,14 @@
 //                                                erased u16 and to erase u16, retries u16, relay ms u32,
 //                                                flags (bit0 the link is paused; bit1 DONE without an
 //                                                answer from the other half after COMMIT, unconfirmed),
-//                                                the relay's error, this
-//                                                half's session state. Any hand.
+//                                                the relay's error, this half's session state; then ms
+//                                                per phase u16 (erase, pages, verify, commit), page RPCs
+//                                                u16, longest RPC us u16, mean page RPC us u16, BUSY u8,
+//                                                dropouts survived u8, flags2 u8; the last failure since
+//                                                boot (update_relay_fail_t): phase, error, acked u24,
+//                                                retries u16, ms since an answer u16, other state and
+//                                                error, after flags, after state, after error, count.
+//                                                Any hand.
 //  0x0D PAIR_MANIFEST off u8, n 1..52, bytes     filled u8 (of the 108-byte pair manifest). Protocol 4,
 //                [hand] = this half's own        D41: this half's manifest, while a session for the
 //                                                other hand is in MANIFEST_LOADING (see "One approval")
@@ -816,6 +822,31 @@ static update_status_t op_relay(uint32_t client, uint8_t *rsp) {
     rsp[20] = (ri.paused ? 0x01 : 0) | (ri.unconfirmed ? 0x02 : 0);
     rsp[21] = ri.error;
     rsp[22] = s.state;
+    // Timing per phase, and the last failure since boot.
+    put16(&rsp[23], ms16(ri.erase_ms));
+    put16(&rsp[25], ms16(ri.pages_ms));
+    put16(&rsp[27], ms16(ri.verify_ms));
+    put16(&rsp[29], ms16(ri.commit_ms));
+    put16(&rsp[31], ms16(ri.page_rpcs));
+    put16(&rsp[33], ms16(ri.rpc_us_max));
+    put16(&rsp[35], ms16(ri.page_rpcs ? ri.page_rpc_us / ri.page_rpcs : 0));
+    rsp[37] = ri.busy > UINT8_MAX ? UINT8_MAX : (uint8_t)ri.busy;
+    rsp[38] = ri.resumes;
+    rsp[39] = ri.fast ? 0x01 : 0; // flags2: bit0 the fast path
+    update_relay_fail_t f;
+    update_relay_last_failure(&f);
+    rsp[40] = f.phase;
+    rsp[41] = f.error;
+    put24(&rsp[42], f.off);
+    put16(&rsp[45], f.retries);
+    put16(&rsp[47], ms16(f.since_ok_ms));
+    rsp[49] = f.slave_state;
+    rsp[50] = f.slave_error;
+    rsp[51] = (f.after_read ? 0x01 : 0) | (f.after_session ? 0x02 : 0);
+    rsp[52] = f.after_state;
+    rsp[53] = f.after_error;
+    rsp[54] = f.count;
+    _Static_assert(VALUE_BYTES >= 55, "the RELAY reply fits");
     return UPDATE_OK;
 }
 

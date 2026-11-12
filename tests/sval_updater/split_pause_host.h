@@ -34,3 +34,4 @@ bool    is_transport_connected(void);
 void    split_watchdog_update(bool done);
 void    pointing_device_set_shared_report(report_mouse_t report);
 uint8_t matrix_scan(void);
+bool    update_split_slave_frozen(void);

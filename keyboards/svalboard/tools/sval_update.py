@@ -544,8 +544,42 @@ def decode_relay(st, r):
         error=status_name(r[20]),
         error_id=r[20],
         state=state_name(r[21]),
-        state_id=r[21]
+        state_id=r[21],
+        **decode_relay_timing(r)
     )
+
+
+def decode_relay_timing(r):
+    """RELAY bytes 22 on (r is the reply after its status byte): time per
+    phase, the page phase's RPCs, and the last relay failure since boot."""
+    if len(r) < 54:
+        return {}
+    u16 = lambda i: struct.unpack_from("<H", r, i)[0]
+    out = dict(
+        erase_ms=u16(22),
+        pages_ms=u16(24),
+        verify_ms=u16(26),
+        commit_ms=u16(28),
+        page_rpcs=u16(30),
+        rpc_max_us=u16(32),
+        page_rpc_mean_us=u16(34),
+        busy=r[36],
+        resumes=r[37],
+        fast=bool(r[38] & 1),
+    )
+    if r[53]:
+        out["last_failure"] = dict(
+            count=r[53],
+            phase=relay_phase_name(r[39]),
+            error=status_name(r[40]),
+            acked=r[41] | r[42] << 8 | r[43] << 16,
+            retries=u16(44),
+            since_answer_ms=u16(46),
+            other_state=state_name(r[48]),
+            other_error=status_name(r[49]),
+            after=dict(state=state_name(r[51]), error=status_name(r[52]), session=bool(r[50] & 2)) if r[50] & 1 else None,
+        )
+    return out
 
 
 def decode_diag(st, r):
@@ -868,7 +902,11 @@ class Session:
             if time.monotonic() > deadline:
                 raise UpdaterError(f"relay: no end in 180 s ({rl['phase']})")
             time.sleep(0.2)
-        print("relayed: " + json.dumps(dict(relay_ms=rl["relay_ms"], retries=rl["retries"], bytes=rl["acked"])))
+        print(
+            "relayed: " + json.dumps(dict(relay_ms=rl["relay_ms"], retries=rl["retries"], bytes=rl["acked"], **{k: rl[k]
+                                                                                                                for k in ("erase_ms", "pages_ms", "verify_ms", "page_rpcs", "page_rpc_mean_us", "rpc_max_us", "busy", "resumes", "fast")
+                                                                                                                if k in rl}))
+        )
         # No REBIND from here: in SUBSIDE_COMMITTING only INFO, STATUS and RELAY are answered.
         self.need("COMMIT (other half)", self.nonce_op(COMMIT, crc), ACCEPTED)
         print("the other half writes the image and resets; the split link stays paused meanwhile")

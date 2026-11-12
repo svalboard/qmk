@@ -113,15 +113,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // from the master since the last one, and this long after it: the master
 // gets an answer between every two sectors.
 #define SVAL_UPDATE_SPLIT_ERASE_GAP_MS 5
-// The half with USB: relay work per main-loop pass while the link runs (its
-// own keys keep scanning between passes), how long it retries a request with
-// no valid answer before the relay fails, how often it polls the other half
-// while that half erases or verifies, and how often it pings a verified other
-// half (so its timeout does not fire while the host decides to commit).
+// The half with USB: relay work per main-loop pass (its own keys keep
+// scanning between passes), and while the pages stream with the link paused;
+// how long it retries a request with no valid answer before the relay fails
+// (under the other half's 5 s session timeout, so a shorter dropout resumes
+// where it stopped); how often it polls the other half while that half checks
+// the manifest or verifies, and after an answer while it erases (one poll per
+// sector); and how often it pings a verified other half (so its timeout does
+// not fire while the host decides to commit). The stream's budget plus one
+// failed RPC (20 ms) stays inside Keybard's 50 ms (R13).
 #define SVAL_UPDATE_RELAY_PASS_MS 4
-#define SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS 2000
+#define SVAL_UPDATE_RELAY_STREAM_MS 15
+#define SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS 4000
 #define SVAL_UPDATE_RELAY_POLL_MS 20
+#define SVAL_UPDATE_RELAY_ERASE_POLL_MS 50
+// The fast path (both halves have it: updater/update_split_wire.h): the half
+// with USB uses it when the other half's INFO says so (0 turns it off on this
+// half as the sender), and polls a block erase (about 150 ms) this long after
+// an answer. The other half takes FAST for a session that BEGIN opens within
+// SVAL_UPDATE_SPLIT_FAST_WINDOW_MS.
+#ifndef SVAL_UPDATE_RELAY_FAST
+#    define SVAL_UPDATE_RELAY_FAST 1
+#endif
+#define SVAL_UPDATE_RELAY_BLOCK_POLL_MS 150
+#define SVAL_UPDATE_SPLIT_FAST_WINDOW_MS 1000
 #define SVAL_UPDATE_RELAY_KEEPALIVE_MS 1000
+// A run of requests with no valid answer this long, then an answer again,
+// counts as a dropout the relay survived (the RELAY op's resumes).
+#define SVAL_UPDATE_RELAY_DROPOUT_MS 500
 // After the other half accepts COMMIT, the link stays paused for its commit
 // (M1 #13: about 1-2 s from COMMIT to the reset) plus 2.5 s for its reboot
 // (R18: the 500 ms double-tap window and the 2 s USB detect).
@@ -334,6 +353,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // SVAL_UPDATER half and a half without it cannot talk at all (P1:
 // keyboards/svalboard/tools/check_split_tables.py).
 #    define SPLIT_TRANSACTION_IDS_KB KEYBOARD_SYNC_A, KEYBOARD_SYNC_B, KEYBOARD_UPDATE
+// The relay's fast path sends PAGE2 frames of up to 248 bytes (USPLIT_MSG2_MAX,
+// updater/update_split_wire.h) to the half without USB. These buffers are each
+// half's own RAM and never go on the wire whole; QMK's RPC lengths are
+// uint8_t, so 255 at most. Answers stay within 32 bytes.
+#    define RPC_M2S_BUFFER_SIZE 248
 #else
 #    define SPLIT_TRANSACTION_IDS_KB KEYBOARD_SYNC_A, KEYBOARD_SYNC_B
 #endif

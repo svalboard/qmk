@@ -178,6 +178,13 @@ ifeq ($(strip $(SVAL_UPDATER)), yes)
     endif
     OPT_DEFS += -DSVAL_UPDATE_NO_CHORD
   endif
+  # Relay fault injection for the test boards (docs/updater.md, "Relay faults").
+  ifeq ($(strip $(SVAL_RELAY_FAULTS)), yes)
+    ifneq ($(strip $(SVAL_UPDATE_TEST_HOOKS)), yes)
+      $(error SVAL_RELAY_FAULTS needs SVAL_UPDATE_TEST_HOOKS=yes)
+    endif
+    OPT_DEFS += -DSVAL_RELAY_FAULTS
+  endif
   ifeq ($(strip $(SVAL_UPDATE_RELEASE)), yes)
     OPT_DEFS += -DSVAL_UPDATE_RELEASE
   endif

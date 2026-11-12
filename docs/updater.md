@@ -189,7 +189,7 @@ byte layouts are in the comment at the top of `kb/updater/updater.c`. In short:
 | `0x09 REBIND` | nonce | Moves the session to the sender's client ID (Keybard renews its ID every 50 s); the old ID is refused after it. Protocol 4: with the pair session's nonce it also moves a held approval, in any state, IDLE included; it is also answered while the other half commits |
 | `0x0A TEST_HALT` | nonce, point, fed | Test-hooks builds only, in VERIFIED: where the commit stops (see Test hooks). INVALID elsewhere |
 | `0x0B DIAG` | clear | Main's stack: bytes never used since boot and its size; the longest `updater_task()` pass in ms and the state it began in; the last reset reason and updater breadcrumbs. `clear` 1 restarts the pass record. For M1 #13 |
-| `0x0C RELAY` | - | M2: the relay to the other half: phase, that half's state and last error, bytes it acknowledged, image length, its erase progress, retries, relay ms, link paused, the relay's error, this half's state |
+| `0x0C RELAY` | - | M2: the relay to the other half: phase, that half's state and last error, bytes it acknowledged, image length, its erase progress, retries, relay ms, link paused, the relay's error, this half's state. Then the time per phase in ms (erase, pages, verify, commit; u16 each, 0 until the phase ends), the page phase's RPCs u16, the longest RPC in us u16, the mean page RPC in us u16, BUSY answers u8, dropouts survived u8, flags2 u8 (bit0 the fast path); and the last relay failure since boot: phase, error, bytes acknowledged u24, retries u16, ms since the last answer u16, the other half's state and error then, what it said at the next relay's first STATUS (flags: bit0 answered, bit1 a session open; state; error), and the failure count u8 (0: no record) |
 | `0x0D PAIR_MANIFEST` | off, n ≤ 52, bytes; `[hand]` is this half's own | Protocol 4 (D41): bytes filled of this half's 108-byte manifest, loaded beside a session for the other hand while it is in MANIFEST_LOADING, from that session's client. INVALID with no such session, OTHER_CLIENT, BUSY after its ARM; refusals change nothing |
 | `0x0E SETTINGS_RESET` | `'R' 'S' 'E' 'T'`, scope (0 this half, 1 both), mode (0 defaults, 1 a blank board: D44) | Protocol 4 (D42): done mask (bit0 this half, bit1 the other half). Only in IDLE with no held approval and no relay, else BUSY. See "Settings reset" |
 
@@ -511,7 +511,7 @@ exactly as in M1. Then:
 ABORT works up to the second COMMIT, and tells the other half. A relay
 failure latches ERROR with the reason: the other half's own refusal (INVALID,
 UNSUPPORTED, BAD_HASH, EPOCH, FLASH_ERR, ...), or UNAVAILABLE when it
-stopped answering for 2 s, or TIMEOUT when it stayed in COMMITTING past the
+stopped answering for 4 s, or TIMEOUT when it stayed in COMMITTING past the
 probes. The 30 s session timeout still applies while relaying and while
 RELAYED (D23: a host that went away stops the relay before the copy). While a
 session for one hand runs, the session ops for the other hand get BUSY. INFO
@@ -525,21 +525,93 @@ with USB):
 
 | Phase | Link | What happens |
 |---|---|---|
-| start, manifest | paused | ABORT (clears an old session there), then BEGIN: the 108-byte manifest in 5 fragments |
-| checking and erasing | paused | The other half checks the manifest against its own build itself (D7), then erases its slot a sector per pass; this half polls STATUS every 20 ms. A sector erase keeps the other half's interrupts off for about 50 ms, longer than the 20 ms serial timeout, so it erases a sector that needs it only after a request since its last erase and 5 ms after that request (`SVAL_UPDATE_SPLIT_ERASE_GAP_MS`): this half gets an answer between every two sectors, and an ABORT lands within a sector |
-| sending | running | PAGE fragments read from this half's slot, at most 4 ms of RPCs per main-loop pass; both halves type between them |
+| start, manifest | paused | INFO (does the other half have the fast path, below?), ABORT (clears an old session there), FAST on the fast path, then BEGIN: the 108-byte manifest in 5 fragments |
+| checking and erasing | paused | The other half checks the manifest against its own build itself (D7), then erases its slot a sector per pass; this half polls STATUS every 20 ms. A sector erase keeps the other half's interrupts off for about 50 ms, longer than the 20 ms serial timeout, so it erases a sector that needs it only after a request since its last erase and 5 ms after that request (`SVAL_UPDATE_SPLIT_ERASE_GAP_MS`): this half gets an answer between every two sectors, and an ABORT lands within a sector. After an answer that says it erases, the next poll comes 50 ms later (`SVAL_UPDATE_RELAY_ERASE_POLL_MS`) with the 3 ms serial deadline, so a poll that still finds it erasing costs 3 ms, not 20: about one poll per sector |
+| sending | paused | PAGE fragments read from this half's slot, request after request, with a main-loop pass every 15 ms (`SVAL_UPDATE_RELAY_STREAM_MS`): USB, Keybard and this half's keys keep going, and the longest pass stays under 50 ms (R13) even when an RPC times out. The other half's keys were released when the pause began |
 | end, verifying | paused | END; the other half hashes its slot (SHA-512 against the manifest, structure, CRC); its CRC must equal this half's |
 | verified | running | STATUS every 1 s keeps the other half's session alive until the host's COMMIT |
-| commit, hold | paused | COMMIT; the other half commits 100 ms later from housekeeping with the M1 routine; the link stays paused 4.5 s. An answer of IDLE to COMMIT (it already rebooted, or lost the session), or no valid answer for 2 s (COMMIT may have been taken with its answer lost), also leads to the hold: the probe decides |
+| commit, hold | paused | COMMIT; the other half commits 100 ms later from housekeeping with the M1 routine; the link stays paused 4.5 s. An answer of IDLE to COMMIT (it already rebooted, or lost the session), or no valid answer for 4 s (COMMIT may have been taken with its answer lost), also leads to the hold: the probe decides |
 | probe | paused | STATUS. ERROR, or IDLE with an error: it did not commit (failure). COMMITTING: it has not begun its copy; probe again every 500 ms, and if it then falls silent (its copy) the whole hold again; at most 20 probes, then TIMEOUT. IDLE without an error: done. No answer (a new release may not talk to this one, V): done, flagged unconfirmed (RELAY flags bit1) |
-| aborting | as it was | After an ABORT from the host, the session timeout, or a failure: ABORT once per pass until the other half answers (it may be erasing), for at most 2 s, and only then the link resumes. A relay whose link is already dead (no valid answer for 2 s) sends one ABORT and resumes at once |
+| aborting | as it was | After an ABORT from the host, the session timeout, or a failure: ABORT once per pass until the other half answers (it may be erasing), for at most 4 s, and only then the link resumes. A relay whose link is already dead (no valid answer for 4 s) sends one ABORT and resumes at once |
 
 A request without a valid answer is sent again unchanged (the other half
 answers a retry from its cache); INVALID is accepted as a refusal only on the
 fourth answer in a row, since a request damaged on the way is also answered
-INVALID. No valid answer for 2 s fails the relay with UNAVAILABLE, then this
-half sends one ABORT and resumes the link (in the commit phase it holds
-instead, above).
+INVALID. No valid answer for 4 s (`SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS`) fails
+the relay with UNAVAILABLE, then this half sends one ABORT and resumes the link
+(in the commit phase it holds instead, above). A shorter dropout is waited
+out: the other half keeps its session for 5 s, answers the request that was
+pending (from its cache if it had taken it), and the relay carries on from the
+offset it reports. The RELAY op counts these (dropouts survived), and keeps
+the last failure since boot: phase, error, bytes acknowledged, retries and ms
+since the last answer. The next relay reads the other half's STATUS before
+its ABORT and adds it to that record: TIMEOUT with no session means the other
+half stayed up and heard nothing; no session and no error means it restarted.
+
+**The fast path** (both halves on a build that has it; `update_split_wire.h`).
+The other half says so in its `KEYBOARD_UPDATE` INFO (flags bit4, protocol 2
+on; protocol 1 builds, never released, used that bit for their test key). The
+relay reads that INFO at the start of every relay and then sends FAST, which
+makes the session that BEGIN opens next (within 1 s) a fast one:
+
+- the other half erases its slot in 64 KiB blocks (about 400 ms each with its
+  interrupts off, 2 s at the datasheet maximum, inside the 4 s link timeout);
+  this half polls 150 ms after each answer, at the 3 ms deadline;
+- the pages go as PAGE2, up to 240 image bytes a request, which may cross a
+  256 B page (248 bytes on the wire). The RPC buffer toward the half without
+  USB is 248 bytes in these builds (`RPC_M2S_BUFFER_SIZE`, `config.h`;
+  QMK's lengths are `uint8_t`); answers stay within 32;
+- it hashes each page as it arrives, read back from its slot as the verify
+  always did, so END only finishes the hash. The commit's own hash of the
+  slot is unchanged;
+- it does not scan its keys from the manifest check to the end of the verify
+  (they read released), so the pages and the hash get the time and nothing
+  held then is reported when the link resumes.
+
+A half without the fast path takes the RPC length from the wire into a
+32-byte buffer with no bound (`quantum/split_common/transactions.c`), so a
+longer frame would overrun its memory. So this half sends FAST and PAGE2 only
+after that relay's INFO said so, and after any request that went unanswered
+(the other half may have restarted, perhaps into an older build) it reads
+INFO again, a small frame, before the next PAGE2. It never tries a large
+frame to see what happens. Builds with the fast path also bound those
+lengths in the core callback: one past the buffer moves no data and runs no
+callback. No split transaction ID was added (P1). The split table golden
+(`tools/split_table_golden.json`) changes in two fields only: the default
+size of `PUT_RPC_REQ_DATA` (ID 9), which both halves set again before every
+RPC (`transaction_rpc_exec`, `slave_rpc_info_callback`), and the offset of
+`GET_RPC_RESP_DATA`'s buffer (ID 11), which is local memory. Neither is on
+the wire, and halves on the old and the new table were tested together.
+
+A half without the fast path at either end gets the old relay: a new half
+with USB streams 24-byte PAGEs with the link paused (above), and a new other
+half that is sent no FAST erases by sector and hashes after END, as before.
+
+**Measured** on the trackball test pair (right half with USB, a 176-179 KB
+image, `sval_update.py`; ms, the mean of the runs):
+
+| Sender, receiver | Runs | Erase | Pages | Verify | Relay, start to verified |
+|---|---|---|---|---|---|
+| old, old (before this change) | 3 | 3,535 | 12,950 | 856 | 17,459 |
+| new, old (the sender's changes only) | 10 | 3,048 | 8,208 | 852 | 12,217 |
+| old, new | 3 | 3,534 | 12,831 | 854 | 17,330 |
+| new, new (the fast path) | 20 | 1,228 | 4,283 | 21 | 5,630 |
+
+The commit phase (COMMIT to done) is the fixed 4.5 s hold either way. A page
+RPC takes 0.9 ms with 24 bytes and 4.4 ms with 240; erasing is the other
+half's flash: about 70 ms a sector, about 400 ms a 64 KiB block on these
+dies.
+
+**Relay faults** (`SVAL_RELAY_FAULTS=yes`, with `SVAL_UPDATE_TEST_HOOKS=yes`;
+dev builds for the test boards only). The half with USB injects a fault into
+each relay it sends since it booted, in turn: (1) one damaged request, one
+damaged answer, the link silent for 1 s and for 3 s in the pages: the relay
+finishes, two dropouts survived; (2) the link silent for 6 s in the pages:
+it fails, the other half's session times out, and the next relay records
+TIMEOUT from it; (3) the other half reset while it erases; (4) the other
+half reset halfway through the pages (`KEYBOARD_UPDATE` op `0x7E`, test-hook
+builds only); (5) none. Silence means no request goes out at all, as with the
+split cable unplugged.
 
 After a relay ends done, INFO flags bit5 stays set until presence first reads
 MATCH, also while presence reads NONE: a release that changes the split table
@@ -559,7 +631,9 @@ after 60 s idle (see LEDs).
   with interrupts off in the same section as the program, and the fragment
   is given back (the relay sends it again).
 - The request and response lengths come from the wire (`rpc_info`, behind a
-  CRC-8 only) and are clamped to the 32-byte RPC buffers.
+  CRC-8 only) and are clamped to the RPC buffers (248 bytes in, for PAGE2; 32
+  out). Builds with the fast path also bound them in QMK's own RPC info
+  callback, before any byte is read.
 - The manifest check, the erase, the image hash and the commit run in
   housekeeping, behind the pause. The two meet in a single-slot mailbox with a
   sequence number: the callback posts a job by changing the state, and moves
@@ -1006,8 +1080,8 @@ pointing device and keymap, and accepted by `make_update.py verify-pair
   `test_relay.c` (in the `test_updater` and `test_commit` builds) runs both
   halves' code in one process over a simulated split link
   (`tests/sval_updater/test_session.c`): the relay start to finish (the other
-  half erases and verifies only behind the pause, the pause is never held
-  while the image streams, the per-pass budget holds), the other half's own
+  half erases and verifies only behind the pause, the image streams behind
+  it too, the per-pass budget holds), the other half's own
   refusals (including a version-1 manifest and a nonzero reserved byte), faults on every RPC (dropped, damaged, duplicated, stale and
   reordered requests and answers), the link pulled in each phase (this half
   fails within 2 s and resumes the link, the other half drops its session 5 s

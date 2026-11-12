@@ -1052,8 +1052,17 @@ void slave_rpc_info_callback(uint8_t initiator2target_buffer_size, const void *i
     // Ignore the args -- the `split_shmem` already has the info, we just need to act upon it.
     // We must keep the `split_transaction_table` non-const, so that it is able to be modified at runtime.
 
-    split_transaction_table[PUT_RPC_REQ_DATA].initiator2target_buffer_size  = split_shmem->rpc_info.payload.m2s_length;
-    split_transaction_table[GET_RPC_RESP_DATA].target2initiator_buffer_size = split_shmem->rpc_info.payload.s2m_length;
+    // Svalboard: the lengths come from the wire, behind a checksum checked
+    // only later (slave_rpc_exec_callback), and a length past the buffer would
+    // overrun split_shmem. One out of range moves no data, and the checksum is
+    // spoiled so that the RPC callback does not run.
+    uint8_t m2s = split_shmem->rpc_info.payload.m2s_length, s2m = split_shmem->rpc_info.payload.s2m_length;
+    if (m2s > RPC_M2S_BUFFER_SIZE || s2m > RPC_S2M_BUFFER_SIZE) {
+        m2s = s2m = 0;
+        split_shmem->rpc_info.checksum = (uint8_t)~crc8(&split_shmem->rpc_info.payload, sizeof(split_shmem->rpc_info.payload));
+    }
+    split_transaction_table[PUT_RPC_REQ_DATA].initiator2target_buffer_size  = m2s;
+    split_transaction_table[GET_RPC_RESP_DATA].target2initiator_buffer_size = s2m;
 }
 
 void slave_rpc_exec_callback(uint8_t initiator2target_buffer_size, const void *initiator2target_buffer, uint8_t target2initiator_buffer_size, void *target2initiator_buffer) {
