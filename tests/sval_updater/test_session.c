@@ -199,6 +199,7 @@ void update_split_port_build_id(update_build_id_t *id) {
 static bool     master_fast = true, slave_fast = true;
 static bool     fast_default = true; // what fresh() sets both to (test_relay runs both ways)
 static uint32_t oversize_to_old, oversize_rpcs, oversize_to_old_ever;
+static bool     drop_big; // every request over 32 bytes is lost
 uint8_t         update_split_port_info_flags(void) {
     return 0x01 | (port_failing ? 0x02 : 0) | ((sim_slave ? slave_fast : master_fast) ? USPLIT_INFO_FAST : 0);
 }
@@ -326,6 +327,10 @@ bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, ui
     }
     if (sim_us < slave_busy_until_us) { // its interrupts are off: no answer
         slave_busy_rpcs++;
+        sim_us += rpc_fail_us;
+        return false;
+    }
+    if (req_len > USPLIT_MSG_MAX && drop_big) {
         sim_us += rpc_fail_us;
         return false;
     }

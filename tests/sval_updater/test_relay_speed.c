@@ -208,6 +208,33 @@ static void test_relay_fast_only(void) {
     update_relay_abort();
     relay_until(RELAY_IDLE, 5000);
 
+    // Every PAGE2 lost while small frames get through (INFO answers): the
+    // link timeout still ends the relay; INFO answers do not restart it.
+    relay_fresh(0x13000);
+    CHECK(update_relay_start(blob, img_len, body_crc()));
+    CHECK_EQ(relay_until(RELAY_PAGES, 60000), RELAY_PAGES);
+    drop_big    = true;
+    uint64_t d0 = sim_us;
+    for (int i = 0; i < 20000 && update_relay_busy() && ri.phase == RELAY_PAGES; i++) {
+        pass();
+        relay_get();
+    }
+    drop_big = false;
+    CHECK_EQ(ri.phase, RELAY_FAILED);
+    CHECK(sim_us - d0 <= (uint64_t)(SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS + 200) * 1000);
+    relay_until(RELAY_IDLE, 6000);
+
+    // ABORT drops a FAST whose BEGIN never came.
+    relay_fresh(0x2000);
+    {
+        uint8_t q[USPLIT_MSG_MAX], o[USPLIT_MSG_MAX];
+        slave_rpc(q, usplit_req_build(q, USPLIT_OP_FAST, 0x31, (const uint8_t[]){1}, 1), o, USPLIT_MSG_MAX);
+        slave_rpc(q, usplit_req_build(q, USPLIT_OP_ABORT, 0x32, NULL, 0), o, USPLIT_MSG_MAX);
+        slave_rpc(q, usplit_req_begin(q, 0x33, 0, blob, USPLIT_BEGIN_DATA_MAX), o, USPLIT_MSG_MAX);
+        CHECK(!update_split_slave_frozen());
+        slave_rpc(q, usplit_req_build(q, USPLIT_OP_ABORT, 0x34, NULL, 0), o, USPLIT_MSG_MAX);
+    }
+
     // FAST holds for one BEGIN within SVAL_UPDATE_SPLIT_FAST_WINDOW_MS only:
     // later, the session is an ordinary one (sector erase).
     relay_fresh(0x2000);

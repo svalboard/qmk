@@ -179,7 +179,7 @@ static update_status_t slave_begin(const usplit_req_t *r, uint8_t *payload) {
         if (sl.state != UPDATE_STATE_IDLE && sl.state != UPDATE_STATE_MANIFEST_LOADING) return UPDATE_BUSY;
         if (!update_flash_available()) return UPDATE_UNAVAILABLE; // probed at init, on the main thread
         // FAST just before (the same relay) makes this a fast session.
-        bool fast = sl.fast_next && (int32_t)(update_split_port_now_ms() - sl.fast_next_ms) < SVAL_UPDATE_SPLIT_FAST_WINDOW_MS;
+        bool fast = sl.fast_next && update_split_port_now_ms() - sl.fast_next_ms < SVAL_UPDATE_SPLIT_FAST_WINDOW_MS;
         slave_cancel(UPDATE_OK);
         sl.fast  = fast;
         sl.state = UPDATE_STATE_MANIFEST_LOADING;
@@ -336,6 +336,7 @@ static update_status_t run(const usplit_req_t *r, uint8_t *payload) {
         }
         default: // USPLIT_OP_ABORT
             if (sl.state == UPDATE_STATE_COMMITTING) return UPDATE_BUSY; // the copy may have started (D23)
+            sl.fast_next = false;                                         // a FAST whose BEGIN never came
             if (sl.state != UPDATE_STATE_IDLE) slave_cancel(UPDATE_OK);
             return UPDATE_OK;
     }
@@ -706,9 +707,16 @@ static bool relay_fault(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8
         return true;
     }
     uint32_t quiet = 0;
-    if (k == 0 && pages && !flt.quiet1 && pct >= 40) quiet = flt.quiet1 = 1000;
-    if (k == 0 && pages && !flt.quiet3 && pct >= 60) quiet = flt.quiet3 = 3000;
-    if (k == 1 && pages && !flt.quiet6 && pct >= 50) quiet = flt.quiet6 = 6000;
+    if (k == 0 && pages && !flt.quiet1 && pct >= 40) {
+        flt.quiet1 = true;
+        quiet      = 1000;
+    } else if (k == 0 && pages && !flt.quiet3 && pct >= 60) {
+        flt.quiet3 = true;
+        quiet      = 3000;
+    } else if (k == 1 && pages && !flt.quiet6 && pct >= 50) {
+        flt.quiet6 = true;
+        quiet      = 6000;
+    }
     if (quiet) {
         flt.quiet_until = now + quiet;
         *ok             = false;
@@ -912,7 +920,10 @@ static bool relay_fast_check(void) {
         relay_unanswered(now);
         return false;
     }
-    relay_answered(now, r.state);
+    // Not a valid answer to the pending PAGE2: the link timeout keeps
+    // running, so PAGE2s that keep failing while small frames get through
+    // still end the relay.
+    rl.slave_state = r.state;
     if (r.payload[0] < 2 || !(r.payload[14] & USPLIT_INFO_FAST)) {
         relay_fail(UPDATE_UNAVAILABLE); // it restarted into a build without the fast path: its session is gone
         return false;
