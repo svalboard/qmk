@@ -880,7 +880,9 @@ static void test_fast_upload(void) {
     CHECK(pair_rest(CLIENT_A));
     // A reinstall: the other half comes back matching this one, and the green
     // flash goes out on the ping (DONE for 2 s).
-    slave_id = master_id;
+    slave_id.fw_version    = master_id.fw_version;
+    slave_id.git_hash      = master_id.git_hash;
+    slave_id.updater_proto = master_id.updater_proto;
     for (int i = 0; i < 3000 && led_now != UPDATE_LED_DONE; i++)
         pass();
     CHECK_EQ(led_now, UPDATE_LED_DONE);
