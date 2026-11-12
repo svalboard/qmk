@@ -180,7 +180,7 @@ byte layouts are in the comment at the top of `kb/updater/updater.c`. In short:
 | `0x00 INFO` | page (0, the default) | state, protocol (4), slot base/size and max image (4 KiB units), JEDEC ID, pointing ID, hand, fw version, storage format, security epoch, flags (bit0 16 MiB die, bit1 settings writes failing, bit2 release build, bit3 test hooks, bit4 reserved, bit5 the other half's version differs, bit6 reserved, bit7 a no-chord dev build, D43), last error, then the largest CHUNK data (50), the largest MANIFEST piece (52) and the report size (64), for either half; then the upload flags (bit0 CHUNK window, bit1 BEGIN reuse; see "Faster uploads") and the CHUNK window (16). A build from before them sends 0 there. Page 1 (this half only): `1`, fw version u32, the 16-character version string from the build-info record. Other pages: INVALID |
 | `0x01 MANIFEST` | off, n ≤ 52, bytes | bytes filled, of 108. In order; offset 0 restarts. Bytes past 108 are INVALID. Ties the load to this client |
 | `0x02 ARM` | mode (protocol 4: 0 single, the default; 1 pair) | nonce u32 and the first 4 bytes of SHA-512(manifest), which the host shows; then (protocol 4) the first 4 bytes of SHA-512(the pair manifest) for a pair ARM (else 0), and flags: bit0 PRE_APPROVED (BEGIN needs no chord, no blue light), bit1 BY_PAIR, bit2 NO_CHORD, bit3 PAIR. Needs all 108 bytes. Checks the manifest fields, binds the session to client ID + nonce, starts the 30 s chord window. BUSY, with nothing changed, while a Scan Lab sweep runs. A pair ARM also needs the whole pair manifest and checks it against this half (see "One chord for both halves") |
-| `0x03 BEGIN` | nonce, flags u8 (bit0 reuse; 0 from older hosts) | ACCEPTED once the chord is made: the manifest is checked again, then the erase, one 64 KiB block per main-loop pass and 4 KiB sectors for a tail shorter than a block (see "Faster uploads"). With reuse, and the slot's verified image is this manifest's: no erase, every byte staged (see "Faster uploads") |
+| `0x03 BEGIN` | nonce, flags u8 (bit0 reuse, bit1 block erase; 0 from older hosts) | ACCEPTED once the chord is made: the manifest is checked again, then the erase, one 4 KiB sector per main-loop pass, or with bit1 one 64 KiB block per pass and sectors for a tail shorter than a block (see "Faster uploads"). With reuse, and the slot's verified image is this manifest's: no erase, every byte staged (see "Faster uploads") |
 | `0x04 CHUNK` | off u24, n ≤ 50, bytes | next offset. Strictly in order; an earlier chunk is acknowledged and not written again |
 | `0x05 END` | nonce | ACCEPTED: SHA-512, structure checks and CRC of the staged image, 2 KiB per pass |
 | `0x06 STATUS` | - | state, bytes staged, image length, erase progress, last error, reserved u16 (0), verify ms, longest erase step ms (a block or a sector), CRC low 16 bits once VERIFIED, flags, the other half by split presence (see below), then (protocol 4) flags2: bit0 an approval is held for this half's next install, bit1 this session was pre-approved |
@@ -634,18 +634,20 @@ as before: one CHUNK, then its reply, then the next.
   with every byte staged: no erase, no CHUNKs. END verifies the slot again
   before COMMIT, as always. Otherwise BEGIN erases as before, and STATUS's
   staged count (0) tells the host to send the image.
-- **Block erase.** BEGIN erases the slot in whole 64 KiB blocks from offset 0
+- **Block erase** (bit2; BEGIN flags bit1). A host that asks for it waits
+  through a block erase. BEGIN then erases the slot in whole 64 KiB blocks from offset 0
   (the slot starts on a block), then 4 KiB sectors for a tail shorter than a
   block; it never erases past the image's last sector, so never outside the
   slot. A 180 KB image is 2 blocks and 12 sectors instead of 44 sectors. Each
   block erase keeps this half's interrupts off for about 400 ms (2 s at the
   datasheet maximum, inside the 8 s watchdog). USB requests wait in the
   endpoint queue meanwhile and are answered when it ends; STATUS says ERASING
-  throughout and CHUNK and END are BUSY, as before. A host's reply timeout must
-  allow for one block erase: Keybard's 1 s timeout covers the measured time,
-  and Keybard with this change also keeps polling through a timed-out STATUS
-  while the board erases. Needs no capability bit: the host waits on STATUS
-  either way. ABORT lands within a block.
+  throughout and CHUNK and END are BUSY, as before. A host that asks must
+  allow for one block erase in its reply timeout: Keybard with this change
+  asks again after a STATUS that times out while the board erases. A host
+  that doesn't ask (any older Keybard, `sval_update.py`) gets 4 KiB sectors
+  as before, so its 1 s or 2 s reply timeout never meets a block erase.
+  ABORT lands within a block.
 
 A pair update of one image for both halves (`svalboard/either`) uses both:
 the image goes to the half with USB once, in a window, is relayed to the other

@@ -39,7 +39,8 @@
 //                1 pair; see "One approval")     first 4 bytes of sha512(the pair manifest) (pair; else 0),
 //                                                flags (bit0 PRE_APPROVED: BEGIN needs no chord, bit1
 //                                                BY_PAIR, bit2 NO_CHORD, bit3 PAIR; update_manifest.h)
-//  0x03 BEGIN    nonce u32, flags u8 (bit0 reuse) state
+//  0x03 BEGIN    nonce u32, flags u8 (bit0 reuse,   state
+//                bit1 block erase)
 //  0x04 CHUNK    off u24, n 1..50, bytes         next offset u24
 //  0x05 END      nonce u32                       state
 //  0x06 STATUS   -                               state, staged u24, image_len u24, sectors erased u16,
@@ -252,6 +253,7 @@ typedef struct {
     uint8_t pair_hash[UPDATE_SHA512_BYTES]; // sha512(pair manifest), at the pair ARM
     update_build_scan_t bi;                 // VERIFYING_IMAGE: the image's build-info records (D45)
     bool                reuse;              // BEGIN asked to keep the slot's verified image
+    bool                block_erase;        // BEGIN asked for 64 KiB block erases (the host waits through them)
 } session_t;
 
 // The image a session last verified in the slot (BEGIN reuse): RAM only, and
@@ -420,7 +422,7 @@ static void info_sizes(uint8_t *rsp) {
     rsp[23] = CHUNK_DATA_MAX;
     rsp[24] = MANIFEST_DATA_MAX;
     rsp[25] = RAW_EPSIZE;
-    rsp[26] = UPDATE_CAP_CHUNK_WINDOW | UPDATE_CAP_REUSE_STAGED;
+    rsp[26] = UPDATE_CAP_CHUNK_WINDOW | UPDATE_CAP_REUSE_STAGED | UPDATE_CAP_BLOCK_ERASE;
     rsp[27] = UPDATE_CHUNK_WINDOW;
 }
 
@@ -622,7 +624,8 @@ static update_status_t op_begin(uint32_t client, const uint8_t *req) {
     if (!update_gesture_done(NULL)) return UPDATE_NOT_CONFIRMED;
     held_capture(); // a pair session: the chord approved this half's install too (D41)
     update_gesture_disarm();
-    s.reuse = (req[5] & UPDATE_BEGIN_REUSE) != 0;
+    s.reuse       = (req[5] & UPDATE_BEGIN_REUSE) != 0;
+    s.block_erase = (req[5] & UPDATE_BEGIN_BLOCK_ERASE) != 0;
     s.state = UPDATE_STATE_VERIFYING_MANIFEST;
     return UPDATE_ACCEPTED;
 }
@@ -1034,16 +1037,18 @@ static void verify_manifest(void) {
         s.state  = UPDATE_STATE_RECEIVING;
         return;
     }
-    // Erase [0, image_len) rounded up to whole sectors: whole 64 KiB blocks,
-    // then sectors for the tail that doesn't fill one (see erase_step). Blocks
-    // and sectors that already read erased are skipped.
+    // Erase [0, image_len) rounded up to whole sectors: whole 64 KiB blocks
+    // when the host asked, then sectors (see erase_step). Blocks and sectors
+    // that already read erased are skipped.
     s.erase_off = 0;
     s.erase_end = (s.image_len + UPDATE_FLASH_SECTOR - 1) / UPDATE_FLASH_SECTOR * UPDATE_FLASH_SECTOR;
     s.state     = UPDATE_STATE_ERASING;
 }
 
-// The slot starts on a 64 KiB block (static assert below), so the erase runs
-// whole blocks from offset 0 and sectors only for a tail shorter than a block.
+// With UPDATE_BEGIN_BLOCK_ERASE (a host that waits through a block): the slot
+// starts on a 64 KiB block (static assert below), so the erase runs whole
+// blocks from offset 0 and sectors only for a tail shorter than a block. A host
+// that didn't ask (any host from before it) gets 4 KiB sectors, as before.
 // A block erase keeps interrupts off for about 400 ms on these dies (2 s at the
 // datasheet maximum) against about 50 ms for a sector: USB requests wait in
 // the controller until it finishes, and the host sees ERASING in STATUS (CHUNK
@@ -1051,7 +1056,7 @@ static void verify_manifest(void) {
 // inside the slot, and update_flash.c checks the range again.
 _Static_assert(SVAL_UPDATE_BASE % UPDATE_FLASH_BLOCK == 0, "the slot starts on a 64 KiB block");
 static bool erase_by_block(uint32_t off, uint32_t end) {
-    return off % UPDATE_FLASH_BLOCK == 0 && end > off && end - off >= UPDATE_FLASH_BLOCK;
+    return s.block_erase && off % UPDATE_FLASH_BLOCK == 0 && end > off && end - off >= UPDATE_FLASH_BLOCK;
 }
 
 static void erase_step(void) {
