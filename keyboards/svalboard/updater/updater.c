@@ -832,7 +832,7 @@ static update_status_t op_relay(uint32_t client, uint8_t *rsp) {
     put16(&rsp[35], ms16(ri.page_rpcs ? ri.page_rpc_us / ri.page_rpcs : 0));
     rsp[37] = ri.busy > UINT8_MAX ? UINT8_MAX : (uint8_t)ri.busy;
     rsp[38] = ri.resumes;
-    rsp[39] = 0; // flags2: none yet
+    rsp[39] = ri.fast ? 0x01 : 0; // flags2: bit0 the fast path
     update_relay_fail_t f;
     update_relay_last_failure(&f);
     rsp[40] = f.phase;

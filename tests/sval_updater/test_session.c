@@ -162,6 +162,7 @@ static uint64_t slave_busy_until_us;
 static uint32_t slave_busy_rpcs; // RPCs that failed for it
 #define SIM_ERASE_US 50000       // M1 #13: a sector erase 50-53 ms
 #define SIM_SLAVE_COMMIT_US 1500000
+static uint64_t sim_block_busy_us = 3 * SIM_ERASE_US; // a 64 KiB block erase, about 150 ms (2 s at most)
 // DMA busy when the other half programs a page (update_split_port_program_page).
 static uint32_t       dma_busy_pct, dma_refusals;
 static bool           slave_hk_frozen;  // the other half's housekeeping does not run (it is stuck)
@@ -175,12 +176,12 @@ static struct {
     uint32_t drop_req, drop_rsp, flip_req, flip_rsp, dup, replay, stale; // percent chance per RPC
     uint32_t faults;                                                     // faults injected
 } lk;
-static uint8_t  hist[8][USPLIT_MSG_MAX], hist_len[8]; // the last requests, for replays
+static uint8_t  hist[8][USPLIT_MSG2_MAX], hist_len[8]; // the last requests, for replays
 static uint32_t hist_n;
 static uint64_t last_ping_us;
-static uint64_t last_slave_rx_us; // when the other half last got a request
-#define SIM_RPC_US 600            // four transactions at 1 Mbaud, with the handshakes
-#define SIM_RPC_FAIL_US 20000     // a transaction that times out (SERIAL_USART_TIMEOUT)
+static uint64_t last_slave_rx_us;  // when the other half last got a request
+#define SIM_RPC_US 600             // four transactions at 1 Mbaud, with the handshakes
+#define SIM_RPC_FAIL_US 20000      // a transaction that times out (SERIAL_USART_TIMEOUT)
 #define SIM_RPC_QUICK_FAIL_US 3000 // the same at the short deadline (SERIAL_USART_SHORT_TIMEOUT)
 
 uint32_t update_split_port_now_us(void) {
@@ -192,8 +193,14 @@ uint32_t update_split_port_now_ms(void) {
 void update_split_port_build_id(update_build_id_t *id) {
     *id = sim_slave ? slave_id : master_id;
 }
-uint8_t update_split_port_info_flags(void) {
-    return 0x01 | (port_failing ? 0x02 : 0);
+// The fast path (update_split_wire.h): whether each half's build has it. A
+// half without it has a 32-byte RPC buffer: any longer request to it is
+// counted (oversize_to_old) and must never happen.
+static bool     master_fast = true, slave_fast = true;
+static bool     fast_default = true; // what fresh() sets both to (test_relay runs both ways)
+static uint32_t oversize_to_old, oversize_rpcs, oversize_to_old_ever;
+uint8_t         update_split_port_info_flags(void) {
+    return 0x01 | (port_failing ? 0x02 : 0) | ((sim_slave ? slave_fast : master_fast) ? USPLIT_INFO_FAST : 0);
 }
 bool update_split_port_updating(void) {
     return sim_slave ? update_split_slave_active() : updater_active();
@@ -299,7 +306,7 @@ static void slave_rpc(const uint8_t *in, uint8_t len, uint8_t *out, uint8_t out_
 
 static uint32_t rpc_fail_us = SIM_RPC_FAIL_US; // what a transaction that times out costs now
 static uint32_t quick_rpcs;
-bool update_split_port_rpc_quick(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
+bool            update_split_port_rpc_quick(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
     quick_rpcs++;
     rpc_fail_us = SIM_RPC_QUICK_FAIL_US;
     bool ok     = update_split_port_rpc(req, req_len, rsp, rsp_len);
@@ -307,13 +314,13 @@ bool update_split_port_rpc_quick(const uint8_t *req, uint8_t req_len, uint8_t *r
     return ok;
 }
 bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
-    if (sim_slave || req_len > USPLIT_MSG_MAX || rsp_len > USPLIT_MSG_MAX) {
+    if (sim_slave || req_len > USPLIT_MSG2_MAX || rsp_len > USPLIT_MSG_MAX || (!master_fast && req_len > USPLIT_MSG_MAX)) {
         lock_errors++;
         return false;
     }
     lk.n++;
-    sim_us += SIM_RPC_US;
-    if (!link_up || link_dead) {
+    sim_us += SIM_RPC_US + (req_len > USPLIT_MSG_MAX ? (uint32_t)(req_len - USPLIT_MSG_MAX) * 10 : 0); // 10 us a byte at 1 Mbaud
+    if (!link_up || link_dead) {                                                                       // nothing arrives
         sim_us += rpc_fail_us;
         return false;
     }
@@ -321,6 +328,18 @@ bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, ui
         slave_busy_rpcs++;
         sim_us += rpc_fail_us;
         return false;
+    }
+    if (req_len > USPLIT_MSG_MAX) {
+        oversize_rpcs++;
+        if (!slave_fast) {
+            // A half without the fast path, listening: it would write past its
+            // 32-byte buffer (QMK's RPC info callback takes the length from
+            // the wire). This must never happen.
+            oversize_to_old++;
+            oversize_to_old_ever++;
+            sim_us += rpc_fail_us;
+            return false;
+        }
     }
     if (old_slave && req[0] == USPLIT_OP_SETTINGS_RESET) {
         memset(rsp, 0, rsp_len); // an unknown op builds no answer (update_split_slave_rpc)
@@ -331,7 +350,7 @@ bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, ui
         usplit_rsp_build(rsp, rsp_len, UPDATE_INVALID, USPLIT_OP_SETTINGS_RESET, req[1], UPDATE_STATE_IDLE, NULL);
         return true;
     }
-    uint8_t in[USPLIT_MSG_MAX], out[USPLIT_MSG_MAX];
+    uint8_t in[USPLIT_MSG2_MAX], out[USPLIT_MSG_MAX];
     memcpy(in, req, req_len);
     if (chance(lk.drop_req)) { // lost on the way: the other half never runs it
         lk.faults++;
@@ -388,11 +407,11 @@ static void slave_reboot(void) {
 // The other half's housekeeping pass.
 static void slave_hk(void) {
     if (sim_us < slave_busy_until_us || slave_hk_frozen) return; // still erasing, or committing
-    int erases = erase_ops, commits = slave_commit_runs;
+    int erases = erase_ops, blocks = block_erases, commits = slave_commit_runs;
     sim_slave = true;
     update_split_slave_task();
     sim_slave = false;
-    if (slave_irq_sim && erase_ops != erases) slave_busy_until_us = sim_us + SIM_ERASE_US;
+    if (slave_irq_sim && erase_ops != erases) slave_busy_until_us = sim_us + (block_erases != blocks ? sim_block_busy_us : SIM_ERASE_US);
     if (slave_irq_sim && slave_commit_runs != commits) slave_busy_until_us = sim_us + SIM_SLAVE_COMMIT_US;
     if (slave_reset_pending) {
         slave_reset_pending = false;
@@ -654,8 +673,11 @@ static void fresh(uint32_t len) {
     slave_hk_frozen             = false;
     drop_rsp_op                 = -1;
     old_slave                   = false;
-    master_slot                 = NULL;
-    auto_shadow                 = false;
+    master_fast = slave_fast = fast_default;
+    oversize_to_old = oversize_rpcs = 0;
+    sim_block_busy_us               = 3 * SIM_ERASE_US;
+    master_slot                     = NULL;
+    auto_shadow                     = false;
     memset(&lk, 0, sizeof(lk));
     hist_n                   = 0;
     last_ping_us             = 0;

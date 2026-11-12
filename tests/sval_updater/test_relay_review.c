@@ -116,7 +116,7 @@ static void test_relay_busy_slave(void) {
         uint64_t t0 = sim_us;
         CHECK_EQ(relay_until(RELAY_VERIFIED, 600000), RELAY_VERIFIED);
         CHECK_EQ(ri.error, UPDATE_OK);
-        CHECK_EQ(ri.slave_to_erase, (img_len + 4095) / 4096);
+        CHECK_EQ(ri.slave_to_erase, slave_fast ? (img_len + 0xFFFF) / 0x10000 * 16 : (img_len + 4095) / 4096);
         CHECK(slave_busy_rpcs > 0); // the erases did block the link
         CHECK_EQ(erase_unpaused, 0);
         CHECK_EQ(pause_violations, 0);

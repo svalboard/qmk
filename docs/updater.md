@@ -525,7 +525,7 @@ with USB):
 
 | Phase | Link | What happens |
 |---|---|---|
-| start, manifest | paused | ABORT (clears an old session there), then BEGIN: the 108-byte manifest in 5 fragments |
+| start, manifest | paused | INFO (does the other half have the fast path, below?), ABORT (clears an old session there), FAST on the fast path, then BEGIN: the 108-byte manifest in 5 fragments |
 | checking and erasing | paused | The other half checks the manifest against its own build itself (D7), then erases its slot a sector per pass; this half polls STATUS every 20 ms. A sector erase keeps the other half's interrupts off for about 50 ms, longer than the 20 ms serial timeout, so it erases a sector that needs it only after a request since its last erase and 5 ms after that request (`SVAL_UPDATE_SPLIT_ERASE_GAP_MS`): this half gets an answer between every two sectors, and an ABORT lands within a sector. After an answer that says it erases, the next poll comes 50 ms later (`SVAL_UPDATE_RELAY_ERASE_POLL_MS`) with the 3 ms serial deadline, so a poll that still finds it erasing costs 3 ms, not 20: about one poll per sector |
 | sending | paused | PAGE fragments read from this half's slot, request after request, with a main-loop pass every 15 ms (`SVAL_UPDATE_RELAY_STREAM_MS`): USB, Keybard and this half's keys keep going, and the longest pass stays under 50 ms (R13) even when an RPC times out. The other half's keys were released when the pause began |
 | end, verifying | paused | END; the other half hashes its slot (SHA-512 against the manifest, structure, CRC); its CRC must equal this half's |
@@ -548,6 +548,65 @@ since the last answer. The next relay reads the other half's STATUS before
 its ABORT and adds it to that record: TIMEOUT with no session means the other
 half stayed up and heard nothing; no session and no error means it restarted.
 
+**The fast path** (both halves on a build that has it; `update_split_wire.h`).
+The other half says so in its `KEYBOARD_UPDATE` INFO (flags bit4, protocol 2
+on; protocol 1 builds, never released, used that bit for their test key). The
+relay reads that INFO at the start of every relay and then sends FAST, which
+makes the session that BEGIN opens next (within 1 s) a fast one:
+
+- the other half erases its slot in 64 KiB blocks (about 150 ms each with its
+  interrupts off, 2 s at the datasheet maximum, inside the 4 s link timeout);
+  this half polls 150 ms after each answer, at the 3 ms deadline;
+- the pages go as PAGE2, up to 240 image bytes a request, which may cross a
+  256 B page (248 bytes on the wire). The RPC buffer toward the half without
+  USB is 248 bytes in these builds (`RPC_M2S_BUFFER_SIZE`, `config.h`;
+  QMK's lengths are `uint8_t`); answers stay within 32;
+- it hashes each page as it arrives, read back from its slot as the verify
+  always did, so END only finishes the hash. The commit's own hash of the
+  slot is unchanged;
+- it does not scan its keys from the manifest check to the end of the verify
+  (they read released), so the pages and the hash get the time and nothing
+  held then is reported when the link resumes.
+
+A half without the fast path takes the RPC length from the wire into a
+32-byte buffer with no bound (`quantum/split_common/transactions.c`), so a
+longer frame would overrun its memory. So this half sends FAST and PAGE2 only
+after that relay's INFO said so, and after any request that went unanswered
+(the other half may have restarted, perhaps into an older build) it reads
+INFO again, a small frame, before the next PAGE2. It never tries a large
+frame to see what happens. Builds with the fast path also bound those
+lengths in the core callback: one past the buffer moves no data and runs no
+callback. No split transaction ID was added (P1).
+
+A half without the fast path at either end gets the old relay: a new half
+with USB streams 24-byte PAGEs with the link paused (above), and a new other
+half that is sent no FAST erases by sector and hashes after END, as before.
+
+**Measured** on the trackball test pair (right half with USB, a 176-179 KB
+image, `sval_update.py`; ms, the mean of the runs):
+
+| Sender, receiver | Runs | Erase | Pages | Verify | Relay, start to verified |
+|---|---|---|---|---|---|
+| old, old (before this change) | 3 | 3,535 | 12,950 | 856 | 17,459 |
+| new, old (sender changes only) | 13 | (see the PR) | | | |
+| new, new (the fast path) | 3 | 1,228 | 4,288 | 20 | 5,682 |
+
+The commit phase (COMMIT to done) is the fixed 4.5 s hold either way. A page
+RPC takes 0.9 ms with 24 bytes and 4.4 ms with 240; erasing is the other
+half's flash: about 70 ms a sector, about 400 ms a 64 KiB block on these
+dies.
+
+**Relay faults** (`SVAL_RELAY_FAULTS=yes`, with `SVAL_UPDATE_TEST_HOOKS=yes`;
+dev builds for the test boards only). The half with USB injects a fault into
+each relay it sends since it booted, in turn: (1) one damaged request, one
+damaged answer, the link silent for 1 s and for 3 s in the pages: the relay
+finishes, two dropouts survived; (2) the link silent for 6 s in the pages:
+it fails, the other half's session times out, and the next relay records
+TIMEOUT from it; (3) the other half reset while it erases; (4) the other
+half reset halfway through the pages (`KEYBOARD_UPDATE` op `0x7E`, test-hook
+builds only); (5) none. Silence means no request goes out at all, as with the
+split cable unplugged.
+
 After a relay ends done, INFO flags bit5 stays set until presence first reads
 MATCH, also while presence reads NONE: a release that changes the split table
 cannot talk to the old half at all, and would otherwise look like an unplugged
@@ -566,7 +625,9 @@ after 60 s idle (see LEDs).
   with interrupts off in the same section as the program, and the fragment
   is given back (the relay sends it again).
 - The request and response lengths come from the wire (`rpc_info`, behind a
-  CRC-8 only) and are clamped to the 32-byte RPC buffers.
+  CRC-8 only) and are clamped to the RPC buffers (248 bytes in, for PAGE2; 32
+  out). Builds with the fast path also bound them in QMK's own RPC info
+  callback, before any byte is read.
 - The manifest check, the erase, the image hash and the commit run in
   housekeeping, behind the pause. The two meet in a single-slot mailbox with a
   sequence number: the callback posts a job by changing the state, and moves

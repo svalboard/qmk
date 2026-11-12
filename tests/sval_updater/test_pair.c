@@ -389,8 +389,12 @@ static void test_p4_held_rules(void) {
     CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_END, session_nonce), UPDATE_ACCEPTED);
     passes_until(UPDATE_STATE_VERIFIED, 5000);
     CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_ACCEPTED);
-    for (int i = 0; i < 50; i++)
+    update_relay_info_t pri;
+    for (int i = 0; i < 5000; i++) {
+        update_relay_info(&pri);
+        if (pri.phase == RELAY_PAGES && pri.acked > 0) break;
         pass();
+    }
     link_dead = true; // the split cable pulled mid-relay
     for (int i = 0; i < 10000 && updater_state() == UPDATE_STATE_RELAYING; i++)
         pass();

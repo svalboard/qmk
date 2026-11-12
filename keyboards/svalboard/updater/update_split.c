@@ -122,6 +122,11 @@ static struct {
     // SETTINGS_RESET (D42): the build reset record is invalidated; reset at reset_due_ms.
     bool     reset_pending;
     uint32_t reset_due_ms;
+    // The fast path (FAST, update_split_wire.h): asked for the next session
+    // (until fast_next_ms), and this session's.
+    bool     fast_next;
+    uint32_t fast_next_ms;
+    bool     fast;
 } sl;
 
 static struct {
@@ -145,11 +150,16 @@ bool update_split_slave_active(void) {
     return sl.state != UPDATE_STATE_IDLE;
 }
 
+bool update_split_slave_frozen(void) {
+    return sl.fast && sl.state >= UPDATE_STATE_VERIFYING_MANIFEST && sl.state <= UPDATE_STATE_VERIFYING_IMAGE;
+}
+
 // To IDLE, with last_error kept as the reason. Never erases (as the USB
 // ABORT): BEGIN erases anyway. Callback, or housekeeping holding the lock.
 static void slave_cancel(uint8_t error) {
     sl.state      = UPDATE_STATE_IDLE;
     sl.last_error = error;
+    sl.fast = sl.fast_next = false;
     sl.mseq++;
     sl.filled    = 0;
     sl.image_len = sl.erase_off = sl.erase_end = sl.crc_body = 0;
@@ -168,7 +178,10 @@ static update_status_t slave_begin(const usplit_req_t *r, uint8_t *payload) {
         // A new session, from IDLE or over a half-sent manifest only.
         if (sl.state != UPDATE_STATE_IDLE && sl.state != UPDATE_STATE_MANIFEST_LOADING) return UPDATE_BUSY;
         if (!update_flash_available()) return UPDATE_UNAVAILABLE; // probed at init, on the main thread
+        // FAST just before (the same relay) makes this a fast session.
+        bool fast = sl.fast_next && (int32_t)(update_split_port_now_ms() - sl.fast_next_ms) < SVAL_UPDATE_SPLIT_FAST_WINDOW_MS;
         slave_cancel(UPDATE_OK);
+        sl.fast  = fast;
         sl.state = UPDATE_STATE_MANIFEST_LOADING;
     } else if (sl.state != UPDATE_STATE_MANIFEST_LOADING) {
         // A repeat of a fragment already taken is acknowledged; nothing else.
@@ -224,6 +237,25 @@ static update_status_t slave_page(const usplit_req_t *r, uint8_t *payload) {
     return UPDATE_OK;
 }
 
+// PAGE2 (the fast path): a fragment may cross a page; the page it completes
+// is programmed here as PAGE's is, with the same DMA check (BUSY: nothing
+// taken, the master sends it again).
+static update_status_t slave_page2(const usplit_req_t *r, uint8_t *payload) {
+    if (sl.state == UPDATE_STATE_VERIFYING_MANIFEST || sl.state == UPDATE_STATE_ERASING) {
+        put24(payload, 0);
+        return UPDATE_BUSY;
+    }
+    if (sl.state != UPDATE_STATE_RECEIVING) {
+        put24(payload, sl.state == UPDATE_STATE_IDLE ? 0 : sl.pages.next);
+        return UPDATE_INVALID;
+    }
+    update_status_t st = usplit_pages_accept2(&sl.pages, r->off, r->data, r->n, update_split_port_program_page);
+    put24(payload, sl.pages.next);
+    if (st == UPDATE_OVERRUN) return slave_fail(UPDATE_OVERRUN);
+    if (st == UPDATE_OK || st == UPDATE_OUT_OF_ORDER || st == UPDATE_INVALID || st == UPDATE_BUSY) return st;
+    return slave_fail(st == UPDATE_UNAVAILABLE ? UPDATE_UNAVAILABLE : UPDATE_FLASH_ERR);
+}
+
 static void slave_status(uint8_t *payload) {
     bool rx = sl.state >= UPDATE_STATE_RECEIVING && sl.state <= UPDATE_STATE_COMMITTING;
     payload[0] = sl.last_error;
@@ -254,6 +286,20 @@ static update_status_t run(const usplit_req_t *r, uint8_t *payload) {
             return slave_begin(r, payload);
         case USPLIT_OP_PAGE:
             return slave_page(r, payload);
+        case USPLIT_OP_PAGE2:
+            return slave_page2(r, payload);
+#ifdef SVAL_UPDATE_TEST_HOOKS
+        case USPLIT_OP_TEST_RESET:
+            // A power cycle, as far as RAM goes: this half resets itself soon.
+            sl.reset_pending = true;
+            sl.reset_due_ms  = update_split_port_now_ms() + 50;
+            return UPDATE_OK;
+#endif
+        case USPLIT_OP_FAST:
+            if (sl.state != UPDATE_STATE_IDLE) return UPDATE_BUSY;
+            sl.fast_next    = true;
+            sl.fast_next_ms = update_split_port_now_ms();
+            return UPDATE_OK;
         case USPLIT_OP_STATUS:
             slave_status(payload);
             return UPDATE_OK;
@@ -297,9 +343,9 @@ static update_status_t run(const usplit_req_t *r, uint8_t *payload) {
 
 void update_split_slave_rpc(const uint8_t *in, uint8_t in_len, uint8_t *out, uint8_t out_len) {
     // The lengths come from the wire (rpc_info, behind only a CRC-8): never
-    // past the 32-byte RPC buffers.
+    // past the RPC buffers (USPLIT_MSG2_MAX in, for PAGE2; 32 out).
     if (out_len > USPLIT_MSG_MAX) out_len = USPLIT_MSG_MAX;
-    if (in_len > USPLIT_MSG_MAX) in_len = USPLIT_MSG_MAX;
+    if (in_len > USPLIT_MSG2_MAX) in_len = USPLIT_MSG2_MAX;
     memset(out, 0, out_len);
     if (in_len < USPLIT_REQ_HDR) return; // no op and seq to answer to
     usplit_req_t    r;
@@ -356,7 +402,9 @@ static void slave_check_manifest(uint32_t mseq) {
     } else {
         sl.image_len = SL_MANIFEST->image_len;
         sl.erase_off = 0;
-        sl.erase_end = (sl.image_len + UPDATE_FLASH_SECTOR - 1) / UPDATE_FLASH_SECTOR * UPDATE_FLASH_SECTOR;
+        // The fast path erases whole 64 KiB blocks (the slot is a whole number of them).
+        uint32_t unit = sl.fast ? UPDATE_FLASH_BLOCK : UPDATE_FLASH_SECTOR;
+        sl.erase_end  = (sl.image_len + unit - 1) / unit * unit;
         sl.state     = UPDATE_STATE_ERASING;
     }
     update_split_port_unlock();
@@ -370,16 +418,20 @@ static void slave_check_manifest(uint32_t mseq) {
 // since it, for the rest of that RPC's transactions): the master gets an
 // answer between every two sectors, its link timeout never races the erase,
 // and an ABORT always lands within a sector.
-static void slave_erase(uint32_t mseq, uint32_t off, bool gate) {
-    if (!gate && !update_flash_sector_erased(off)) return;
-    update_status_t st = update_flash_erase_sector(off);
+//
+// The fast path erases a 64 KiB block at a time the same way: interrupts off
+// for about 150 ms (2 s at the datasheet maximum), which the fast master's
+// polls and link timeout allow for. An ABORT lands within a block.
+static void slave_erase(uint32_t mseq, uint32_t off, bool gate, bool block) {
+    if (!gate && !(block ? update_flash_block_erased(off) : update_flash_sector_erased(off))) return;
+    update_status_t st = block ? update_flash_erase_block(off) : update_flash_erase_sector(off);
     if (!post_begin(mseq, UPDATE_STATE_ERASING)) return;
     sl.polled = false;
     if (sl.erase_off == off) {
         if (st != UPDATE_OK) {
             slave_fail(st == UPDATE_UNAVAILABLE ? UPDATE_UNAVAILABLE : UPDATE_FLASH_ERR);
         } else {
-            sl.erase_off += UPDATE_FLASH_SECTOR;
+            sl.erase_off += block ? UPDATE_FLASH_BLOCK : UPDATE_FLASH_SECTOR;
             if (sl.erase_off >= sl.erase_end) {
                 usplit_pages_init(&sl.pages, sl.image_len);
                 sl.state = UPDATE_STATE_RECEIVING;
@@ -389,8 +441,9 @@ static void slave_erase(uint32_t mseq, uint32_t off, bool gate) {
     update_split_port_unlock();
 }
 
-static void slave_verify(uint32_t mseq) {
-    uint32_t len = SL_MANIFEST->image_len;
+// One slice of the image hash, from the slot (what was programmed, read
+// back), up to upto: SHA-512, the build-info scan and the CRC.
+static update_status_t slave_hash(uint32_t upto) {
     if (!hk.verifying) {
         crypto_sha512_init(&hk.sha);
         update_build_scan_init(&hk.bi);
@@ -398,21 +451,23 @@ static void slave_verify(uint32_t mseq) {
         hk.crc        = UPDATE_CRC32_INIT;
         hk.verifying  = true;
     }
-    uint8_t         buf[UPDATE_FLASH_PAGE] __attribute__((aligned(4)));
-    update_status_t st  = UPDATE_OK;
-    uint32_t        end = len - hk.verify_off > SLAVE_VERIFY_SLICE ? hk.verify_off + SLAVE_VERIFY_SLICE : len;
+    uint8_t  buf[UPDATE_FLASH_PAGE] __attribute__((aligned(4)));
+    uint32_t end = upto - hk.verify_off > SLAVE_VERIFY_SLICE ? hk.verify_off + SLAVE_VERIFY_SLICE : upto;
     while (hk.verify_off < end) {
         uint32_t n = end - hk.verify_off < sizeof(buf) ? end - hk.verify_off : sizeof(buf);
-        if (!slot_copy(hk.verify_off, buf, n)) {
-            st = UPDATE_FLASH_ERR;
-            break;
-        }
+        if (!slot_copy(hk.verify_off, buf, n)) return UPDATE_FLASH_ERR;
         crypto_sha512_update(&hk.sha, buf, n);
         update_build_scan(&hk.bi, buf, n);
         uint32_t skip = hk.verify_off < UPDATE_VECTORS_OFFSET ? UPDATE_VECTORS_OFFSET - hk.verify_off : 0;
         if (skip < n) hk.crc = update_crc32_mpeg2_update(hk.crc, buf + skip, n - skip);
         hk.verify_off += n;
     }
+    return UPDATE_OK;
+}
+
+static void slave_verify(uint32_t mseq) {
+    uint32_t        len = SL_MANIFEST->image_len;
+    update_status_t st  = hk.verify_off <= len ? slave_hash(len) : UPDATE_INVALID;
     if (st == UPDATE_OK && hk.verify_off < len) return; // more next pass
     if (st == UPDATE_OK) {
         uint8_t hash[UPDATE_SHA512_BYTES];
@@ -497,6 +552,8 @@ void update_split_slave_task(void) {
         hk.verifying = false;
     }
     bool     mine       = hk.have && hk.mseq == mseq;
+    bool     fast       = sl.fast;
+    uint32_t programmed = sl.pages.next - sl.pages.next % USPLIT_PAGE_BYTES; // RECEIVING: whole pages below are in the slot
     uint32_t erase_off  = sl.erase_off;
     bool     erase_gate = sl.polled && (int32_t)(now - sl.rx_ms) >= SVAL_UPDATE_SPLIT_ERASE_GAP_MS;
     bool     commit_now = state == UPDATE_STATE_COMMITTING && due(now, sl.commit_due_ms);
@@ -510,7 +567,13 @@ void update_split_slave_task(void) {
             slave_check_manifest(mseq);
             break;
         case UPDATE_STATE_ERASING:
-            slave_erase(mseq, erase_off, erase_gate);
+            slave_erase(mseq, erase_off, erase_gate, fast);
+            break;
+        case UPDATE_STATE_RECEIVING:
+            // The fast path hashes the pages as they arrive, so END only
+            // finishes it. The hash is of the slot, read back, as before; a
+            // flash error here shows at END, which hashes the same bytes.
+            if (fast) (void)slave_hash(programmed);
             break;
         case UPDATE_STATE_VERIFYING_IMAGE:
             slave_verify(mseq);
@@ -547,7 +610,7 @@ static struct {
     uint8_t         manifest[UPDATE_MANIFEST_BYTES];
     uint32_t        image_len, crc_body;
     uint32_t        off;   // RELAY_MANIFEST: manifest bytes taken; RELAY_PAGES: next image byte to send
-    uint8_t         req[USPLIT_MSG_MAX];
+    uint8_t         req[USPLIT_MSG2_MAX];
     uint8_t         req_len, req_n;
     bool            pending; // req is out (or to go out again) without a valid answer
     bool            paused;
@@ -572,7 +635,13 @@ static struct {
     bool            failing; // no valid answer since fail_since_ms
     uint32_t        fail_since_ms;
     bool            after_pending; // a failure record waits for the other half's next STATUS
-    uint8_t         page[UPDATE_FLASH_PAGE] __attribute__((aligned(4)));
+    // The fast path (update_split_wire.h): the other half's INFO in this
+    // relay said it has it (fast), and no request has gone unanswered since
+    // that INFO, or since the last one (fast_ok: a PAGE2 may go).
+    uint8_t         start_step; // RELAY_START: 0 INFO, 1 ABORT, 2 FAST
+    bool            fast, fast_ok;
+    // Image bytes from page_off: two pages, as a PAGE2 fragment may cross one.
+    uint8_t         page[2 * UPDATE_FLASH_PAGE] __attribute__((aligned(4)));
 } rl;
 
 static update_relay_fail_t last_fail; // since boot, kept until the next failure
@@ -583,11 +652,89 @@ static uint32_t phase_ms(uint32_t since, uint32_t now) {
     return ms ? ms : 1;
 }
 
+#ifdef SVAL_RELAY_FAULTS
+#    ifndef SVAL_UPDATE_TEST_HOOKS
+#        error "SVAL_RELAY_FAULTS needs SVAL_UPDATE_TEST_HOOKS (dev builds for the test boards)"
+#    endif
+// Fault injection for the test boards (docs/updater.md, "Relay faults"): the
+// relays since this half booted take turns, by their count:
+//   1st, 6th, ...: one request damaged on the way (at 20 % of the image),
+//                  one answer damaged (30 %), the link silent 1 s (40 %) and
+//                  3 s (60 %): the relay finishes, with two dropouts survived;
+//   2nd: the link silent 6 s at 50 %: the relay fails, the other half's
+//        session times out, and the next relay records what it says;
+//   3rd: the other half reset while it erases (after its first erase);
+//   4th: the other half reset at 50 % of the pages;
+//   5th: no fault.
+// Silence: no request goes out, as with the split cable unplugged.
+static uint8_t fault_relays;
+static struct {
+    bool     flip_req, flip_rsp, quiet1, quiet3, quiet6, reset;
+    uint32_t quiet_until;
+} flt;
+
+static void fault_relay_start(void) {
+    fault_relays++;
+    memset(&flt, 0, sizeof(flt));
+}
+
+// True when the fault took this RPC (its result in *ok).
+static bool relay_fault(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len, bool *ok) {
+    uint32_t now = update_split_port_now_ms();
+    if (flt.quiet_until) {
+        if ((int32_t)(now - flt.quiet_until) < 0) {
+            *ok = false;
+            return true;
+        }
+        flt.quiet_until = 0;
+    }
+    uint32_t pct   = rl.image_len ? (uint32_t)((uint64_t)rl.acked * 100 / rl.image_len) : 0;
+    uint8_t  k     = (uint8_t)((fault_relays + 4) % 5); // 0 for the 1st relay
+    bool     pages = rl.phase == RELAY_PAGES;
+    if (k == 0 && pages && !flt.flip_req && pct >= 20) {
+        flt.flip_req = true;
+        uint8_t bad[USPLIT_MSG2_MAX];
+        memcpy(bad, req, req_len);
+        bad[req_len / 2] ^= 0x04;
+        *ok = update_split_port_rpc(bad, req_len, rsp, rsp_len);
+        return true;
+    }
+    if (k == 0 && pages && !flt.flip_rsp && pct >= 30) {
+        flt.flip_rsp = true;
+        *ok          = update_split_port_rpc(req, req_len, rsp, rsp_len);
+        rsp[rsp_len / 2] ^= 0x04;
+        return true;
+    }
+    uint32_t quiet = 0;
+    if (k == 0 && pages && !flt.quiet1 && pct >= 40) quiet = flt.quiet1 = 1000;
+    if (k == 0 && pages && !flt.quiet3 && pct >= 60) quiet = flt.quiet3 = 3000;
+    if (k == 1 && pages && !flt.quiet6 && pct >= 50) quiet = flt.quiet6 = 6000;
+    if (quiet) {
+        flt.quiet_until = now + quiet;
+        *ok             = false;
+        return true;
+    }
+    if (((k == 2 && rl.phase == RELAY_ERASE_WAIT && rl.slave_erased >= 1) || (k == 3 && pages && pct >= 50)) && !flt.reset) {
+        uint8_t      r[USPLIT_MSG_MAX], b[USPLIT_MSG_MAX];
+        usplit_rsp_t a;
+        uint8_t      len = usplit_req_build(r, USPLIT_OP_TEST_RESET, ++master_seq, NULL, 0);
+        if (update_split_port_rpc(r, len, b, usplit_rsp_len(USPLIT_OP_TEST_RESET)) && usplit_rsp_parse(b, usplit_rsp_len(USPLIT_OP_TEST_RESET), USPLIT_OP_TEST_RESET, r[1], &a) == UPDATE_OK && a.status == UPDATE_OK) flt.reset = true;
+        *ok = false; // this request again later
+        return true;
+    }
+    return false;
+}
+#endif
+
 // One KEYBOARD_UPDATE RPC from the relay, timed. quick: with the short
 // serial deadline (a STATUS poll that may land in a sector erase).
 static bool relay_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len, bool quick) {
     uint32_t t0 = update_split_port_now_us();
-    bool     ok = quick ? update_split_port_rpc_quick(req, req_len, rsp, rsp_len) : update_split_port_rpc(req, req_len, rsp, rsp_len);
+    bool     ok;
+#ifdef SVAL_RELAY_FAULTS
+    if (!relay_fault(req, req_len, rsp, rsp_len, &ok))
+#endif
+        ok = quick ? update_split_port_rpc_quick(req, req_len, rsp, rsp_len) : update_split_port_rpc(req, req_len, rsp, rsp_len);
     uint32_t us = update_split_port_now_us() - t0;
     if (us > rl.rpc_us_max) rl.rpc_us_max = us;
     if (rl.phase == RELAY_PAGES) {
@@ -706,6 +853,26 @@ static void relay_lost(void) {
     relay_fail(rl.slave_error != UPDATE_OK ? (update_status_t)rl.slave_error : UPDATE_UNAVAILABLE);
 }
 
+// A valid answer at now, in the other half's state.
+static void relay_answered(uint32_t now, uint8_t state) {
+    if (rl.failing && (int32_t)(now - rl.fail_since_ms) >= SVAL_UPDATE_RELAY_DROPOUT_MS && rl.resumes < UINT8_MAX) rl.resumes++;
+    rl.failing     = false;
+    rl.last_ok_ms  = now;
+    rl.slave_state = state;
+}
+
+// A request without a valid answer: no PAGE2 until INFO again, and the relay
+// fails (or holds, in the commit) once there has been none for the link timeout.
+static void relay_unanswered(uint32_t now) {
+    rl.fast_ok = false;
+    if (!rl.failing) {
+        rl.failing       = true;
+        rl.fail_since_ms = now;
+    }
+    rl.retries++;
+    if ((int32_t)(now - rl.last_ok_ms) >= SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS) relay_timeout(now);
+}
+
 // Sends the pending request once. True with *r filled on a valid answer; on
 // none, the request stays pending for a retry, and the relay fails once there
 // has been no valid answer for SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS.
@@ -721,20 +888,41 @@ static bool relay_exchange(usplit_rsp_t *r, uint8_t *buf) {
     uint32_t now = update_split_port_now_ms();
     if (ok && r->status == UPDATE_INVALID && ++rl.invalids < RELAY_INVALID_TRIES) ok = false; // maybe damaged on the way: again
     if (ok) {
-        if (rl.failing && (int32_t)(now - rl.fail_since_ms) >= SVAL_UPDATE_RELAY_DROPOUT_MS && rl.resumes < UINT8_MAX) rl.resumes++;
-        rl.failing     = false;
-        rl.pending     = false;
-        rl.last_ok_ms  = now;
-        rl.slave_state = r->state;
+        rl.pending = false;
+        relay_answered(now, r->state);
         return true;
     }
-    if (!rl.failing) {
-        rl.failing       = true;
-        rl.fail_since_ms = now;
-    }
-    rl.retries++;
-    if ((int32_t)(now - rl.last_ok_ms) >= SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS) relay_timeout(now);
+    relay_unanswered(now);
     return false;
+}
+
+// The fast path: before a PAGE2 after a request that went unanswered, the
+// other half's INFO again, a small frame. It may have restarted meanwhile,
+// perhaps into a build without the fast path, whose 32-byte RPC buffer a
+// PAGE2 would overrun (update_split_wire.h). True when a PAGE2 may go.
+static bool relay_fast_check(void) {
+    uint8_t      req[USPLIT_MSG_MAX], buf[USPLIT_MSG_MAX];
+    usplit_rsp_t r;
+    uint8_t      len  = usplit_req_build(req, USPLIT_OP_INFO, ++master_seq, NULL, 0);
+    uint8_t      want = usplit_rsp_len(USPLIT_OP_INFO);
+    memset(buf, 0, sizeof(buf));
+    bool     ok  = relay_rpc(req, len, buf, want, false) && usplit_rsp_parse(buf, want, USPLIT_OP_INFO, req[1], &r) == UPDATE_OK && r.status == UPDATE_OK;
+    uint32_t now = update_split_port_now_ms();
+    if (!ok) {
+        relay_unanswered(now);
+        return false;
+    }
+    relay_answered(now, r.state);
+    if (r.payload[0] < 2 || !(r.payload[14] & USPLIT_INFO_FAST)) {
+        relay_fail(UPDATE_UNAVAILABLE); // it restarted into a build without the fast path: its session is gone
+        return false;
+    }
+    if (r.state != UPDATE_STATE_RECEIVING) {
+        relay_lost();
+        return false;
+    }
+    rl.fast_ok = true;
+    return true;
 }
 
 static void relay_status_payload(const usplit_rsp_t *r) {
@@ -766,9 +954,37 @@ static bool relay_step(void) {
                 }
                 return true;
             }
-            // An old session on the other half (a failed relay whose ABORT was
-            // lost) would refuse BEGIN: clear it first. ABORT never erases.
-            if (!rl.pending && !relay_new(USPLIT_OP_ABORT)) break;
+            if (rl.start_step == 0) {
+                // Its INFO, every relay: the fast path only when it says so here.
+                if (!rl.pending && !relay_new(USPLIT_OP_INFO)) break;
+                if (!relay_exchange(&r, buf)) return false;
+                if (r.status != UPDATE_OK) break;
+                // (Protocol 1 builds, never released, used bit4 for their test key.)
+                rl.fast       = SVAL_UPDATE_RELAY_FAST && r.payload[0] >= 2 && (r.payload[14] & USPLIT_INFO_FAST);
+                rl.fast_ok    = rl.fast;
+                rl.start_step = 1;
+                return true;
+            }
+            if (rl.start_step == 1) {
+                // An old session on the other half (a failed relay whose ABORT
+                // was lost) would refuse BEGIN: clear it first. ABORT never erases.
+                if (!rl.pending && !relay_new(USPLIT_OP_ABORT)) break;
+                if (!relay_exchange(&r, buf)) return false;
+                if (r.status != UPDATE_OK) break;
+                rl.start_step = 2;
+                if (!rl.fast) {
+                    rl.phase = RELAY_MANIFEST;
+                    rl.off   = 0;
+                }
+                return true;
+            }
+            // FAST, a small frame: the session that BEGIN opens next runs the
+            // fast path. A request went unanswered since its INFO: INFO again.
+            if (!rl.fast_ok) {
+                rl.start_step = 0;
+                return true;
+            }
+            if (!rl.pending && !relay_request(usplit_req_build(rl.req, USPLIT_OP_FAST, ++master_seq, (const uint8_t[]){1}, 1), 0)) break;
             if (!relay_exchange(&r, buf)) return false;
             if (r.status != UPDATE_OK) break;
             rl.phase = RELAY_MANIFEST;
@@ -809,7 +1025,7 @@ static bool relay_step(void) {
             // Erasing: it erases its next sector 5 ms after this answer, with
             // its interrupts off for about 45-60 ms; the next poll comes once
             // that is likely over (one poll per sector).
-            if (r.state == UPDATE_STATE_ERASING) rl.next_ms = update_split_port_now_ms() + SVAL_UPDATE_RELAY_ERASE_POLL_MS;
+            if (r.state == UPDATE_STATE_ERASING) rl.next_ms = update_split_port_now_ms() + (rl.fast ? SVAL_UPDATE_RELAY_BLOCK_POLL_MS : SVAL_UPDATE_RELAY_ERASE_POLL_MS);
             if (r.state == UPDATE_STATE_ERROR) {
                 relay_lost();
                 return false;
@@ -859,9 +1075,12 @@ static bool relay_step(void) {
                     rl.t_end    = now;
                     return true;
                 }
+                // Two pages from base (one when the image ends sooner): a
+                // PAGE2 fragment may run into the second.
                 uint32_t base = rl.off - rl.off % UPDATE_FLASH_PAGE;
                 if (rl.page_off != base) {
-                    bool read = rl.from_self ? update_split_port_self_read(base, rl.page, UPDATE_FLASH_PAGE) : update_split_port_slot_read(base, rl.page, UPDATE_FLASH_PAGE);
+                    uint32_t span = rl.image_len - base < sizeof(rl.page) ? rl.image_len - base : sizeof(rl.page);
+                    bool     read = rl.from_self ? update_split_port_self_read(base, rl.page, span) : update_split_port_slot_read(base, rl.page, span);
                     if (!read) {
                         relay_fail(UPDATE_FLASH_ERR);
                         return false;
@@ -869,10 +1088,21 @@ static bool relay_step(void) {
                     rl.page_off = base;
                 }
                 uint32_t at = rl.off % UPDATE_FLASH_PAGE;
-                uint32_t n  = UPDATE_FLASH_PAGE - at < USPLIT_PAGE_DATA_MAX ? UPDATE_FLASH_PAGE - at : USPLIT_PAGE_DATA_MAX;
-                if (n > rl.image_len - rl.off) n = rl.image_len - rl.off;
-                if (!relay_request(usplit_req_page(rl.req, ++master_seq, rl.off, rl.page + at, (uint8_t)n), (uint8_t)n)) break;
+                uint32_t n;
+                uint8_t  len;
+                if (rl.fast) {
+                    n = rl.image_len - rl.off < USPLIT_PAGE2_DATA_MAX ? rl.image_len - rl.off : USPLIT_PAGE2_DATA_MAX;
+                    len = usplit_req_page2(rl.req, ++master_seq, rl.off, rl.page + at, (uint8_t)n);
+                } else {
+                    n = UPDATE_FLASH_PAGE - at < USPLIT_PAGE_DATA_MAX ? UPDATE_FLASH_PAGE - at : USPLIT_PAGE_DATA_MAX;
+                    if (n > rl.image_len - rl.off) n = rl.image_len - rl.off;
+                    len = usplit_req_page(rl.req, ++master_seq, rl.off, rl.page + at, (uint8_t)n);
+                }
+                if (!relay_request(len, (uint8_t)n)) break;
             }
+            // A PAGE2 goes only while the fast path is confirmed (INFO since
+            // the last request that went unanswered).
+            if (rl.fast && !rl.fast_ok && !relay_fast_check()) return false;
             if (!relay_exchange(&r, buf)) return false;
             uint32_t next = get24(r.payload);
             if (r.status == UPDATE_OK && next >= rl.off + rl.req_n && next <= rl.image_len) {
@@ -1007,6 +1237,9 @@ static bool relay_start(const uint8_t *manifest, uint32_t image_len, uint32_t cr
     // straight after the manifest.
     if (!relay_pause()) return false;
     rl.phase = RELAY_START;
+#ifdef SVAL_RELAY_FAULTS
+    fault_relay_start();
+#endif
     return true;
 }
 
@@ -1080,6 +1313,7 @@ void update_relay_info(update_relay_info_t *info) {
     info->rpc_us_max     = rl.rpc_us_max;
     info->busy           = rl.busy;
     info->resumes        = rl.resumes;
+    info->fast           = rl.fast;
 }
 
 void update_relay_last_failure(update_relay_fail_t *f) {
@@ -1193,6 +1427,10 @@ static uint8_t           info_flags; // the constant bits
 // differently differ here. update_split_init() reads it, so it is linked.
 const uint8_t sval_split_kb_ids[] = {'S', 'V', 'K', 'B', 3, KEYBOARD_SYNC_A, 'S', 'A', KEYBOARD_SYNC_B, 'S', 'B', KEYBOARD_UPDATE, 'U', 'P'};
 
+// The fast path's PAGE2 needs the larger request buffer (config.h).
+_Static_assert(RPC_M2S_BUFFER_SIZE >= USPLIT_MSG2_MAX && RPC_M2S_BUFFER_SIZE <= 255, "KEYBOARD_UPDATE: PAGE2 fits the RPC buffer, and QMK's lengths are uint8_t");
+_Static_assert(RPC_S2M_BUFFER_SIZE >= USPLIT_MSG_MAX, "KEYBOARD_UPDATE: answers fit the RPC buffer");
+
 static void keyboard_update_rpc(uint8_t in_len, const void *in, uint8_t out_len, void *out) {
     update_split_slave_rpc((const uint8_t *)in, in_len, (uint8_t *)out, out_len);
 }
@@ -1208,6 +1446,7 @@ void update_split_init(void) {
     // update_flash_available() probes the die the first time: here, on the
     // main thread, never in the SlaveThread.
     info_flags = (update_flash_available() ? 0x01 : 0) | (dev.release_build ? 0x04 : 0) | (self_id.git_dirty ? 0x20 : 0);
+    info_flags |= USPLIT_INFO_FAST; // PAGE2 fits the RPC buffer (below), block erase, the hash as pages arrive
 #    ifdef SVAL_UPDATE_TEST_HOOKS
     info_flags |= 0x08;
 #    endif

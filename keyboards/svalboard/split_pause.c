@@ -38,6 +38,8 @@ extern uint8_t      thisHand, thatHand;
 #ifndef SVAL_UPDATER_HOST_TEST
 // core: quantum/matrix_common.c (weak; kb/matrix.c defines it). No core header declares it.
 bool matrix_scan_custom(matrix_row_t current_matrix[]);
+// updater/update_split.h: this half (without USB) receives a relay on the fast path.
+bool update_split_slave_frozen(void);
 #endif
 
 static bool paused;      // default false: bootmagic calls matrix_scan() before anything else runs
@@ -68,8 +70,20 @@ bool sval_split_paused(void) {
 }
 
 uint8_t matrix_scan(void) {
-    // core: matrix_scan(), CUSTOM_MATRIX lite
-    bool changed = matrix_scan_custom(raw_matrix);
+    bool changed = false;
+    if (update_split_slave_frozen()) {
+        // The half without USB while it takes a relay on the fast path: no
+        // scan, its keys read released (the rest below as usual), so the
+        // pages and the hash get the time, and no key held now is reported
+        // as held when the link resumes.
+        for (uint8_t i = 0; i < MATRIX_ROWS_PER_HAND; i++) {
+            changed |= raw_matrix[i] != 0;
+            raw_matrix[i] = 0;
+        }
+    } else {
+        // core: matrix_scan(), CUSTOM_MATRIX lite
+        changed = matrix_scan_custom(raw_matrix);
+    }
 
     if (!paused) {
         // core: matrix_scan(), SPLIT_KEYBOARD

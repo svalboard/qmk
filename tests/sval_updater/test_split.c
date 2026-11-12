@@ -53,7 +53,14 @@ static bool           wd_last = true;
 static int            shared_sets;
 static report_mouse_t shared_report;
 
+static bool frozen; // the fast path's freeze on the half without USB
+static int  custom_scans;
+bool        update_split_slave_frozen(void) {
+    return frozen;
+}
+
 bool matrix_scan_custom(matrix_row_t m[]) {
+    custom_scans++;
     bool changed = memcmp(m, local_rows, sizeof(local_rows)) != 0;
     memcpy(m, local_rows, sizeof(local_rows));
     return changed;
@@ -455,12 +462,145 @@ static void test_pages(void) {
     CHECK_EQ(usplit_pages_accept(&a, 0, img, 24, &done), UPDATE_OVERRUN);
 }
 
+// The fast path: PAGE2 frames up to 248 bytes, FAST, and fragments that
+// cross a page.
+static uint8_t         prog_pages[4][256];
+static uint32_t        prog_offs[4];
+static int             prog_n, prog_busy;
+static update_status_t prog(uint32_t off, const uint8_t *page) {
+    if (prog_busy) {
+        prog_busy--;
+        return UPDATE_BUSY;
+    }
+    if (prog_n < 4) {
+        prog_offs[prog_n] = off;
+        memcpy(prog_pages[prog_n], page, 256);
+    }
+    prog_n++;
+    return UPDATE_OK;
+}
+
+static void test_fast_wire(void) {
+    uint8_t      buf[USPLIT_MSG2_MAX + 8], data[256];
+    usplit_req_t r;
+    for (int i = 0; i < 256; i++)
+        data[i] = (uint8_t)(i * 13 + 1);
+    CHECK_EQ(USPLIT_MSG2_MAX, 248);
+    CHECK_EQ(usplit_rsp_len(USPLIT_OP_PAGE2), 4 + 3 + 2);
+    CHECK_EQ(usplit_rsp_len(USPLIT_OP_FAST), 6);
+    // PAGE2 of 240 bytes crossing a page: 248 on the wire, parsed back.
+    uint8_t len = usplit_req_page2(buf, 9, 0x123F0, data, 240);
+    CHECK_EQ(len, 248);
+    CHECK_EQ(usplit_req_parse(buf, len, &r), UPDATE_OK);
+    CHECK_EQ(r.op, USPLIT_OP_PAGE2);
+    CHECK_EQ(r.off, 0x123F0);
+    CHECK_EQ(r.n, 240);
+    CHECK(memcmp(r.data, data, 240) == 0);
+    CHECK_EQ(usplit_req_page2(buf, 9, 0, data, 241), 0);
+    CHECK_EQ(usplit_req_page2(buf, 9, 0, data, 0), 0);
+    // Every single-bit error in a PAGE2 frame is caught.
+    for (int i = 0; i < len * 8; i++) {
+        buf[i / 8] ^= (uint8_t)(1u << (i % 8));
+        CHECK_EQ(usplit_req_parse(buf, len, &r), UPDATE_INVALID);
+        buf[i / 8] ^= (uint8_t)(1u << (i % 8));
+    }
+    // Only PAGE2 may be longer than 32 bytes: a long frame of any other op is
+    // refused, even with a good CRC; nothing longer than 248 is read.
+    uint8_t big[USPLIT_MSG2_MAX + 1];
+    memset(big, 0, sizeof(big));
+    for (uint8_t op = 0; op < USPLIT_OP_COUNT; op++) {
+        if (op == USPLIT_OP_PAGE2) continue;
+        big[0]     = op;
+        uint16_t c = usplit_crc16(big, 40 - 2);
+        big[38]    = c & 0xFF;
+        big[39]    = c >> 8;
+        CHECK_EQ(usplit_req_parse(big, 40, &r), UPDATE_INVALID);
+    }
+    len = usplit_req_page2(big, 1, 0, data, 240);
+    CHECK_EQ(usplit_req_parse(big, USPLIT_MSG2_MAX + 1, &r), UPDATE_INVALID);
+    // FAST: mode 1 only.
+    CHECK_EQ(usplit_req_build(buf, USPLIT_OP_FAST, 3, (const uint8_t[]){1}, 1), 5);
+    CHECK_EQ(usplit_req_parse(buf, 5, &r), UPDATE_OK);
+    CHECK_EQ(r.mode, 1);
+    CHECK_EQ(usplit_req_build(buf, USPLIT_OP_FAST, 3, (const uint8_t[]){0}, 1), 0);
+    CHECK_EQ(usplit_req_build(buf, USPLIT_OP_FAST, 3, NULL, 0), 0);
+    // A PAGE (the old op) still may not cross a page or exceed 24.
+    CHECK_EQ(usplit_req_page(buf, 1, 0xF0, data, 24), 0);
+
+    // Fragments of 240 into pages: each page programmed once, in order, whole.
+    static usplit_pages_t a;
+    static uint8_t        img[1024];
+    for (size_t i = 0; i < sizeof(img); i++)
+        img[i] = (uint8_t)(i * 7 + 3);
+    usplit_pages_init(&a, 1024);
+    prog_n       = 0;
+    uint32_t off = 0;
+    while (off < 1024) {
+        uint8_t n = 1024 - off < 240 ? (uint8_t)(1024 - off) : 240;
+        CHECK_EQ(usplit_pages_accept2(&a, off, img + off, n, prog), UPDATE_OK);
+        off += n;
+    }
+    CHECK_EQ(prog_n, 4);
+    for (int i = 0; i < 4; i++) {
+        CHECK_EQ(prog_offs[i], (uint32_t)i * 256);
+        CHECK(memcmp(prog_pages[i], img + i * 256, 256) == 0);
+    }
+    CHECK_EQ(a.next, 1024);
+    // A repeat, a gap, an overrun, and a BUSY program (nothing taken, then the
+    // same fragment again).
+    usplit_pages_init(&a, 512);
+    prog_n = 0;
+    CHECK_EQ(usplit_pages_accept2(&a, 0, img, 240, prog), UPDATE_OK);
+    CHECK_EQ(usplit_pages_accept2(&a, 0, data, 240, prog), UPDATE_OK); // repeat: not taken again
+    CHECK_EQ(usplit_pages_accept2(&a, 250, img + 250, 10, prog), UPDATE_OUT_OF_ORDER);
+    CHECK_EQ(usplit_pages_accept2(&a, 240, img + 240, 0, prog), UPDATE_INVALID);
+    CHECK_EQ(usplit_pages_accept2(&a, 240, img + 240, 241, prog), UPDATE_INVALID);
+    prog_busy = 1;
+    CHECK_EQ(usplit_pages_accept2(&a, 240, img + 240, 240, prog), UPDATE_BUSY);
+    CHECK_EQ(a.next, 240);
+    CHECK_EQ(prog_n, 0);
+    CHECK_EQ(usplit_pages_accept2(&a, 240, img + 240, 240, prog), UPDATE_OK);
+    CHECK_EQ(prog_n, 1);
+    CHECK(memcmp(prog_pages[0], img, 256) == 0);
+    CHECK_EQ(a.next, 480);
+    CHECK_EQ(usplit_pages_accept2(&a, 480, img + 480, 40, prog), UPDATE_OVERRUN);
+    CHECK_EQ(usplit_pages_accept2(&a, 480, img + 480, 32, prog), UPDATE_OK);
+    CHECK_EQ(prog_n, 2);
+    CHECK(memcmp(prog_pages[1], img + 256, 256) == 0);
+}
+
+// The freeze: the half without USB in a fast session scans nothing, and its
+// held keys read released.
+static void test_freeze(void) {
+    master = false;
+    memset(raw_matrix, 0, sizeof(raw_matrix));
+    memset(matrix, 0, sizeof(matrix));
+    thisHand      = 0;
+    thatHand      = MATRIX_ROWS_PER_HAND;
+    local_rows[1] = 0x04;
+    matrix_scan();
+    CHECK_EQ(matrix[1], 0x04);
+    frozen     = true;
+    int before = custom_scans;
+    CHECK(matrix_scan() != 0); // released: a change
+    CHECK_EQ(matrix[1], 0);
+    CHECK_EQ(custom_scans, before);
+    CHECK_EQ(matrix_scan(), 0);
+    frozen = false;
+    matrix_scan();
+    CHECK_EQ(matrix[1], 0x04);
+    local_rows[1] = 0;
+    master        = true;
+}
+
 int main(void) {
     test_pause();
+    test_fast_wire();
     test_checks();
     test_presence();
     test_wire();
     test_pages();
+    test_freeze();
     printf("split tests: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

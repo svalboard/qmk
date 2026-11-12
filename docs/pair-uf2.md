@@ -239,7 +239,11 @@ USB sends on the presence ping.
 
 **Timing on the test boards:** about 20 s from the first boot to DONE for a
 152 KiB image (relay 15 s, the other half's commit and restart about 5 s),
-and presence matches about 6 s later.
+and presence matches about 6 s later. That was before the relay changes of
+2026-11 (`docs/updater.md`, "The relay"): a new half with USB relays a
+176 KB image to an old half in about 12 s, and to a half with the fast path
+in about 5.7 s. A pair UF2 copied onto a half with USB whose other half runs
+an older build is the case where only the sender is new.
 
 ## Flash layout
 

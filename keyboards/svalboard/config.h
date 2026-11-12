@@ -127,6 +127,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS 4000
 #define SVAL_UPDATE_RELAY_POLL_MS 20
 #define SVAL_UPDATE_RELAY_ERASE_POLL_MS 50
+// The fast path (both halves have it: updater/update_split_wire.h): the half
+// with USB uses it when the other half's INFO says so (0 turns it off on this
+// half as the sender), and polls a block erase (about 150 ms) this long after
+// an answer. The other half takes FAST for a session that BEGIN opens within
+// SVAL_UPDATE_SPLIT_FAST_WINDOW_MS.
+#ifndef SVAL_UPDATE_RELAY_FAST
+#    define SVAL_UPDATE_RELAY_FAST 1
+#endif
+#define SVAL_UPDATE_RELAY_BLOCK_POLL_MS 150
+#define SVAL_UPDATE_SPLIT_FAST_WINDOW_MS 1000
 #define SVAL_UPDATE_RELAY_KEEPALIVE_MS 1000
 // A run of requests with no valid answer this long, then an answer again,
 // counts as a dropout the relay survived (the RELAY op's resumes).
@@ -343,6 +353,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // SVAL_UPDATER half and a half without it cannot talk at all (P1:
 // keyboards/svalboard/tools/check_split_tables.py).
 #    define SPLIT_TRANSACTION_IDS_KB KEYBOARD_SYNC_A, KEYBOARD_SYNC_B, KEYBOARD_UPDATE
+// The relay's fast path sends PAGE2 frames of up to 248 bytes (USPLIT_MSG2_MAX,
+// updater/update_split_wire.h) to the half without USB. These buffers are each
+// half's own RAM and never go on the wire whole; QMK's RPC lengths are
+// uint8_t, so 255 at most. Answers stay within 32 bytes.
+#    define RPC_M2S_BUFFER_SIZE 248
 #else
 #    define SPLIT_TRANSACTION_IDS_KB KEYBOARD_SYNC_A, KEYBOARD_SYNC_B
 #endif

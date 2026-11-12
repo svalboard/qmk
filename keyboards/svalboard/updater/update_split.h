@@ -72,6 +72,10 @@ void update_split_slave_task(void);
 // update_state_t of the slave's session.
 uint8_t update_split_slave_state(void);
 bool    update_split_slave_active(void); // not IDLE: full clock, the updater's LEDs
+// A fast-path session from the manifest check to the end of its verify: this
+// half does not scan its keys (split_pause.c), so the pages and the hash get
+// the time, and nothing it holds is reported when the link resumes.
+bool update_split_slave_frozen(void);
 
 // ---- the relay, the half with USB --------------------------------------------------------
 
@@ -147,6 +151,7 @@ typedef struct {
     uint32_t rpc_us_max;  // the longest single RPC of the relay
     uint16_t busy;        // BUSY answers to PAGE (a DMA channel busy there: sent again)
     uint8_t  resumes;     // answers again after a dropout of SVAL_UPDATE_RELAY_DROPOUT_MS or more
+    bool     fast;        // the fast path: the other half's INFO said it has it (USPLIT_INFO_FAST)
 } update_relay_info_t;
 
 // The last relay failure since boot, kept until the next one (the RELAY op).

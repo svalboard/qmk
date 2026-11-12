@@ -123,7 +123,130 @@ static void test_relay_stream_pass(void) {
     relay_until(RELAY_IDLE, 5000);
 }
 
+// The image the other half receives differs from the manifest in one byte,
+// with every frame's CRC good: only the end hash can catch it. It reports a
+// bad hash, nothing is committed, and the next relay of the right image works.
+static void test_relay_end_hash(void) {
+    relay_fresh(0x13000);
+    static uint8_t bad[IMG_MAX];
+    memcpy(bad, img, img_len);
+    bad[0x9001] ^= 0x10;
+    master_slot = bad;
+    CHECK(update_relay_start(blob, img_len, body_crc()));
+    CHECK_EQ(relay_until(RELAY_VERIFIED, 60000), RELAY_FAILED);
+    CHECK_EQ(ri.error, UPDATE_BAD_HASH);
+    CHECK_EQ(slave_commit_runs, 0);
+    CHECK(!update_relay_commit());
+    CHECK(!link_paused);
+    master_slot = img;
+    CHECK(update_relay_start(blob, img_len, body_crc()));
+    CHECK_EQ(relay_until(RELAY_VERIFIED, 60000), RELAY_VERIFIED);
+    CHECK(slot_is_img(img_len));
+    update_relay_abort();
+    relay_until(RELAY_IDLE, 5000);
+}
+
+// The fast path only.
+static void test_relay_fast_only(void) {
+    if (!slave_fast) return;
+    const int f0 = failures;
+
+    // A block erase at the datasheet maximum (2 s, interrupts off): no timeout.
+    relay_fresh(0x13000);
+    slave_irq_sim     = true;
+    sim_block_busy_us = 2000000;
+    CHECK(update_relay_start(blob, img_len, body_crc()));
+    CHECK_EQ(relay_until(RELAY_VERIFIED, 600000), RELAY_VERIFIED);
+    CHECK_EQ(ri.error, UPDATE_OK);
+    CHECK(ri.fast);
+    CHECK(block_erases > 0);
+    CHECK(slot_is_img(img_len));
+    update_relay_abort();
+    relay_until(RELAY_IDLE, 5000);
+
+    // An ABORT while a block erases lands before the next block.
+    relay_fresh(0x30000); // three blocks
+    slave_irq_sim = true;
+    CHECK(update_relay_start(blob, img_len, body_crc()));
+    for (int i = 0; i < 20000 && block_erases == 0; i++)
+        pass();
+    CHECK_EQ(block_erases, 1);
+    update_relay_abort();
+    CHECK_EQ(relay_until(RELAY_IDLE, 10000), RELAY_IDLE);
+    for (int i = 0; i < 2000; i++)
+        pass();
+    CHECK_EQ(block_erases, 1);
+    CHECK_EQ(update_split_slave_state(), UPDATE_STATE_IDLE);
+
+    // The capability seen, then the other half restarts into a build without
+    // the fast path in the middle of the pages: the requests that go
+    // unanswered while it boots make the sender read INFO again before any
+    // PAGE2, and that INFO ends the relay. Nothing over 32 bytes reaches it.
+    relay_fresh(0x13000);
+    CHECK(update_relay_start(blob, img_len, body_crc()));
+    CHECK_EQ(relay_until(RELAY_PAGES, 60000), RELAY_PAGES);
+    for (int i = 0; i < 3; i++)
+        pass();
+    slave_reboot();
+    slave_fast = false;
+    link_up    = false; // it boots
+    pass_for_ms(300);
+    link_up = true;
+    for (int i = 0; i < 6000 && update_relay_busy(); i++)
+        pass();
+    relay_get();
+    CHECK_EQ(ri.phase, RELAY_FAILED);
+    CHECK_EQ(ri.error, UPDATE_UNAVAILABLE);
+    CHECK_EQ(oversize_to_old, 0);
+    CHECK_EQ(slave_commit_runs, 0);
+    // The next relay goes the old way to it.
+    CHECK(update_relay_start(blob, img_len, body_crc()));
+    CHECK_EQ(relay_until(RELAY_VERIFIED, 60000), RELAY_VERIFIED);
+    CHECK(!ri.fast);
+    CHECK(slot_is_img(img_len));
+    CHECK_EQ(oversize_to_old, 0);
+    update_relay_abort();
+    relay_until(RELAY_IDLE, 5000);
+
+    // FAST holds for one BEGIN within SVAL_UPDATE_SPLIT_FAST_WINDOW_MS only:
+    // later, the session is an ordinary one (sector erase).
+    relay_fresh(0x2000);
+    uint8_t req[USPLIT_MSG_MAX], out[USPLIT_MSG_MAX];
+    slave_rpc(req, usplit_req_build(req, USPLIT_OP_FAST, 0x41, (const uint8_t[]){1}, 1), out, USPLIT_MSG_MAX);
+    CHECK_EQ(out[0], UPDATE_OK);
+    sim_us += (uint64_t)(SVAL_UPDATE_SPLIT_FAST_WINDOW_MS + 1) * 1000;
+    for (uint8_t off = 0; off < UPDATE_MANIFEST_BYTES; off += USPLIT_BEGIN_DATA_MAX) {
+        uint8_t n = UPDATE_MANIFEST_BYTES - off < USPLIT_BEGIN_DATA_MAX ? (uint8_t)(UPDATE_MANIFEST_BYTES - off) : USPLIT_BEGIN_DATA_MAX;
+        slave_rpc(req, usplit_req_begin(req, (uint8_t)(0x42 + off), off, blob + off, n), out, USPLIT_MSG_MAX);
+        CHECK_EQ(out[0], UPDATE_OK);
+    }
+    for (int i = 0; i < 20; i++) {
+        slave_rpc(req, usplit_req_build(req, USPLIT_OP_STATUS, (uint8_t)(0x90 + i), NULL, 0), out, USPLIT_MSG_MAX);
+        sim_us += 6000;
+        slave_hk();
+    }
+    CHECK_EQ(block_erases, 0);
+    CHECK(sector_erases > 0);
+    CHECK(!update_split_slave_frozen());
+    // FAST during a session is refused.
+    slave_rpc(req, usplit_req_build(req, USPLIT_OP_FAST, 0x60, (const uint8_t[]){1}, 1), out, USPLIT_MSG_MAX);
+    CHECK_EQ(out[0], UPDATE_BUSY);
+
+    // The freeze: from the manifest check to the end of the verify, not after.
+    relay_fresh(0x3000);
+    CHECK(update_relay_start(blob, img_len, body_crc()));
+    CHECK_EQ(relay_until(RELAY_PAGES, 60000), RELAY_PAGES);
+    CHECK(update_split_slave_frozen());
+    CHECK_EQ(relay_until(RELAY_VERIFIED, 60000), RELAY_VERIFIED);
+    CHECK(!update_split_slave_frozen());
+    update_relay_abort();
+    relay_until(RELAY_IDLE, 5000);
+    if (failures != f0) fprintf(stderr, "  (fast path tests)\n");
+}
+
 static void test_relay_speed(void) {
+    test_relay_end_hash();
+    test_relay_fast_only();
     test_relay_dropout(1000);
     test_relay_dropout(3000);
     test_relay_dropout(6000);

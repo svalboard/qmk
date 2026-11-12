@@ -80,7 +80,7 @@ static bool only_slot_changed(void) {
 static void test_relay_happy(uint32_t len) {
     relay_fresh(len);
     pause_violations = stream_unpaused = erase_unpaused = 0;
-    after_op                                          = erase_watch;
+    after_op                                            = erase_watch;
     CHECK(update_relay_start(blob, len, body_crc()));
     CHECK(link_paused); // from the start: the manifest check and erase follow the manifest
     CHECK(update_relay_busy());
@@ -106,7 +106,11 @@ static void test_relay_happy(uint32_t len) {
     CHECK_EQ(ri.error, UPDATE_OK);
     CHECK_EQ(ri.acked, len);
     CHECK_EQ(ri.slave_state, UPDATE_STATE_VERIFIED);
-    CHECK_EQ(ri.slave_to_erase, (len + 4095) / 4096);
+    // The fast path erases whole 64 KiB blocks.
+    CHECK_EQ(ri.slave_to_erase, slave_fast ? (len + 0xFFFF) / 0x10000 * 16 : (len + 4095) / 4096);
+    CHECK_EQ(ri.fast, slave_fast);
+    CHECK_EQ(oversize_to_old, 0);
+    CHECK(slave_fast ? oversize_rpcs > 0 : oversize_rpcs == 0);
     CHECK_EQ(ri.retries, 0);
     CHECK(!link_paused);
     CHECK_EQ(pause_calls, 1); // from the start to VERIFIED: manifest, erase, pages, END, verify
@@ -122,17 +126,19 @@ static void test_relay_happy(uint32_t len) {
     CHECK_EQ(lock_errors, 0);
     CHECK_EQ(lock_depth, 0);
     // The per-pass budget while the image streams: SVAL_UPDATE_RELAY_STREAM_MS,
-    // plus at most one RPC and one page program.
-    CHECK(pages_max_pass <= ((SVAL_UPDATE_RELAY_STREAM_MS + 1) * 1000 + SIM_RPC_US + SIM_PAGE_PROGRAM_US)); // ms timer granularity
+    // plus at most one RPC (a PAGE2 is 216 bytes longer) and one page program.
+    CHECK(pages_max_pass <= ((SVAL_UPDATE_RELAY_STREAM_MS + 1) * 1000 + SIM_RPC_US + 2160 + SIM_PAGE_PROGRAM_US)); // ms timer granularity
     uint64_t relay_ms = (sim_us - t0) / 1000;
     // The time per phase (RELAY op): each phase measured, within the whole.
     CHECK(ri.erase_ms > 0 && ri.pages_ms > 0 && ri.verify_ms > 0);
     CHECK_EQ(ri.commit_ms, 0); // not yet
     CHECK(ri.erase_ms + ri.pages_ms + ri.verify_ms <= ri.elapsed_ms);
-    CHECK(ri.page_rpcs >= (len + USPLIT_PAGE_DATA_MAX - 1) / USPLIT_PAGE_DATA_MAX);
+    CHECK(ri.page_rpcs >= (len + USPLIT_PAGE2_DATA_MAX - 1) / USPLIT_PAGE2_DATA_MAX);
+    if (!slave_fast) CHECK(ri.page_rpcs >= (len + USPLIT_PAGE_DATA_MAX - 1) / USPLIT_PAGE_DATA_MAX);
     CHECK(ri.page_rpc_us >= ri.page_rpcs * SIM_RPC_US);
     CHECK(ri.rpc_us_max >= SIM_RPC_US);
     CHECK_EQ(ri.resumes, 0);
+    if (slave_fast) CHECK(ri.verify_ms <= 20); // hashed as the pages came: END only finishes it
 
     // Kept alive while the host decides: no timeout on the other half.
     for (int i = 0; i < 12000; i++)
@@ -725,7 +731,7 @@ static void test_relay_pages(void) {
     CHECK_EQ(m_op(USPLIT_OP_INFO), UPDATE_OK);
     CHECK_EQ(mrs.payload[1], UPDATE_HAND_LEFT);
     CHECK_EQ(mrs.payload[2], UPDATE_POINTING_TRACKPOINT);
-    CHECK_EQ(mrs.payload[14], 0x01); // 16 MiB die; bit4 (protocol 1's test key) stays clear
+    CHECK_EQ(mrs.payload[14], 0x01 | (slave_fast ? USPLIT_INFO_FAST : 0)); // 16 MiB die; bit4 the fast path
     len = usplit_req_build(req, USPLIT_OP_INFO, ++mseq, NULL, 0);
     req[len - 1] ^= 1;
     CHECK_EQ(mrpc(req, len), UPDATE_INVALID);
@@ -1193,8 +1199,23 @@ static void test_relay_presence(void) {
 #include "test_relay_review.c"
 #include "test_relay_speed.c"
 
+static void test_relay_once(void);
+
+// Every relay test, with the other half on a build without the fast path,
+// then with both halves on one with it.
 static void test_relay(void) {
     int before_failures = failures;
+    for (int fast = 0; fast < 2; fast++) {
+        fast_default = fast;
+        printf("relay tests, %s:\n", fast ? "both halves with the fast path" : "the other half without the fast path");
+        test_relay_once();
+    }
+    fast_default = true;
+    CHECK_EQ(oversize_to_old_ever, 0); // no frame over 32 bytes ever reached a half without the fast path
+    printf("relay tests: %s\n", failures == before_failures ? "pass" : "FAIL");
+}
+
+static void test_relay_once(void) {
     test_relay_presence();
     test_relay_happy(0x3000);
     test_relay_happy(0x13000);
@@ -1209,7 +1230,6 @@ static void test_relay(void) {
     test_relay_session();
     test_relay_review();
     test_relay_speed();
-    printf("relay tests: %s\n", failures == before_failures ? "pass" : "FAIL");
 }
 
 #ifdef SVAL_TEST_REAL_COMMIT
