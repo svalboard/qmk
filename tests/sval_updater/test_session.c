@@ -282,6 +282,12 @@ void updater_port_reboot(void) {
     master_reset_pending = true;
     master_next_fw       = master_id.fw_version;
 }
+// The link light's last ping before this half's own commit (sval_link_stopping).
+static int master_stop_pings, stop_ping_commits = -1; // commit runs when the last one went
+void       updater_port_restarting(void) {
+    master_stop_pings++;
+    stop_ping_commits = commit_runs;
+}
 update_status_t update_split_port_settings_invalidate(uint8_t mode) {
     if (chance(dma_busy_pct)) {
         dma_refusals++;
@@ -300,10 +306,12 @@ void update_split_port_reboot(void) {
 
 // The other half's callback, as the SlaveThread runs it.
 static void slave_rpc(const uint8_t *in, uint8_t len, uint8_t *out, uint8_t out_len) {
-    bool was  = sim_slave;
-    sim_slave = true;
+    bool     was    = sim_slave;
+    uint32_t writes = slot_writes; // its own die: this half's slot write count stays
+    sim_slave       = true;
     update_split_slave_rpc(in, len, out, out_len);
-    sim_slave = was;
+    sim_slave   = was;
+    slot_writes = writes;
 }
 
 static uint32_t rpc_fail_us = SIM_RPC_FAIL_US; // what a transaction that times out costs now
@@ -427,6 +435,15 @@ static void slave_hk(void) {
     }
 }
 
+// The other half writes its own die: this half's slot write count
+// (update_flash_writes(), BEGIN reuse) stays as it was.
+static void slave_hk_own_die(void) {
+    uint32_t writes = slot_writes;
+    slave_hk();
+    slot_writes = writes;
+}
+#define slave_hk slave_hk_own_die
+
 // The 500 ms presence ping (svalboard.c), skipped while paused, with the
 // other half's real presence answer.
 static void presence_ping(void) {
@@ -458,7 +475,7 @@ _Static_assert(T_REPORT == 64, "64-byte raw HID reports");
 static uint8_t  rsp[T_VALUE];
 static uint8_t  req_hand = UPDATE_HAND_RIGHT;
 static uint8_t  req_cmd  = 0x07; // id_custom_set_value
-static uint64_t max_op_us, max_pass_us, sig_pass_us;
+static uint64_t max_op_us, max_pass_us, sig_pass_us, erase_pass_us;
 
 static uint32_t get24le(const uint8_t *p) {
     return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16);
@@ -519,6 +536,8 @@ static void pass(void) {
     }
     if (before == UPDATE_STATE_VERIFYING_MANIFEST) {
         if (dt > sig_pass_us) sig_pass_us = dt;
+    } else if (before == UPDATE_STATE_ERASING) {
+        if (dt > erase_pass_us) erase_pass_us = dt; // one block or one sector per pass
     } else if (dt > max_pass_us) {
         max_pass_us = dt;
     }
@@ -740,7 +759,10 @@ static void test_session_info_and_wrapper(void) {
     CHECK_EQ(rsp[23], T_CHUNK);
     CHECK_EQ(rsp[24], T_MPIECE);
     CHECK_EQ(rsp[25], T_REPORT);
-    for (int i = 26; i < T_VALUE; i++)
+    // faster uploads: a CHUNK window of 16 and BEGIN reuse; nothing after them
+    CHECK_EQ(rsp[26], UPDATE_CAP_CHUNK_WINDOW | UPDATE_CAP_REUSE_STAGED | UPDATE_CAP_BLOCK_ERASE);
+    CHECK_EQ(rsp[27], UPDATE_CHUNK_WINDOW);
+    for (int i = 28; i < T_VALUE; i++)
         CHECK_EQ(rsp[i], 0);
     // INFO page 1 (M3): the version from the build-info record; no wrapper needed
     const uint8_t page1 = 1, page2 = 2;
@@ -836,9 +858,9 @@ static void test_session_happy_path(void) {
     fresh(0x30000);                                                       // 48 sectors, across three 64 KiB blocks
     memset(update_host_flash + SVAL_UPDATE_BASE, 0x00, SVAL_UPDATE_SIZE); // every sector needs erasing
     snap();
-    max_op_us = max_pass_us = sig_pass_us = 0;
-    led_seen                              = 0;
-    const uint8_t clear                   = 1;
+    max_op_us = max_pass_us = sig_pass_us = erase_pass_us = 0;
+    led_seen                                              = 0;
+    const uint8_t clear                                   = 1;
     CHECK_EQ(send(CLIENT_C, UPDATE_OP_DIAG, &clear, 1), UPDATE_OK); // restart the longest-pass record
 
     // record each distinct state, in order
@@ -880,7 +902,7 @@ static void test_session_happy_path(void) {
         CHECK(updater_state() != UPDATE_STATE_ERROR);
     }
     CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
-    CHECK_EQ(sector_erases, 0x30000 / 4096);
+    CHECK_EQ(sector_erases, 0x30000 / 4096); // a BEGIN without flags (an older host): sectors, as before
     CHECK_EQ(block_erases, 0);
     CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
     CHECK_EQ(get16le(rsp + 8), 48);
@@ -958,9 +980,11 @@ static void test_session_happy_path(void) {
         CHECK_EQ(seen[i], want[i]);
     CHECK_EQ(led_shown, (1 << UPDATE_LED_CONFIRM) | (1 << UPDATE_LED_CHORD) | (1 << UPDATE_LED_PROGRESS) | (1 << UPDATE_LED_WRITING) | (1 << UPDATE_LED_ERROR));
 
-    // the 50 ms budget, in simulated flash time
-    printf("longest op %llu us, longest pass %llu us\n", (unsigned long long)max_op_us, (unsigned long long)max_pass_us);
+    // the 50 ms budget, in simulated flash time, for an older host's session:
+    // an erase pass is one sector
+    printf("longest op %llu us, longest pass %llu us, longest erase pass %llu us\n", (unsigned long long)max_op_us, (unsigned long long)max_pass_us, (unsigned long long)erase_pass_us);
     CHECK(max_op_us + max_pass_us <= 50000);
+    CHECK(max_op_us + erase_pass_us <= 50000);
     CHECK(max_op_us <= SIM_PAGE_PROGRAM_US); // at most one page per CHUNK
 
     // the commit refused and returned: no commit marker is left for the next boot
@@ -1879,6 +1903,95 @@ static void test_session_link_light(void) {
     CHECK_EQ(led_now, UPDATE_LED_NONE);
 }
 
+// The staging erase (BEGIN with UPDATE_BEGIN_BLOCK_ERASE): whole 64 KiB blocks
+// from offset 0, sectors only for a tail shorter than a block, never past the
+// image's last sector, and nothing outside the slot. A block that already
+// reads erased is skipped. Without the flag (an older host): sectors only.
+static void erase_case_flags(uint32_t len, int want_blocks, int want_sectors, bool pre_erase_block1, uint8_t flags) {
+    fresh(len);
+    memset(update_host_flash + SVAL_UPDATE_BASE, 0x00, SVAL_UPDATE_SIZE); // every byte needs erasing
+    if (pre_erase_block1) memset(update_host_flash + SVAL_UPDATE_BASE + UPDATE_FLASH_BLOCK, 0xFF, UPDATE_FLASH_BLOCK);
+    snap();
+    uint32_t end = (len + UPDATE_FLASH_SECTOR - 1) / UPDATE_FLASH_SECTOR * UPDATE_FLASH_SECTOR;
+    CHECK(to_confirm_wait(CLIENT_A));
+    chord();
+    uint8_t b[5];
+    put32(b, session_nonce);
+    b[4] = flags;
+    CHECK_EQ(send(CLIENT_A, UPDATE_OP_BEGIN, b, 5), UPDATE_ACCEPTED);
+    int passes = 0;
+    while (updater_state() != UPDATE_STATE_RECEIVING && updater_state() != UPDATE_STATE_ERROR && passes < 2000) {
+        pass();
+        passes++;
+        if (updater_state() == UPDATE_STATE_ERASING) {
+            CHECK_EQ(send_chunk(CLIENT_A, 0, 18, img), UPDATE_BUSY); // the host waits on STATUS
+            CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
+            CHECK_EQ(rsp[1], UPDATE_STATE_ERASING);
+            CHECK(get16le(rsp + 8) < get16le(rsp + 10));
+        }
+    }
+    CHECK_EQ(updater_state(), UPDATE_STATE_RECEIVING);
+    CHECK_EQ(block_erases, want_blocks);
+    CHECK_EQ(sector_erases, want_sectors);
+    CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
+    CHECK_EQ(get16le(rsp + 8), end / UPDATE_FLASH_SECTOR);
+    CHECK_EQ(get16le(rsp + 10), end / UPDATE_FLASH_SECTOR);
+    for (uint32_t i = 0; i < end; i++)
+        if (update_host_flash[SVAL_UPDATE_BASE + i] != 0xFF) {
+            CHECK_EQ(i, end); // the whole image's range reads erased
+            break;
+        }
+    for (uint32_t i = end; i < SVAL_UPDATE_SIZE; i++)
+        if (update_host_flash[SVAL_UPDATE_BASE + i] != (pre_erase_block1 && i >= UPDATE_FLASH_BLOCK && i < 2 * UPDATE_FLASH_BLOCK ? 0xFF : 0x00)) {
+            CHECK_EQ(i, SVAL_UPDATE_SIZE); // nothing past the image's last sector
+            break;
+        }
+    CHECK(unchanged_outside(SVAL_UPDATE_BASE, SVAL_UPDATE_BASE + SVAL_UPDATE_SIZE));
+    CHECK_EQ(outside_ops, 0);
+    CHECK_EQ(sequence_errors, 0);
+    if (len <= 0x40000) { // and the image goes in and verifies
+        CHECK_EQ(send_image(CLIENT_A, 0, img_len), UPDATE_OK);
+        CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_END, session_nonce), UPDATE_ACCEPTED);
+        passes_until(UPDATE_STATE_VERIFIED, 20000);
+        CHECK_EQ(updater_state(), UPDATE_STATE_VERIFIED);
+        CHECK(memcmp(update_host_flash + SVAL_UPDATE_BASE, img, img_len) == 0);
+    }
+}
+
+static void erase_case(uint32_t len, int want_blocks, int want_sectors, bool pre_erase_block1) {
+    erase_case_flags(len, want_blocks, want_sectors, pre_erase_block1, UPDATE_BEGIN_BLOCK_ERASE);
+}
+
+static void test_session_block_erase(void) {
+    erase_case_flags(0x2C100, 0, 45, false, 0);                                         // an older host's BEGIN: sectors only
+    erase_case_flags(0x2C100, 0, 45, false, UPDATE_BEGIN_REUSE);                        // reuse alone (nothing to keep): sectors
+    erase_case(0x2C100, 2, 13, false);                                                  // 180 KB class: 2 blocks, then a 13-sector tail
+    erase_case(0x2C000, 2, 12, false);                                                  // a tail of whole sectors
+    erase_case(0x3000, 0, 3, false);                                                    // under one block: sectors only
+    erase_case(UPDATE_FLASH_BLOCK, 1, 0, false);                                        // exactly one block
+    erase_case(UPDATE_FLASH_BLOCK + 0x100, 1, 1, false);                                // one page into the next block: one sector
+    erase_case(0x30000, 2, 0, true);                                                    // block 1 already erased: skipped
+    erase_case(SVAL_UPDATE_MAX_IMAGE, SVAL_UPDATE_SIZE / UPDATE_FLASH_BLOCK, 0, false); // the whole slot, no further
+
+    // ABORT lands between blocks: no erase after it
+    fresh(0x30000);
+    memset(update_host_flash + SVAL_UPDATE_BASE, 0x00, SVAL_UPDATE_SIZE);
+    CHECK(to_confirm_wait(CLIENT_A));
+    chord();
+    uint8_t ab[5];
+    put32(ab, session_nonce);
+    ab[4] = UPDATE_BEGIN_BLOCK_ERASE;
+    CHECK_EQ(send(CLIENT_A, UPDATE_OP_BEGIN, ab, 5), UPDATE_ACCEPTED);
+    for (int i = 0; i < 50 && block_erases == 0; i++)
+        pass();
+    CHECK_EQ(block_erases, 1);
+    CHECK_EQ(updater_state(), UPDATE_STATE_ERASING);
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
+    wait_ms(2000);
+    CHECK_EQ(block_erases, 1);
+    CHECK_EQ(updater_state(), UPDATE_STATE_IDLE);
+}
+
 static void test_session(void) {
     int before_failures = failures;
     test_session_info_and_wrapper();
@@ -1889,6 +2002,7 @@ static void test_session(void) {
     test_session_clients_and_abort();
     test_session_chunks();
     test_session_max_pieces();
+    test_session_block_erase();
     test_session_timeouts();
     test_session_refusals();
     test_session_mismatch_accepted();

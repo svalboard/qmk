@@ -22,6 +22,10 @@ void update_flash_init(void);      // reads the JEDEC ID once; safe to call repe
 bool update_flash_available(void); // the die is 16 MiB, so the slot exists (D26)
 void update_flash_jedec(uint8_t id[UPDATE_JEDEC_BYTES]); // manufacturer, type, capacity
 
+// Counts every erase and program of the slot (wraps). A verified image is
+// still in the slot only while this has not moved since it was verified.
+uint32_t update_flash_writes(void);
+
 // Whether [off, off + len) lies inside the slot (no wrap-around).
 bool update_slot_range_ok(uint32_t off, uint32_t len);
 
@@ -40,10 +44,10 @@ bool update_flash_sector_erased(uint32_t off);
 // UPDATE_UNAVAILABLE (die not 16 MiB) or UPDATE_FLASH_ERR.
 update_status_t update_flash_erase_block(uint32_t off);
 
-// The same for one 4 KiB sector (off aligned to it). The updater stages with
-// these: a sector erase keeps interrupts off for about 45 ms (W25Q128JV tSE
-// typical; 400 ms max) against 150 ms (2 s max) for a block, so no host op
-// waits on a whole block erase.
+// The same for one 4 KiB sector (off aligned to it). A sector erase keeps
+// interrupts off for about 45 ms (W25Q128JV tSE typical; 400 ms max) against
+// about 400 ms measured (2 s max) for a block. Staging erases whole blocks and
+// sectors only for a tail shorter than a block (updater.c erase_step).
 update_status_t update_flash_erase_sector(uint32_t off);
 
 // Programs one 256 B page of the slot (off aligned to it) from data, which may

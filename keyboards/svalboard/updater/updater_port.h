@@ -41,6 +41,11 @@ uint16_t updater_port_stack_free(uint16_t *size);
 // or BUILD_RESET_TO_BLANK, which then sets every key to KC_NO (D44).
 bool updater_port_settings_invalidate(uint8_t mode);
 void updater_port_reboot(void);
+// This half's own commit is about to run: it resets from RAM, without QMK's
+// shutdown, so tell the other half now, as shutdown_kb does (sval_link_stopping:
+// the link light's last ping). Without it the other half sees the restart as a
+// broken cable and blinks amber until this half is back.
+void updater_port_restarting(void);
 
 // This half has USB (the split master). The boot relay of a pair UF2 runs
 // there only (update_pair.c).
