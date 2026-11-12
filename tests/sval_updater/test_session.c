@@ -269,6 +269,12 @@ void updater_port_reboot(void) {
     master_reset_pending = true;
     master_next_fw       = master_id.fw_version;
 }
+// The link light's last ping before this half's own commit (sval_link_stopping).
+static int master_stop_pings, stop_ping_commits = -1; // commit runs when the last one went
+void       updater_port_restarting(void) {
+    master_stop_pings++;
+    stop_ping_commits = commit_runs;
+}
 update_status_t update_split_port_settings_invalidate(uint8_t mode) {
     if (chance(dma_busy_pct)) {
         dma_refusals++;

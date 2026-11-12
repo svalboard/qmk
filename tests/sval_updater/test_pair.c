@@ -878,16 +878,34 @@ static void test_fast_upload(void) {
     CHECK(pair_armed(CLIENT_A));
     chord();
     CHECK(pair_rest(CLIENT_A));
+    // A reinstall: the other half comes back matching this one, and the green
+    // flash goes out on the ping (DONE for 2 s).
+    slave_id = master_id;
+    for (int i = 0; i < 3000 && led_now != UPDATE_LED_DONE; i++)
+        pass();
+    CHECK_EQ(led_now, UPDATE_LED_DONE);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_DONE);
+    uint64_t done_us = sim_us;
     CHECK_EQ(self_armed(CLIENT_A, self_blob), UPDATE_OK);
     CHECK_EQ(arm_rsp[13], UPDATE_ARM_PRE_APPROVED | UPDATE_ARM_BY_PAIR);
     CHECK_EQ(begun(CLIENT_A, UPDATE_BEGIN_REUSE, &erases), len);
     CHECK_EQ(erases, 0);
     CHECK_EQ(end_and_verify(CLIENT_A), UPDATE_STATE_VERIFIED);
+    // This half's install, still inside the flash's 2 s: the ping carries the
+    // rainbow, not DONE (the other half would go dark, then blink amber at the
+    // restart).
+    CHECK(sim_us - done_us < 2000000);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_UPDATING);
     master_commit_resets = true;
+    master_stop_pings    = 0;
     CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_ACCEPTED);
     for (int i = 0; i < 300 && master_reboots == 0; i++)
         pass();
     CHECK_EQ(commit_runs, 1);
+    // Its last ping says it restarts on purpose, before the commit runs: the
+    // other half stops instead of blinking amber (docs/link-light.md).
+    CHECK_EQ(master_stop_pings, 1);
+    CHECK_EQ(stop_ping_commits, 0);
 
     // Per-hand images (two manifests): this half's image is sent as before.
     pair_fresh(len);

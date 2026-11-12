@@ -979,8 +979,7 @@ static void presence_fill(presence_rpc_t *p, uint8_t link_quiet) {
 
 // A restart on purpose (a soft reset, the bootloader): the half with USB tells the
 // other half first, so neither shows the link light for it (link_light.h).
-bool shutdown_kb(bool jump_to_bootloader) {
-    if (!shutdown_user(jump_to_bootloader)) return false;
+void sval_link_stopping(void) {
     sval_link_stopped();
     if (is_keyboard_master() && sval_other_half_connected()) {
         presence_rpc_t rpcout;
@@ -988,6 +987,11 @@ bool shutdown_kb(bool jump_to_bootloader) {
         presence_rsp_t rpcin = {0};
         transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin);
     }
+}
+
+bool shutdown_kb(bool jump_to_bootloader) {
+    if (!shutdown_user(jump_to_bootloader)) return false;
+    sval_link_stopping();
     return true;
 }
 

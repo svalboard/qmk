@@ -1189,9 +1189,11 @@ void updater_split_light_seen(bool has_light, uint8_t light) {
     rx_n     = rx_n + 1;
 }
 
+// Work on this half outranks the green flash it just showed: a pair update's
+// second install can start within LIGHT_DONE_MS of the first one's flash (BEGIN
+// reuse), and the other half must show the rainbow through it, not go dark.
 uint8_t updater_split_light(void) {
     uint32_t t = updater_port_now_ms();
-    if (lt.done_any && t - lt.done_ms < LIGHT_DONE_MS) return UPDATE_LIGHT_DONE;
     switch (lt.shown) {
         case UPDATE_LED_PROGRESS:
         case UPDATE_LED_WRITING:
@@ -1199,8 +1201,10 @@ uint8_t updater_split_light(void) {
         case UPDATE_LED_ERROR:
             return UPDATE_LIGHT_FAILED;
         default:
-            return UPDATE_LIGHT_NONE;
+            break;
     }
+    if (lt.done_any && t - lt.done_ms < LIGHT_DONE_MS) return UPDATE_LIGHT_DONE;
+    return UPDATE_LIGHT_NONE;
 }
 
 static void after_open(bool relay) {
@@ -1461,6 +1465,7 @@ void updater_task(void) {
                 memset(&sha, 0, sizeof(sha));
                 // Returns only when the commit refused before touching the firmware.
                 updater_port_commit_mark(true); // the next boot shows the rainbow until the halves match
+                updater_port_restarting();      // the other half: a restart, not a broken cable (no amber)
                 update_status_t st = update_commit_run(MANIFEST, s.crc_body);
                 updater_port_commit_mark(false);
                 fail(st != UPDATE_OK ? st : UPDATE_FLASH_ERR);
@@ -1558,6 +1563,10 @@ bool updater_port_settings_invalidate(uint8_t mode) {
 
 void updater_port_reboot(void) {
     soft_reset_keyboard();
+}
+
+void updater_port_restarting(void) {
+    sval_link_stopping();
 }
 
 bool updater_port_is_master(void) {
