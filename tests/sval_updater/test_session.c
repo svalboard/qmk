@@ -378,11 +378,9 @@ static void slave_reboot(void) {
 static void slave_hk(void) {
     if (sim_us < slave_busy_until_us || slave_hk_frozen) return; // still erasing, or committing
     int erases = erase_ops, commits = slave_commit_runs;
-    uint32_t writes = slot_writes; // its own die (see slave_rpc)
-    sim_slave       = true;
+    sim_slave = true;
     update_split_slave_task();
-    sim_slave   = false;
-    slot_writes = writes;
+    sim_slave = false;
     if (slave_irq_sim && erase_ops != erases) slave_busy_until_us = sim_us + SIM_ERASE_US;
     if (slave_irq_sim && slave_commit_runs != commits) slave_busy_until_us = sim_us + SIM_SLAVE_COMMIT_US;
     if (slave_reset_pending) {
@@ -391,6 +389,15 @@ static void slave_hk(void) {
         slave_id.fw_version = slave_next_fw;
     }
 }
+
+// The other half writes its own die: this half's slot write count
+// (update_flash_writes(), BEGIN reuse) stays as it was.
+static void slave_hk_own_die(void) {
+    uint32_t writes = slot_writes;
+    slave_hk();
+    slot_writes = writes;
+}
+#define slave_hk slave_hk_own_die
 
 // The 500 ms presence ping (svalboard.c), skipped while paused, with the
 // other half's real presence answer.
