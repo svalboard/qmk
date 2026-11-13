@@ -151,6 +151,7 @@ typedef struct {
     uint32_t rpc_us_max;  // the longest single RPC of the relay
     uint16_t busy;        // BUSY answers to PAGE (a DMA channel busy there: sent again)
     uint8_t  resumes;     // answers again after a dropout of SVAL_UPDATE_RELAY_DROPOUT_MS or more
+    uint8_t  restarts;    // the relay started over after the other half reset (relay_restart)
     bool     fast;        // the fast path: the other half's INFO said it has it (USPLIT_INFO_FAST)
 } update_relay_info_t;
 
@@ -234,6 +235,7 @@ bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, ui
 // poll that may find the other half's interrupts off fails in 3 ms, not 20.
 bool update_split_port_rpc_quick(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len);
 bool update_split_port_pause(bool on);
+void update_split_port_watchdog_ping(void);
 // Master: n bytes of this half's slot at off (whole words), read uncached.
 bool update_split_port_slot_read(uint32_t off, uint8_t *dst, uint32_t n);
 // Master: n bytes of this half's own image (flash offset off, whole words, inside
