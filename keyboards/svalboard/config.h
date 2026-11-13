@@ -148,7 +148,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // keep it reading the master's 248-byte PAGE2 frames out of step (a byte in
 // one taken for a transaction ID, its answer colliding with the master's next
 // frame), and every PAGE2 fails at once until the link timeout. Seen on the
-// test pair as about 1 failed relay in 25 Keybard installs: 1440 retries,
+// test pair in 3 of 36 Keybard installs (about 1 in 12): 1440 retries,
 // 1.4 ms each, then UNAVAILABLE ("The other half stopped answering").
 #define SVAL_UPDATE_RELAY_RESYNC_US 5000
 // After the other half accepts COMMIT, the link stays paused for its commit
