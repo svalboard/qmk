@@ -19,7 +19,8 @@
     X(SVAL_SET_PAD_TUNING, 5, 4)       \
     X(SVAL_SET_PAD_PALM, 6, 2)         \
     X(SVAL_SET_PAD_MODE, 7, 2)         \
-    X(SVAL_SET_SCROLL_SPEED, 8, 5)
+    X(SVAL_SET_SCROLL_SPEED, 8, 5)     \
+    X(SVAL_SET_AUTOMOUSE_LAYERS, 9, 4)
 
 #define SVAL_SETTINGS_ID_(name, id, cap) name = id,
 enum sval_setting_id { SVAL_SETTINGS_RECORDS(SVAL_SETTINGS_ID_) };

@@ -55,6 +55,12 @@ extern int tp_buttons; // mousekey button state set in action.c and used in ps2_
 
 void mouse_mode(bool);
 
+// Auto Mouse layers (automouse_layers.h): true while the layer the user is on
+// is one where motion must not turn the mouse layer on.
+static bool automouse_layer_blocked(void) {
+    return sval_automouse_layer_blocked(sval_automouse_layers_mode, sval_automouse_layer_mask, layer_state, default_layer_state, MH_AUTO_BUTTONS_LAYER);
+}
+
 #endif
 
 #if defined(POINTING_DEVICE_AUTO_MOUSE_MH_ENABLE)
@@ -314,7 +320,7 @@ static void sval_ptp_automouse(void) {
     if (!global_saved_values.left_automouse) left = 0;
     if (!global_saved_values.right_automouse) right = 0;
     int32_t movement = ((left > right ? left : right) * SVAL_PTP_AUTOMOUSE_DPI) / SVAL_PTP_COUNTS_PER_INCH;
-    if (movement <= 0) return;
+    if (movement <= 0 || automouse_layer_blocked()) return;
     uint16_t decay_ms = global_saved_values.automouse_decay * 10;
     if (decay_ms > 0 && timer_elapsed(automouse_accumulator_timer) > decay_ms) automouse_accumulator = 0;
     automouse_accumulator_timer = timer_read();
@@ -536,7 +542,8 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     int32_t right_normalized = (right_movement > 0) ? (right_movement * 800 * AUTOMOUSE_FP_SCALE) / get_right_dpi() : 0;
     int32_t normalized_movement = (left_normalized > right_normalized) ? left_normalized : right_normalized;
     // Gate on raw movement: normalized_movement can still be 0 for tiny reports at very high DPI.
-    if (left_movement > 0 || right_movement > 0) {
+    // On a layer where Auto Mouse is off, motion neither turns the layer on nor counts toward it.
+    if ((left_movement > 0 || right_movement > 0) && !automouse_layer_blocked()) {
         uint16_t decay_ms = global_saved_values.automouse_decay * 10;
         if (decay_ms > 0 && timer_elapsed(automouse_accumulator_timer) > decay_ms) {
             automouse_accumulator = 0;
@@ -955,7 +962,7 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
 
 #if defined MH_AUTO_BUTTONS && defined PS2_MOUSE_ENABLE && defined MOUSEKEY_ENABLE
 void ps2_mouse_moved_user(report_mouse_t *mouse_report) {
-    mouse_mode(true);
+    if (!automouse_layer_blocked()) mouse_mode(true);
 }
 #endif
 
@@ -966,6 +973,11 @@ void matrix_scan_kb(void) {
             mouse_mode(false);
             dprint("matrix - mh_auto_buttons: off\n");
         }
+    }
+    // The user moved to a layer where Auto Mouse is off while the mouse layer
+    // was on: it goes off, as a timeout would, once no mouse button is held.
+    if (mouse_mode_enabled && mouse_keys_pressed == 0 && !tp_buttons && automouse_layer_blocked()) {
+        mouse_mode(false);
     }
 
     matrix_scan_user();
