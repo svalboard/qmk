@@ -135,7 +135,28 @@ extern uint16_t sval_leader_timeout;
 #    ifdef DYNAMIC_KEYMAP_EEPROM_MAX_ADDR
 #        error "Combo names take the end of the EEPROM; leave DYNAMIC_KEYMAP_EEPROM_MAX_ADDR to the Sval module or define SVAL_NO_COMBO_LABELS"
 #    endif
-#    define DYNAMIC_KEYMAP_EEPROM_MAX_ADDR (SVAL_COMBO_LABEL_REGION_ADDR - 1)
+#    define SVAL_TAIL_END SVAL_COMBO_LABEL_REGION_ADDR
+#endif
+
+// The keyboard's settings area (keyboards/svalboard/settings_area.c):
+// SVAL_SETTINGS_AREA_SIZE bytes directly below the combo names (or the end of
+// the store). It is counted from the end, so the tables in front of it can
+// change size without moving it. The macro buffer ends below it.
+#if defined(SVAL_SETTINGS_AREA_SIZE) && (SVAL_SETTINGS_AREA_SIZE) > 0 && defined(WEAR_LEVELING_LOGICAL_SIZE)
+#    ifdef SVAL_TAIL_END
+#        define SVAL_SETTINGS_AREA_ADDR ((SVAL_COMBO_LABEL_REGION_ADDR) - (SVAL_SETTINGS_AREA_SIZE))
+#    else
+#        ifdef DYNAMIC_KEYMAP_EEPROM_MAX_ADDR
+#            error "The settings area takes the end of the EEPROM; leave DYNAMIC_KEYMAP_EEPROM_MAX_ADDR to the Sval module"
+#        endif
+#        define SVAL_SETTINGS_AREA_ADDR ((WEAR_LEVELING_LOGICAL_SIZE) - (SVAL_SETTINGS_AREA_SIZE))
+#    endif
+#    undef SVAL_TAIL_END
+#    define SVAL_TAIL_END SVAL_SETTINGS_AREA_ADDR
+#endif
+
+#ifdef SVAL_TAIL_END
+#    define DYNAMIC_KEYMAP_EEPROM_MAX_ADDR ((SVAL_TAIL_END) - 1)
 // VIA's layout stamp keeps using the buffer's original end (nvm_dynamic_keymap.c),
 // so this doesn't reset keymaps and macros.
 #    define DYNAMIC_KEYMAP_STAMP_MAX_ADDR ((WEAR_LEVELING_LOGICAL_SIZE) - 1)

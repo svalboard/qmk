@@ -40,9 +40,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // debug console prints every key event (key_log.c) to any program on the
 // host. Dev builds only.
 //#define DEBUG_MATRIX_SCAN_RATE
-// Svalboard stores its config in VIA custom config area
-// saved_values_t (~54 bytes) + 3 bytes magic = ~60 bytes, round to 100
+// Retired: keyboard settings used to live in these 100 bytes, and nothing
+// reads or writes them now. The size stays so the keymap and macros keep their
+// addresses (VIA's stored layout stamp includes it).
 #define VIA_EEPROM_CUSTOM_CONFIG_SIZE 100
+// Every keyboard setting: labeled records (settings_area.h, settings_ids.h) in
+// a fixed block below the combo names, taken from the end of the macro buffer
+// (modules/svalboard/core/post_config.h). Changing the size moves the block,
+// so every setting in it reads as default once.
+#define SVAL_SETTINGS_AREA_SIZE 8192
 
 // The raw HID interface (VIA, the Sval protocol and the client wrapper) uses
 // 64-byte reports, the full-speed interrupt maximum, both ways. Hosts size their
