@@ -149,6 +149,7 @@ enum sval_feature_flags4 {
     sval_flag4_pad_scroll_speed_alias = (1 << 4), // VIA value 60: the touchpad hand's Scroll speed; the test build's bit, same meaning (Azoteq builds)
     sval_flag4_scroll_speed           = (1 << 5), // VIA values 61 and 62: each hand's Scroll speed, percent (every build)
     sval_flag4_trackpoint_speed       = (1 << 6), // a TrackPoint's DPI list is a software Pointer speed, 200 to 3200 (every build)
+    sval_flag4_automouse_layers       = (1 << 7), // VIA values 63 and 64: the layers where Auto Mouse is off (Svalboard builds)
 };
 
 // Status byte after the modifiers in the 0x16 reply (sval_flag2_modifier_state).

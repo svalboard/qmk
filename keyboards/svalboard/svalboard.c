@@ -282,13 +282,18 @@ uint8_t sval_thumb_hand_raw(void) {
 // record per group (settings_ids.h). The 100-byte VIA custom config is no
 // longer read or written; VIA_EEPROM_CUSTOM_CONFIG_SIZE stays 100 only so the
 // keymap and macros keep their addresses.
+
+// Auto Mouse layers (automouse_layers.h): Everywhere, no layers, until a record says otherwise.
+uint8_t  sval_automouse_layers_mode = SVAL_AUTOMOUSE_LAYERS_EVERYWHERE;
+uint16_t sval_automouse_layer_mask  = 0;
+
 #if VIA_ENABLE
 #    include "eeprom.h"
 #    include "settings_area.h"
 _Static_assert(SVAL_SETTINGS_USED_BYTES <= SVAL_SETTINGS_AREA_SIZE, "every setting fits the settings area (settings_ids.h)");
 _Static_assert(SVAL_SETTINGS_AREA_SIZE <= 0xFFFF, "the settings area's offsets are 16-bit");
 _Static_assert(DYNAMIC_KEYMAP_LAYER_COUNT * 3 <= SVAL_SET_LAYER_COLORS_CAP, "a color for every layer");
-_Static_assert(SVAL_PAD_RECORD_BYTES <= SVAL_SET_PAD_GESTURES_CAP && SVAL_PAD_TUNE_RECORD_BYTES <= SVAL_SET_PAD_TUNING_CAP && SVAL_PAD_PALM_RECORD_BYTES <= SVAL_SET_PAD_PALM_CAP && SVAL_PAD_MODE_RECORD_BYTES <= SVAL_SET_PAD_MODE_CAP && SVAL_SCROLL_SPEED_RECORD_BYTES <= SVAL_SET_SCROLL_SPEED_CAP, "the touchpad and scroll records fit");
+_Static_assert(SVAL_PAD_RECORD_BYTES <= SVAL_SET_PAD_GESTURES_CAP && SVAL_PAD_TUNE_RECORD_BYTES <= SVAL_SET_PAD_TUNING_CAP && SVAL_PAD_PALM_RECORD_BYTES <= SVAL_SET_PAD_PALM_CAP && SVAL_PAD_MODE_RECORD_BYTES <= SVAL_SET_PAD_MODE_CAP && SVAL_SCROLL_SPEED_RECORD_BYTES <= SVAL_SET_SCROLL_SPEED_CAP && SVAL_AUTOMOUSE_LAYERS_RECORD_BYTES <= SVAL_SET_AUTOMOUSE_LAYERS_CAP, "the touchpad, scroll and Auto Mouse layers records fit");
 
 static void area_read(uint16_t off, void *buf, uint16_t len) {
     eeprom_read_block(buf, (const void *)(uintptr_t)(SVAL_SETTINGS_AREA_ADDR + off), len);
@@ -397,6 +402,9 @@ static void pad_gestures_save(void) {
     uint8_t mode[SVAL_PAD_MODE_RECORD_BYTES];
     sval_pad_mode_record_write(pad_mode, mode);
     settings_area_put(SVAL_SET_PAD_MODE, mode, SVAL_PAD_MODE_RECORD_BYTES);
+    uint8_t aml[SVAL_AUTOMOUSE_LAYERS_RECORD_BYTES];
+    sval_automouse_layers_record_write(sval_automouse_layers_mode, sval_automouse_layer_mask, aml);
+    settings_area_put(SVAL_SET_AUTOMOUSE_LAYERS, aml, SVAL_AUTOMOUSE_LAYERS_RECORD_BYTES);
     // Until each hand has settled, the speeds in memory are a guess from the
     // DPI: store them only after that.
     if (scroll_speed_pending == 0) {
@@ -421,6 +429,11 @@ static void pad_gestures_load(void) {
     uint8_t mode[SVAL_PAD_MODE_RECORD_BYTES] = {0};
     settings_area_get(SVAL_SET_PAD_MODE, mode, sizeof(mode), NULL);
     pad_mode_set(sval_pad_mode_record_read(mode));
+    // No record (a board reset by this firmware before it saved one) fails
+    // the check and reads as Everywhere, so the board behaves as it did.
+    uint8_t aml[SVAL_AUTOMOUSE_LAYERS_RECORD_BYTES] = {0};
+    settings_area_get(SVAL_SET_AUTOMOUSE_LAYERS, aml, sizeof(aml), NULL);
+    sval_automouse_layers_record_read(aml, &sval_automouse_layers_mode, &sval_automouse_layer_mask);
     uint8_t speed[SVAL_SCROLL_SPEED_RECORD_BYTES] = {0};
     settings_area_get(SVAL_SET_SCROLL_SPEED, speed, sizeof(speed), NULL);
     uint16_t sl, sr;
@@ -541,6 +554,8 @@ void read_eeprom_kb(void) {
         pad_tuning_set(0);
         pad_palm_set(0);
         pad_mode_set(SVAL_PAD_MODE_AUTO);
+        sval_automouse_layers_mode = SVAL_AUTOMOUSE_LAYERS_EVERYWHERE;
+        sval_automouse_layer_mask  = 0;
         scroll_speed[0] = scroll_speed[1] = SVAL_SCROLL_SPEED_DEFAULT; // a new board starts at 1.0x on the default 800 DPI
         scroll_speed_pending              = 0;
         write_eeprom_kb();
@@ -715,6 +730,7 @@ uint8_t sval_get_feature_flags4_kb(void) {
     flags |= sval_flag4_trackpoint_speed;                                          // a TrackPoint's DPI list scales it (pointer_speed.h)
     if (sval_pad_gestures_supported()) flags |= sval_flag4_pad_scroll_speed_alias; // VIA value 60, as the test build
 #ifdef CONSOLE_ENABLE
+    flags |= sval_flag4_automouse_layers; // VIA values 63 and 64 (automouse_layers.h)
     flags |= sval_flag4_debug_console; // 0x3E (debug_console.c)
 #endif
     return flags;
@@ -1555,6 +1571,9 @@ enum sval_via_value_id {
     id_pad_scroll_speed_alias = 60, // u16: the touchpad hand's Scroll speed (an alias of 61 or 62, for the test build's Keybard)
     id_scroll_speed_left      = 61, // u16: the left hand's Scroll speed, percent, 20-1000 (100 the default)
     id_scroll_speed_right     = 62, // u16: the right hand's Scroll speed
+    // Auto Mouse layers (automouse_layers.h), with sval_flag4_automouse_layers:
+    id_automouse_layers_only = 63, // toggle: 0 Everywhere (the default), 1 Only on Selected Layers
+    id_automouse_layer_mask  = 64, // u16: bit n set, Auto Mouse is off on layer n (counts only with value 63 on)
 };
 
 void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
@@ -1702,6 +1721,12 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     break;
                 case id_pad_touchpad_mode:
                     pad_mode_set(value_data[0]);
+                    break;
+                case id_automouse_layers_only:
+                    sval_automouse_layers_mode = value_data[0] ? SVAL_AUTOMOUSE_LAYERS_SELECTED : SVAL_AUTOMOUSE_LAYERS_EVERYWHERE;
+                    break;
+                case id_automouse_layer_mask:
+                    sval_automouse_layer_mask = value_data[0] | (value_data[1] << 8);
                     break;
                 case id_scroll_speed_left:
                 case id_scroll_speed_right:
@@ -1880,6 +1905,13 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     break;
                 case id_pad_touchpad_mode:
                     value_data[0] = pad_mode;
+                    break;
+                case id_automouse_layers_only:
+                    value_data[0] = sval_automouse_layers_mode;
+                    break;
+                case id_automouse_layer_mask:
+                    value_data[0] = sval_automouse_layer_mask & 0xFF;
+                    value_data[1] = sval_automouse_layer_mask >> 8;
                     break;
                 case id_scroll_speed_left:
                 case id_scroll_speed_right:
