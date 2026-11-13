@@ -141,6 +141,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // A run of requests with no valid answer this long, then an answer again,
 // counts as a dropout the relay survived (the RELAY op's resumes).
 #define SVAL_UPDATE_RELAY_DROPOUT_MS 500
+// After a request without a valid answer, the split line stays quiet this long
+// before the next one. The half without USB drops a transaction it is part way
+// through only after SERIAL_USART_SHORT_TIMEOUT (3 ms) without a byte; the
+// relay's next pass comes about every 2.6 ms, so retries sent back to back can
+// keep it reading the master's 248-byte PAGE2 frames out of step (a byte in
+// one taken for a transaction ID, its answer colliding with the master's next
+// frame), and every PAGE2 fails at once until the link timeout. Seen on the
+// test pair as about 1 failed relay in 25 Keybard installs: 1440 retries,
+// 1.4 ms each, then UNAVAILABLE ("The other half stopped answering").
+#define SVAL_UPDATE_RELAY_RESYNC_US 5000
 // After the other half accepts COMMIT, the link stays paused for its commit
 // (M1 #13: about 1-2 s from COMMIT to the reset) plus 2.5 s for its reboot
 // (R18: the 500 ms double-tap window and the 2 s USB detect).
