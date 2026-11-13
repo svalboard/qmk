@@ -542,6 +542,16 @@ The board scans its keys with two saved waits per row, in microseconds: before r
 - Upgrading: firmware before this stored `0` in a wait to mean "use the turbo table at the saved turbo index". At the first boot, a wait of `0` is filled in from the table with that index, and saved, so every board keeps the timing it ran. A board on turbo 6 with both waits at 0 reads 15 / 15 afterwards; one on turbo 0, 90 / 90; explicit waits are kept as they are. The settings keep their size and layout stamp, so nothing else resets. The byte that held the turbo index now holds the auto mouse layer timeout (below).
 - Split: the half with USB sends both waits in the presence ping (every 0.5 s), as before, with the matching preset (0 for none) in the turbo byte. The other half uses them and doesn't store them. Waits are never 0 now, so an older half without USB runs them too. A new half without USB under an older half with USB that still sends 0 fills a 0 wait in from the turbo byte, as before.
 
+## Auto mouse layers
+
+The layers where pointer motion does not switch to the auto mouse layer.
+
+- Discovery: GET_INFO byte 21 (the fourth feature byte), bit 7 (`sval_flag4_automouse_layers`, `0x80`). Every Svalboard build sets it. Older firmware leaves it zero and doesn't answer the values below; a host must not write them then.
+- `id_automouse_layers_only` (VIA value `63`): `0`, Everywhere (the default, and the behavior before this setting); `1`, Only on Selected Layers.
+- `id_automouse_layer_mask` (VIA value `64`), 16-bit little-endian: bit `n` set, Auto Mouse is off on layer `n`. It counts only while value 63 is `1`, so a host can switch back to Everywhere without losing the layers picked. The auto mouse layer's own bit (layer 15) never counts.
+- The layer that counts is the highest active layer other than the auto mouse layer, with the default layer included: the layer the user is on, however they reached it. While it is a disabled layer, motion neither turns the mouse layer on nor counts toward the activation threshold, and a mouse layer already on goes off at the next scan once no mouse button is held. Mouse keys pressed on the mouse layer behave as before.
+- Storage: settings area record 9 (`settings_ids.h`), 4 bytes: `[mode][mask lo][mask hi][0xA5 ^ the three]`. A board with no record (or a record that fails the check) reads as Everywhere with no layers, the behavior before this setting.
+
 ## Auto mouse layer timeout
 
 How long the auto mouse layer stays on after the pointer stops, in milliseconds.

@@ -5,7 +5,6 @@
 #    include "via.h"
 #endif
 #include "version.h"
-#include "layout_stamp.h"
 #include "split_common/transactions.h"
 #include <string.h>
 #include <stddef.h>
@@ -279,124 +278,173 @@ uint8_t sval_thumb_hand_raw(void) {
     return thumb_hand_raw;
 }
 
-// Store svalboard data in VIA custom config at offset 0
-#define SVALBOARD_VIA_CONFIG_OFFSET 0
-#define SVALBOARD_VIA_CONFIG_SIZE sizeof(saved_values_t)
+// Every keyboard setting lives in the settings area (settings_area.h), one
+// record per group (settings_ids.h). The 100-byte VIA custom config is no
+// longer read or written; VIA_EEPROM_CUSTOM_CONFIG_SIZE stays 100 only so the
+// keymap and macros keep their addresses.
 
-// Bump only when a saved_values field is reinterpreted without the struct
-// changing size (renamed, reordered or rescaled in place).
-#ifndef SVALBOARD_SAVED_VALUES_SCHEMA
-#    define SVALBOARD_SAVED_VALUES_SCHEMA 0
-#endif
-
-// Magic bytes for EEPROM validation: a layout stamp over the saved_values
-// geometry, so pointer, layer-colour and scan settings reset only when they
-// would otherwise be misread. It used to be the build timestamp to the second,
-// which reset them on every firmware update.
-//
-// The first two bytes are fixed and are not valid BCD, so an old timestamp magic
-// can never be mistaken for a stamp.
-#define SVALBOARD_MAGIC_SIZE 6
-#define SVALBOARD_MAGIC_OFFSET (SVALBOARD_VIA_CONFIG_OFFSET + SVALBOARD_VIA_CONFIG_SIZE)
-// The touchpad tap setting's record, after the magic (pad_gestures.h).
-#define SVALBOARD_PAD_GESTURES_OFFSET (SVALBOARD_MAGIC_OFFSET + SVALBOARD_MAGIC_SIZE)
-_Static_assert(SVALBOARD_PAD_GESTURES_OFFSET + SVAL_PAD_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the tap setting fits the VIA custom config");
-// The touchpad tuning's record, after the tap setting's.
-#define SVALBOARD_PAD_TUNING_OFFSET (SVALBOARD_PAD_GESTURES_OFFSET + SVAL_PAD_RECORD_BYTES)
-_Static_assert(SVALBOARD_PAD_TUNING_OFFSET + SVAL_PAD_TUNE_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the touchpad tuning fits the VIA custom config");
-// The palm rejection's record, after the tuning's.
-#define SVALBOARD_PAD_PALM_OFFSET (SVALBOARD_PAD_TUNING_OFFSET + SVAL_PAD_TUNE_RECORD_BYTES)
-_Static_assert(SVALBOARD_PAD_PALM_OFFSET + SVAL_PAD_PALM_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the palm rejection fits the VIA custom config");
-// The touchpad mode's record, after the palm rejection's.
-#define SVALBOARD_PAD_MODE_OFFSET (SVALBOARD_PAD_PALM_OFFSET + SVAL_PAD_PALM_RECORD_BYTES)
-_Static_assert(SVALBOARD_PAD_MODE_OFFSET + SVAL_PAD_MODE_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the touchpad mode fits the VIA custom config");
-// The test build's touchpad scroll speed, read only to migrate it, after the touchpad mode's record.
-#define SVALBOARD_SCROLL_LEGACY_OFFSET (SVALBOARD_PAD_MODE_OFFSET + SVAL_PAD_MODE_RECORD_BYTES)
-// The Scroll speed record, after that.
-#define SVALBOARD_SCROLL_SPEED_OFFSET (SVALBOARD_SCROLL_LEGACY_OFFSET + SVAL_SCROLL_SPEED_LEGACY_BYTES)
-_Static_assert(SVALBOARD_SCROLL_SPEED_OFFSET + SVAL_SCROLL_SPEED_RECORD_BYTES <= VIA_EEPROM_CUSTOM_CONFIG_SIZE, "the scroll speed fits the VIA custom config");
+// Auto Mouse layers (automouse_layers.h): Everywhere, no layers, until a record says otherwise.
+uint8_t  sval_automouse_layers_mode = SVAL_AUTOMOUSE_LAYERS_EVERYWHERE;
+uint16_t sval_automouse_layer_mask  = 0;
 
 #if VIA_ENABLE
-static void svalboard_get_magic(uint8_t *magic) {
-    const uint32_t values[] = {
-        SVALBOARD_VIA_CONFIG_OFFSET,
-        SVALBOARD_VIA_CONFIG_SIZE,
-        DYNAMIC_KEYMAP_LAYER_COUNT,
-        SVALBOARD_SAVED_VALUES_SCHEMA,
-    };
-    uint32_t stamp = layout_stamp(values, sizeof(values) / sizeof(values[0]));
-    magic[0]       = 0xA5;
-    magic[1]       = 0x5B;
-    magic[2]       = (stamp >> 24) & 0xFF;
-    magic[3]       = (stamp >> 16) & 0xFF;
-    magic[4]       = (stamp >> 8) & 0xFF;
-    magic[5]       = stamp & 0xFF;
+#    include "eeprom.h"
+#    include "settings_area.h"
+_Static_assert(SVAL_SETTINGS_USED_BYTES <= SVAL_SETTINGS_AREA_SIZE, "every setting fits the settings area (settings_ids.h)");
+_Static_assert(SVAL_SETTINGS_AREA_SIZE <= 0xFFFF, "the settings area's offsets are 16-bit");
+_Static_assert(DYNAMIC_KEYMAP_LAYER_COUNT * 3 <= SVAL_SET_LAYER_COLORS_CAP, "a color for every layer");
+_Static_assert(SVAL_PAD_RECORD_BYTES <= SVAL_SET_PAD_GESTURES_CAP && SVAL_PAD_TUNE_RECORD_BYTES <= SVAL_SET_PAD_TUNING_CAP && SVAL_PAD_PALM_RECORD_BYTES <= SVAL_SET_PAD_PALM_CAP && SVAL_PAD_MODE_RECORD_BYTES <= SVAL_SET_PAD_MODE_CAP && SVAL_SCROLL_SPEED_RECORD_BYTES <= SVAL_SET_SCROLL_SPEED_CAP && SVAL_AUTOMOUSE_LAYERS_RECORD_BYTES <= SVAL_SET_AUTOMOUSE_LAYERS_CAP, "the touchpad, scroll and Auto Mouse layers records fit");
+
+static void area_read(uint16_t off, void *buf, uint16_t len) {
+    eeprom_read_block(buf, (const void *)(uintptr_t)(SVAL_SETTINGS_AREA_ADDR + off), len);
 }
+static void area_write(uint16_t off, const void *buf, uint16_t len) {
+    eeprom_update_block(buf, (void *)(uintptr_t)(SVAL_SETTINGS_AREA_ADDR + off), len);
+}
+static const settings_area_store_t area_store = {area_read, area_write, SVAL_SETTINGS_AREA_SIZE};
 
 static bool svalboard_eeprom_is_valid(void) {
-    uint8_t stored[SVALBOARD_MAGIC_SIZE];
-    uint8_t expected[SVALBOARD_MAGIC_SIZE];
-    via_read_custom_config(stored, SVALBOARD_MAGIC_OFFSET, SVALBOARD_MAGIC_SIZE);
-    svalboard_get_magic(expected);
-    return memcmp(stored, expected, SVALBOARD_MAGIC_SIZE) == 0;
+    settings_area_use(&area_store);
+    return settings_area_valid();
 }
 
 void svalboard_eeprom_set_valid(void) {
-    uint8_t magic[SVALBOARD_MAGIC_SIZE];
-    svalboard_get_magic(magic);
-    via_update_custom_config(magic, SVALBOARD_MAGIC_OFFSET, SVALBOARD_MAGIC_SIZE);
+    settings_area_use(&area_store);
+    if (!settings_area_valid()) settings_area_format();
+}
+
+static void put16(uint8_t *p, uint16_t v) {
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+}
+static uint16_t get16(const uint8_t *p) {
+    return (uint16_t)(p[0] | (p[1] << 8));
+}
+
+// The saved_values groups as records. Fields are only ever appended, so a
+// record from older firmware fills the front and the rest keep their defaults.
+static void pointer_pack(uint8_t r[SVAL_SET_POINTER_CAP]) {
+    memcpy(r, &global_saved_values, 1); // the eight flag bits (offsetof(left_dpi_index) == 1)
+    r[1] = global_saved_values.left_dpi_index;
+    r[2] = global_saved_values.right_dpi_index;
+    r[3] = global_saved_values.mh_timer_index;
+    r[4] = global_saved_values.automouse_10ms;
+    put16(r + 5, global_saved_values.automouse_threshold);
+    r[7] = global_saved_values.automouse_decay;
+}
+static void pointer_unpack(const uint8_t r[SVAL_SET_POINTER_CAP]) {
+    memcpy(&global_saved_values, r, 1);
+    global_saved_values.left_dpi_index      = r[1];
+    global_saved_values.right_dpi_index     = r[2];
+    global_saved_values.mh_timer_index      = r[3];
+    global_saved_values.automouse_10ms      = r[4];
+    global_saved_values.automouse_threshold = get16(r + 5);
+    global_saved_values.automouse_decay     = r[7];
+}
+static void scan_pack(uint8_t r[SVAL_SET_SCAN_CAP]) {
+    put16(r + 0, global_saved_values.scan_prewait_us);
+    put16(r + 2, global_saved_values.scan_postwait_us);
+    put16(r + 4, global_saved_values.scan_period_us);
+    put16(r + 6, global_saved_values.scan_idle_period_ms);
+    put16(r + 8, global_saved_values.scan_idle_after_ms);
+    put16(r + 10, global_saved_values.scan_deep_after_s);
+    put16(r + 12, global_saved_values.scan_deep_period_ms);
+    r[14] = global_saved_values.idle_flags;
+    r[15] = global_saved_values.scan_deep_clock_idx;
+}
+static void scan_unpack(const uint8_t r[SVAL_SET_SCAN_CAP]) {
+    global_saved_values.scan_prewait_us     = get16(r + 0);
+    global_saved_values.scan_postwait_us    = get16(r + 2);
+    global_saved_values.scan_period_us      = get16(r + 4);
+    global_saved_values.scan_idle_period_ms = get16(r + 6);
+    global_saved_values.scan_idle_after_ms  = get16(r + 8);
+    global_saved_values.scan_deep_after_s   = get16(r + 10);
+    global_saved_values.scan_deep_period_ms = get16(r + 12);
+    global_saved_values.idle_flags          = r[14];
+    global_saved_values.scan_deep_clock_idx = r[15];
+}
+
+static void saved_values_save(void) {
+    uint8_t r[SVAL_SET_LAYER_COLORS_CAP];
+    pointer_pack(r);
+    settings_area_put(SVAL_SET_POINTER, r, SVAL_SET_POINTER_CAP);
+    memcpy(r, global_saved_values.layer_colors, DYNAMIC_KEYMAP_LAYER_COUNT * 3);
+    settings_area_put(SVAL_SET_LAYER_COLORS, r, DYNAMIC_KEYMAP_LAYER_COUNT * 3);
+    scan_pack(r);
+    settings_area_put(SVAL_SET_SCAN, r, SVAL_SET_SCAN_CAP);
+}
+
+// Over the defaults already in global_saved_values: each record that is
+// stored replaces what it holds.
+static void saved_values_load(void) {
+    uint8_t r[SVAL_SET_LAYER_COLORS_CAP];
+    pointer_pack(r);
+    settings_area_get(SVAL_SET_POINTER, r, SVAL_SET_POINTER_CAP, NULL);
+    pointer_unpack(r);
+    memcpy(r, global_saved_values.layer_colors, DYNAMIC_KEYMAP_LAYER_COUNT * 3);
+    settings_area_get(SVAL_SET_LAYER_COLORS, r, DYNAMIC_KEYMAP_LAYER_COUNT * 3, NULL);
+    memcpy(global_saved_values.layer_colors, r, DYNAMIC_KEYMAP_LAYER_COUNT * 3);
+    scan_pack(r);
+    settings_area_get(SVAL_SET_SCAN, r, SVAL_SET_SCAN_CAP, NULL);
+    scan_unpack(r);
 }
 
 static void pad_gestures_save(void) {
     uint8_t rec[SVAL_PAD_RECORD_BYTES];
     sval_pad_record_write(pad_gestures, rec);
-    via_update_custom_config(rec, SVALBOARD_PAD_GESTURES_OFFSET, SVAL_PAD_RECORD_BYTES);
+    settings_area_put(SVAL_SET_PAD_GESTURES, rec, SVAL_PAD_RECORD_BYTES);
     uint8_t tune[SVAL_PAD_TUNE_RECORD_BYTES];
     sval_pad_tune_record_write(pad_tuning, tune);
-    via_update_custom_config(tune, SVALBOARD_PAD_TUNING_OFFSET, SVAL_PAD_TUNE_RECORD_BYTES);
+    settings_area_put(SVAL_SET_PAD_TUNING, tune, SVAL_PAD_TUNE_RECORD_BYTES);
     uint8_t palm[SVAL_PAD_PALM_RECORD_BYTES];
     sval_pad_palm_record_write(pad_palm, palm);
-    via_update_custom_config(palm, SVALBOARD_PAD_PALM_OFFSET, SVAL_PAD_PALM_RECORD_BYTES);
+    settings_area_put(SVAL_SET_PAD_PALM, palm, SVAL_PAD_PALM_RECORD_BYTES);
     uint8_t mode[SVAL_PAD_MODE_RECORD_BYTES];
     sval_pad_mode_record_write(pad_mode, mode);
-    via_update_custom_config(mode, SVALBOARD_PAD_MODE_OFFSET, SVAL_PAD_MODE_RECORD_BYTES);
-    // Until the migration has settled each hand, the speeds in memory are a
-    // guess from the DPI: keep the old bytes, and the test build's record.
+    settings_area_put(SVAL_SET_PAD_MODE, mode, SVAL_PAD_MODE_RECORD_BYTES);
+    uint8_t aml[SVAL_AUTOMOUSE_LAYERS_RECORD_BYTES];
+    sval_automouse_layers_record_write(sval_automouse_layers_mode, sval_automouse_layer_mask, aml);
+    settings_area_put(SVAL_SET_AUTOMOUSE_LAYERS, aml, SVAL_AUTOMOUSE_LAYERS_RECORD_BYTES);
+    // Until each hand has settled, the speeds in memory are a guess from the
+    // DPI: store them only after that.
     if (scroll_speed_pending == 0) {
         uint8_t speed[SVAL_SCROLL_SPEED_RECORD_BYTES];
         sval_scroll_speed_record_write(scroll_speed[0], scroll_speed[1], speed);
-        via_update_custom_config(speed, SVALBOARD_SCROLL_SPEED_OFFSET, SVAL_SCROLL_SPEED_RECORD_BYTES);
-        const uint8_t retired[SVAL_SCROLL_SPEED_LEGACY_BYTES] = {0, 0, 0};
-        via_update_custom_config(retired, SVALBOARD_SCROLL_LEGACY_OFFSET, SVAL_SCROLL_SPEED_LEGACY_BYTES);
+        settings_area_put(SVAL_SET_SCROLL_SPEED, speed, SVAL_SCROLL_SPEED_RECORD_BYTES);
     }
 }
 
+// A record that is not stored reads as zeros, which each record reader takes
+// as its default (the same as the blank bytes it was read from before).
 static void pad_gestures_load(void) {
-    uint8_t rec[SVAL_PAD_RECORD_BYTES];
-    via_read_custom_config(rec, SVALBOARD_PAD_GESTURES_OFFSET, SVAL_PAD_RECORD_BYTES);
+    uint8_t rec[SVAL_PAD_RECORD_BYTES] = {0};
+    settings_area_get(SVAL_SET_PAD_GESTURES, rec, sizeof(rec), NULL);
     pad_gestures_set(sval_pad_record_read(rec));
-    uint8_t tune[SVAL_PAD_TUNE_RECORD_BYTES];
-    via_read_custom_config(tune, SVALBOARD_PAD_TUNING_OFFSET, SVAL_PAD_TUNE_RECORD_BYTES);
+    uint8_t tune[SVAL_PAD_TUNE_RECORD_BYTES] = {0};
+    settings_area_get(SVAL_SET_PAD_TUNING, tune, sizeof(tune), NULL);
     pad_tuning_set(sval_pad_tune_record_read(tune));
-    uint8_t palm[SVAL_PAD_PALM_RECORD_BYTES];
-    via_read_custom_config(palm, SVALBOARD_PAD_PALM_OFFSET, SVAL_PAD_PALM_RECORD_BYTES);
+    uint8_t palm[SVAL_PAD_PALM_RECORD_BYTES] = {0};
+    settings_area_get(SVAL_SET_PAD_PALM, palm, sizeof(palm), NULL);
     pad_palm_set(sval_pad_palm_record_read(palm));
-    uint8_t mode[SVAL_PAD_MODE_RECORD_BYTES];
-    via_read_custom_config(mode, SVALBOARD_PAD_MODE_OFFSET, SVAL_PAD_MODE_RECORD_BYTES);
+    uint8_t mode[SVAL_PAD_MODE_RECORD_BYTES] = {0};
+    settings_area_get(SVAL_SET_PAD_MODE, mode, sizeof(mode), NULL);
     pad_mode_set(sval_pad_mode_record_read(mode));
-    uint8_t speed[SVAL_SCROLL_SPEED_RECORD_BYTES];
-    via_read_custom_config(speed, SVALBOARD_SCROLL_SPEED_OFFSET, SVAL_SCROLL_SPEED_RECORD_BYTES);
+    // No record (a board reset by this firmware before it saved one) fails
+    // the check and reads as Everywhere, so the board behaves as it did.
+    uint8_t aml[SVAL_AUTOMOUSE_LAYERS_RECORD_BYTES] = {0};
+    settings_area_get(SVAL_SET_AUTOMOUSE_LAYERS, aml, sizeof(aml), NULL);
+    sval_automouse_layers_record_read(aml, &sval_automouse_layers_mode, &sval_automouse_layer_mask);
+    uint8_t speed[SVAL_SCROLL_SPEED_RECORD_BYTES] = {0};
+    settings_area_get(SVAL_SET_SCROLL_SPEED, speed, sizeof(speed), NULL);
     uint16_t sl, sr;
     if (sval_scroll_speed_record_read(speed, &sl, &sr)) {
         scroll_speed[0]      = sl;
         scroll_speed[1]      = sr;
         scroll_speed_pending = 0;
     } else {
-        // First boot of this firmware: from the DPI now (as a trackball), and
-        // settled per hand once its module is known (sval_scroll_speed_task).
-        uint8_t legacy[SVAL_SCROLL_SPEED_LEGACY_BYTES];
-        via_read_custom_config(legacy, SVALBOARD_SCROLL_LEGACY_OFFSET, SVAL_SCROLL_SPEED_LEGACY_BYTES);
-        if (!sval_scroll_speed_legacy_read(legacy, &scroll_legacy_pct)) scroll_legacy_pct = 0;
+        // No stored speed: from the DPI now (as a trackball), and settled per
+        // hand once its module is known (sval_scroll_speed_task).
+        scroll_legacy_pct    = 0;
         scroll_speed[0]      = scroll_speed_from_saved_dpi(0, SVAL_SCROLL_KIND_BALL);
         scroll_speed[1]      = scroll_speed_from_saved_dpi(1, SVAL_SCROLL_KIND_BALL);
         scroll_speed_pending = 3;
@@ -405,11 +453,13 @@ static void pad_gestures_load(void) {
 }
 
 void write_eeprom_kb(void) {
-    via_update_custom_config(&global_saved_values, SVALBOARD_VIA_CONFIG_OFFSET, SVALBOARD_VIA_CONFIG_SIZE);
+    settings_area_use(&area_store);
+    saved_values_save();
     pad_gestures_save();
 }
 #else
 static void pad_gestures_load(void) {}
+static void saved_values_load(void) {}
 static bool svalboard_eeprom_is_valid(void) {
     return true;
 }
@@ -504,14 +554,15 @@ void read_eeprom_kb(void) {
         pad_tuning_set(0);
         pad_palm_set(0);
         pad_mode_set(SVAL_PAD_MODE_AUTO);
+        sval_automouse_layers_mode = SVAL_AUTOMOUSE_LAYERS_EVERYWHERE;
+        sval_automouse_layer_mask  = 0;
         scroll_speed[0] = scroll_speed[1] = SVAL_SCROLL_SPEED_DEFAULT; // a new board starts at 1.0x on the default 800 DPI
         scroll_speed_pending              = 0;
         write_eeprom_kb();
         svalboard_eeprom_set_valid();
     } else {
-#if VIA_ENABLE
-        via_read_custom_config(&global_saved_values, SVALBOARD_VIA_CONFIG_OFFSET, SVALBOARD_VIA_CONFIG_SIZE);
-#endif
+        svalboard_saved_values_defaults();
+        saved_values_load();
         // Once, on settings saved by firmware with the turbo setting: a wait of
         // 0 meant "the turbo table". Fill it in from the saved turbo index, so
         // the board keeps the timing it ran, and free that byte.
@@ -679,6 +730,7 @@ uint8_t sval_get_feature_flags4_kb(void) {
     flags |= sval_flag4_trackpoint_speed;                                          // a TrackPoint's DPI list scales it (pointer_speed.h)
     if (sval_pad_gestures_supported()) flags |= sval_flag4_pad_scroll_speed_alias; // VIA value 60, as the test build
 #ifdef CONSOLE_ENABLE
+    flags |= sval_flag4_automouse_layers; // VIA values 63 and 64 (automouse_layers.h)
     flags |= sval_flag4_debug_console; // 0x3E (debug_console.c)
 #endif
     return flags;
@@ -1519,6 +1571,9 @@ enum sval_via_value_id {
     id_pad_scroll_speed_alias = 60, // u16: the touchpad hand's Scroll speed (an alias of 61 or 62, for the test build's Keybard)
     id_scroll_speed_left      = 61, // u16: the left hand's Scroll speed, percent, 20-1000 (100 the default)
     id_scroll_speed_right     = 62, // u16: the right hand's Scroll speed
+    // Auto Mouse layers (automouse_layers.h), with sval_flag4_automouse_layers:
+    id_automouse_layers_only = 63, // toggle: 0 Everywhere (the default), 1 Only on Selected Layers
+    id_automouse_layer_mask  = 64, // u16: bit n set, Auto Mouse is off on layer n (counts only with value 63 on)
 };
 
 void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
@@ -1666,6 +1721,12 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     break;
                 case id_pad_touchpad_mode:
                     pad_mode_set(value_data[0]);
+                    break;
+                case id_automouse_layers_only:
+                    sval_automouse_layers_mode = value_data[0] ? SVAL_AUTOMOUSE_LAYERS_SELECTED : SVAL_AUTOMOUSE_LAYERS_EVERYWHERE;
+                    break;
+                case id_automouse_layer_mask:
+                    sval_automouse_layer_mask = value_data[0] | (value_data[1] << 8);
                     break;
                 case id_scroll_speed_left:
                 case id_scroll_speed_right:
@@ -1844,6 +1905,13 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     break;
                 case id_pad_touchpad_mode:
                     value_data[0] = pad_mode;
+                    break;
+                case id_automouse_layers_only:
+                    value_data[0] = sval_automouse_layers_mode;
+                    break;
+                case id_automouse_layer_mask:
+                    value_data[0] = sval_automouse_layer_mask & 0xFF;
+                    value_data[1] = sval_automouse_layer_mask >> 8;
                     break;
                 case id_scroll_speed_left:
                 case id_scroll_speed_right:
