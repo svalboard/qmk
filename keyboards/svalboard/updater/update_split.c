@@ -590,6 +590,9 @@ void update_split_slave_task(void) {
 // ---- the relay, the half with USB -----------------------------------------------------
 
 _Static_assert(SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS < SVAL_UPDATE_SPLIT_SLAVE_TIMEOUT_MS, "a dropout the relay waits out leaves the other half's session open");
+#ifdef SERIAL_USART_SHORT_TIMEOUT
+_Static_assert(SVAL_UPDATE_RELAY_RESYNC_US > SERIAL_USART_SHORT_TIMEOUT * 1000, "the quiet after a failed request outlasts the other half's receive deadline");
+#endif
 
 #define RELAY_RESYNC_MAX 8
 // A request that arrives damaged is answered INVALID with its op and seq (when
@@ -635,6 +638,8 @@ static struct {
     uint8_t         resumes;
     bool            failing; // no valid answer since fail_since_ms
     uint32_t        fail_since_ms;
+    bool            quiet; // the line stays quiet until quiet_until_us (SVAL_UPDATE_RELAY_RESYNC_US)
+    uint32_t        quiet_until_us;
     bool            after_pending; // a failure record waits for the other half's next STATUS
     // The fast path (update_split_wire.h): the other half's INFO in this
     // relay said it has it (fast), and no request has gone unanswered since
@@ -872,7 +877,9 @@ static void relay_answered(uint32_t now, uint8_t state) {
 // A request without a valid answer: no PAGE2 until INFO again, and the relay
 // fails (or holds, in the commit) once there has been none for the link timeout.
 static void relay_unanswered(uint32_t now) {
-    rl.fast_ok = false;
+    rl.fast_ok        = false;
+    rl.quiet          = true; // the other half's receive times out and starts clean
+    rl.quiet_until_us = update_split_port_now_us() + SVAL_UPDATE_RELAY_RESYNC_US;
     if (!rl.failing) {
         rl.failing       = true;
         rl.fail_since_ms = now;
@@ -1268,6 +1275,10 @@ bool update_relay_start_self(const uint8_t *manifest, uint32_t image_len, uint32
 
 void update_relay_task(void) {
     if (!update_relay_busy()) return;
+    if (rl.quiet) {
+        if ((int32_t)(update_split_port_now_us() - rl.quiet_until_us) < 0) return;
+        rl.quiet = false;
+    }
     uint32_t t0 = update_split_port_now_ms();
     // The pages go back to back with the link paused, and the main loop gets
     // a pass every SVAL_UPDATE_RELAY_STREAM_MS (USB, Keybard's 50 ms, this
