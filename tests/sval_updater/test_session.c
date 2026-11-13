@@ -218,6 +218,7 @@ void update_split_port_unlock(void) {
     unlocks++;
     if (unlock_hook) unlock_hook(unlocks);
 }
+void update_split_port_watchdog_ping(void) {}
 bool update_split_port_pause(bool on) {
     if (sim_slave) return false;
     if (on) {

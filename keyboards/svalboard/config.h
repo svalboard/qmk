@@ -150,6 +150,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // frame), and every PAGE2 fails at once until the link timeout. Seen on the
 // test pair in 3 of 36 Keybard installs (about 1 in 12): 1440 retries,
 // 1.4 ms each, then UNAVAILABLE ("The other half stopped answering").
+// Later traces showed that failure was the other half resetting, not this
+// desync: its split watchdog fired on a stray 0x07, 0x00 read while out of
+// step (fixed in transactions.c and serial_protocol.c; the relay now starts
+// over after such a reset, update_split.c relay_restart). The gap stays: it
+// still lets the other half drop a half-read frame before the next request.
 #define SVAL_UPDATE_RELAY_RESYNC_US 5000
 // After the other half accepts COMMIT, the link stays paused for its commit
 // (M1 #13: about 1-2 s from COMMIT to the reset) plus 2.5 s for its reboot
