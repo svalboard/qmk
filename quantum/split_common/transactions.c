@@ -797,7 +797,11 @@ static bool watchdog_handlers_master(matrix_row_t master_matrix[], matrix_row_t 
 }
 
 static void watchdog_handlers_slave(matrix_row_t master_matrix[], matrix_row_t slave_matrix[]) {
-    split_watchdog_update(split_shmem->watchdog_pinged);
+    // Svalboard: once pinged, done for this boot. The split watchdog only
+    // catches a half that never hears a master after boot. A ping cleared
+    // later (a stray 0x07, 0x00 taken as PUT_WATCHDOG by a half reading a
+    // frame out of step, as in a relay's image bytes) reset a running half.
+    if (split_shmem->watchdog_pinged) split_watchdog_update(true);
 }
 
 #    define TRANSACTIONS_WATCHDOG_MASTER() TRANSACTION_HANDLER_MASTER(watchdog)

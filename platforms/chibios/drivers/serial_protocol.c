@@ -118,6 +118,15 @@ static inline bool react_to_transaction(void) {
         return false;
     }
 
+#if defined(SVAL_UPDATER) && defined(SERIAL_PIO_RX_DMA)
+    {
+        // Svalboard: while this half takes a relay on the fast path, the master
+        // sends KEYBOARD_UPDATE RPCs only. Any other ID is a byte of a frame
+        // read out of step: no handshake, no buffer, nothing written.
+        bool update_split_slave_frozen(void);
+        if ((transaction_id < PUT_RPC_INFO || transaction_id > GET_RPC_RESP_DATA) && update_split_slave_frozen()) return false;
+    }
+#endif
     split_shared_memory_lock_autounlock();
 
     split_transaction_desc_t* transaction = &split_transaction_table[transaction_id];
