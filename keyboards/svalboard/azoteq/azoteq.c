@@ -8,6 +8,18 @@
 #include "pointing_detect.h"
 #include "pad_gestures.h"
 #include "pad_touch.h"
+#include "pad_gesture_guard.h"
+
+// Gesture switches the build sets (drivers/sensors/azoteq_iqs5xx.c defaults).
+#ifndef AZOTEQ_IQS5XX_SWIPE_X_ENABLE
+#    define AZOTEQ_IQS5XX_SWIPE_X_ENABLE false
+#endif
+#ifndef AZOTEQ_IQS5XX_SWIPE_Y_ENABLE
+#    define AZOTEQ_IQS5XX_SWIPE_Y_ENABLE false
+#endif
+// A report the guard ignored (click diagnostics record it): why, the base
+// bytes after the guard, and the gesture bytes as the chip sent them.
+void sval_pad_guard_ignored_kb(uint8_t why, const uint8_t *base, uint8_t ge0, uint8_t ge1, bool woke);
 
 #ifdef SVAL_AZOTEQ_MULTITOUCH
 // Native touchpad builds (azoteq/multitouch.mk): every contact is read, and
@@ -338,6 +350,51 @@ static void azo_gestures_task(void) {
     }
     azo_gestures_pending = false; // a failure is not retried here; the next start writes it
     dprintf("IQS5XX: tap setting %02X %s\n", sval_pad_gestures(), status == I2C_STATUS_SUCCESS ? "written" : "FAILED");
+}
+
+// ------------------------------------------------------------------------
+// The chip's gesture reports (pad_gesture_guard.h): each read is checked
+// before the driver acts on it. A report of a gesture whose fingers were not
+// seen just before, or of exclusive gestures at once, is ignored, and the
+// Keybard touchpad settings are applied here too, not only to the chip's
+// enable bits, so an off setting never clicks.
+static pad_guard_t azo_guard;
+static uint16_t    azo_guard_ignored;
+
+uint16_t sval_pad_guard_ignored(void) {
+    return azo_guard_ignored;
+}
+
+bool azoteq_iqs5xx_frame_filter_kb(uint8_t *base, bool woke) {
+    static bool started = false;
+    if (!started) {
+        pad_guard_init(&azo_guard);
+        started = true;
+    }
+    const uint8_t         s   = sval_pad_gestures();
+    const pad_guard_cfg_t cfg = {
+        .tap        = sval_pad_tap_on(s),
+        .two_finger = sval_pad_two_finger_on(s),
+        .hold       = sval_pad_hold_on(s),
+        .swipes     = AZOTEQ_IQS5XX_SWIPE_X_ENABLE || AZOTEQ_IQS5XX_SWIPE_Y_ENABLE,
+        .tap_ms     = sval_pad_tap_time_ms(sval_pad_tuning()),
+    };
+    const uint8_t ge0 = base[PAD_B_GE0], ge1 = base[PAD_B_GE1];
+    const uint8_t why = pad_guard_frame(&azo_guard, &cfg, base, timer_read32(), woke);
+    if (why) {
+        if (azo_guard_ignored < UINT16_MAX) azo_guard_ignored++;
+        dprintf("IQS5XX: ignored report (reason %u): cycle %u ge0 %02X ge1 %02X sys %02X %02X fingers %u%s\n", why, base[PAD_B_CYCLE], ge0, ge1, base[PAD_B_SYS0], base[PAD_B_SYS1], base[PAD_B_FINGERS], woke ? " (woke)" : "");
+        sval_pad_guard_ignored_kb(why, base, ge0, ge1, woke);
+    }
+    return why != PAD_GUARD_BAD_FRAME;
+}
+
+__attribute__((weak)) void sval_pad_guard_ignored_kb(uint8_t why, const uint8_t *base, uint8_t ge0, uint8_t ge1, bool woke) {
+    (void)why;
+    (void)base;
+    (void)ge0;
+    (void)ge1;
+    (void)woke;
 }
 
 #ifdef SVAL_AZOTEQ_MULTITOUCH
