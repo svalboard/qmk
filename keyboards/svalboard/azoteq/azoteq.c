@@ -90,7 +90,8 @@ static void azo_wake(void) {
 // glass gives about twice the touch deltas, so the stock touch thresholds
 // fire on noise and drift. Azoteq applications engineering's settings for
 // 0.7 mm glass (2026-04-24) double the touch multipliers and let the part
-// fall into its low-power, environment-tracking mode sooner. They are written
+// fall into its low-power, environment-tracking mode sooner (that part is not
+// applied by default; see SVAL_IQS_IDLE_MODE_TIMEOUT_S). They are written
 // at run time after every start of the chip, because the start resets the
 // chip (its runtime registers return to the stored settings) and the driver
 // then sets the idle timeout to 255 s. Nothing here writes the chip's stored
@@ -112,11 +113,12 @@ static void azo_wake(void) {
 #    define SVAL_IQS_LP1_REPORT_RATE_MS 50 // stock 80
 #endif
 // Seconds of no touch before the part drops from Idle into LP1 (ALP mode).
-// Azoteq: 2 s. The stock QMK driver sets 255 (never) to avoid the LP1 report
-// rate adding up to SVAL_IQS_LP1_REPORT_RATE_MS of first-touch latency; set
-// this to 255 to get that behavior back if the wake-up feels laggy.
+// 255 = never, as the stock QMK driver sets it: power-saving modes are off by
+// default. LP1 adds up to SVAL_IQS_LP1_REPORT_RATE_MS of first-touch latency,
+// and its first reads after waking can look like a phantom tap. Azoteq's glass
+// tuning suggests 2 s; build with that value to opt in.
 #ifndef SVAL_IQS_IDLE_MODE_TIMEOUT_S
-#    define SVAL_IQS_IDLE_MODE_TIMEOUT_S 2
+#    define SVAL_IQS_IDLE_MODE_TIMEOUT_S 255
 #endif
 
 static i2c_status_t sval_iqs_write(uint16_t reg, const uint8_t *data, uint16_t len) {
