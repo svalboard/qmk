@@ -11,7 +11,7 @@ supplied these settings on 2026-04-24:
 | 0x0596 | Global touch multiplier, set | ~16 (87 counts) | **32** (175 counts) | glass gives ~2x deltas |
 | 0x0597 | Global touch multiplier, clear | ~12 (65 counts) | **24** (131 counts) | hysteresis scaled with it |
 | 0x0580 | LP1 report rate | 80 ms | **50 ms** | the ALP channel tracks the environment better than the TP channels |
-| 0x0586 | Idle mode timeout | 10 s | **2 s** | enter ALP mode sooner after the hand leaves |
+| 0x0586 | Idle mode timeout | 10 s | 2 s suggested; **255 (never) shipped** | power-saving modes are off by default, so the pad never enters LP1 |
 
 ## How the firmware applies them
 
@@ -24,8 +24,8 @@ idle timeout to 255 s, so the values are written after it every time.
 The firmware never writes the chip's stored settings image.
 
 Override any value in `config.h`: `SVAL_IQS_TOUCH_MULT_SET`, `SVAL_IQS_TOUCH_MULT_CLEAR`,
-`SVAL_IQS_LP1_REPORT_RATE_MS`, `SVAL_IQS_IDLE_MODE_TIMEOUT_S` (255 restores the driver's
-"never enter LP1").
+`SVAL_IQS_LP1_REPORT_RATE_MS`, `SVAL_IQS_IDLE_MODE_TIMEOUT_S` (default 255, the driver's
+"never enter LP1"; 2 opts in to Azoteq's low-power timing).
 
 ## Pad identity
 

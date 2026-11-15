@@ -249,7 +249,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #define SVAL_FLIPFET_DEFAULT_IDLE_PERIOD_MS 1     // light idle: same as active by default
 #endif
 #ifndef SVAL_FLIPFET_DEFAULT_IDLE_AFTER_MS
-    #define SVAL_FLIPFET_DEFAULT_IDLE_AFTER_MS 10000   // light idle also dims the RGB, so not during typing pauses
+    #define SVAL_FLIPFET_DEFAULT_IDLE_AFTER_MS 0       // light idle off by default (opt-in; it also dims the RGB)
 #endif
 #ifndef SVAL_FLIPFET_DEFAULT_DEEP_AFTER_S
     #define SVAL_FLIPFET_DEFAULT_DEEP_AFTER_S 0       // deep idle off by default
@@ -258,15 +258,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #define SVAL_FLIPFET_DEFAULT_DEEP_PERIOD_MS 0
 #endif
 
-// Idle power features (saved_values.idle_flags). Each is a runtime toggle (VIA ids 25-27) so
-// their effect can be measured one at a time from the Scan Lab panel.
+// Idle power features (saved_values.idle_flags). Each is a runtime toggle (VIA ids 25-29) so
+// their effect can be measured one at a time from the Scan Lab panel. Every power-saving
+// mode is off by default: nothing saves power unless the user turns it on.
 #define SVAL_IDLE_POINTER_REST 0x01   // let the trackball sensor use its own rest modes
 #define SVAL_IDLE_RGB_DIM      0x02   // dim the RGB in light idle, off in deep idle
 #define SVAL_IDLE_CPU_SLEEP    0x04   // sleep the core between paced frames instead of spinning
 #define SVAL_IDLE_LOW_CLOCK    0x08   // deep idle: clk_sys from the USB PLL at 48 MHz, system PLL off
 #define SVAL_IDLE_LONG_NAP     0x10   // deep idle: naps of SVAL_DEEP_NAP_*_US instead of 1 ms
 #ifndef SVAL_IDLE_FLAGS_DEFAULT
-    #define SVAL_IDLE_FLAGS_DEFAULT (SVAL_IDLE_POINTER_REST | SVAL_IDLE_RGB_DIM | SVAL_IDLE_CPU_SLEEP | SVAL_IDLE_LOW_CLOCK | SVAL_IDLE_LONG_NAP)
+    #define SVAL_IDLE_FLAGS_DEFAULT 0 // opt-in: any of the SVAL_IDLE_* bits above
 #endif
 #ifndef SVAL_DEEP_NAP_MASTER_US
     #define SVAL_DEEP_NAP_MASTER_US 20000 // the sensor only reports every 100-500 ms in rest; USB replies wait at most this
