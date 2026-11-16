@@ -31,6 +31,20 @@ class PowerDefaults(unittest.TestCase):
         self.assertRegex(src, r'global_saved_values\.idle_flags\s*=\s*SVAL_IDLE_FLAGS_DEFAULT;')
         self.assertRegex(src, r'global_saved_values\.scan_deep_clock_idx\s*=\s*0;')
 
+    def test_settings_area_keeps_the_defaults(self):
+        # The power settings live in the scan record of the settings area. A
+        # board with no stored record (or a bad one) must read the defaults
+        # above, not zeros: the defaults are set first, and the record is read
+        # over a copy packed from them.
+        src = (KB / 'svalboard.c').read_text()
+        ids = (KB / 'settings_ids.h').read_text()
+        self.assertRegex(ids, r'X\(SVAL_SET_SCAN,\s*\d+,\s*16\)')
+        self.assertRegex(src, r'r\[14\]\s*=\s*global_saved_values\.idle_flags;')
+        self.assertRegex(src, r'global_saved_values\.idle_flags\s*=\s*r\[14\];')
+        self.assertRegex(src, r'put16\(r \+ 8, global_saved_values\.scan_idle_after_ms\);')
+        self.assertRegex(src, r'scan_pack\(r\);\s*settings_area_get\(SVAL_SET_SCAN,')
+        self.assertRegex(src, r'svalboard_saved_values_defaults\(\);\s*saved_values_load\(\);')
+
     def test_light_idle_off(self):
         # 0 = never; the light idle period matching the active period also means no change.
         self.assertEqual(define('config.h', 'SVAL_FLIPFET_DEFAULT_IDLE_AFTER_MS'), '0')
