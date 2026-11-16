@@ -5,8 +5,8 @@
 #include "azoteq_iqs5xx.h"
 #include "pointing_device_internal.h"
 #include "wait.h"
+#include <string.h>
 #ifdef SVAL_AZOTEQ_MULTITOUCH
-#    include <string.h>
 #    include "timer.h"
 #endif
 
@@ -179,6 +179,16 @@ static bool azoteq_iqs5xx_slot_down(const uint8_t *raw, uint8_t slot) {
 }
 #endif
 
+// A keyboard's check of each successful read's 10 base bytes, before anything
+// acts on them: it may clear gesture bits it does not believe or allow, and
+// returns false to drop the frame (no movement, no gesture, no contacts).
+// woke: the chip NACKed the first addressing (low power) and was retried.
+__attribute__((weak)) bool azoteq_iqs5xx_frame_filter_kb(uint8_t *base, bool woke) {
+    (void)base;
+    (void)woke;
+    return true;
+}
+
 i2c_status_t azoteq_iqs5xx_get_base_data(azoteq_iqs5xx_base_data_t *base_data) {
 #ifdef SVAL_AZOTEQ_MULTITOUCH
     // One communication window for both the mouse data and every contact:
@@ -241,17 +251,22 @@ i2c_status_t azoteq_iqs5xx_get_base_data(azoteq_iqs5xx_base_data_t *base_data) {
 #    endif
     i2c_status_t read_status = status, end_status = I2C_STATUS_SUCCESS;
     if (status == I2C_STATUS_SUCCESS) {
-        memcpy(base_data, raw, sizeof(*base_data));
         status = end_status = azoteq_iqs5xx_end_session();
     }
+    // Only a whole, believed frame is acted on: a failed or partial read
+    // leaves base_data as the caller zeroed it.
+    bool frame_ok = read_status == I2C_STATUS_SUCCESS && azoteq_iqs5xx_frame_filter_kb(raw, azoteq_iqs5xx_read_retried);
+    if (status == I2C_STATUS_SUCCESS && frame_ok) memcpy(base_data, raw, sizeof(*base_data));
     sval_mt_read_status(read_status, end_status, timer_elapsed32(started));
     azoteq_iqs5xx_base_status = status;
-    sval_mt_sample(raw, status == I2C_STATUS_SUCCESS);
+    sval_mt_sample(raw, status == I2C_STATUS_SUCCESS && frame_ok);
     return status;
 #else
-    i2c_status_t status = i2c_read_register16(AZOTEQ_IQS5XX_ADDRESS, AZOTEQ_IQS5XX_REG_PREVIOUS_CYCLE_TIME, (uint8_t *)base_data, 10, AZOTEQ_IQS5XX_TIMEOUT_MS);
+    uint8_t      raw[10] = {0};
+    i2c_status_t status  = i2c_read_register16(AZOTEQ_IQS5XX_ADDRESS, AZOTEQ_IQS5XX_REG_PREVIOUS_CYCLE_TIME, raw, sizeof(raw), AZOTEQ_IQS5XX_TIMEOUT_MS);
     if (status == I2C_STATUS_SUCCESS) {
         azoteq_iqs5xx_end_session();
+        if (azoteq_iqs5xx_frame_filter_kb(raw, false)) memcpy(base_data, raw, sizeof(*base_data));
     }
     return status;
 #endif

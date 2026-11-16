@@ -802,23 +802,32 @@ static void test_relay_cuts(void) {
     CHECK_EQ(ri.phase, RELAY_VERIFIED);
     update_relay_abort();
     CHECK(total > 8);
-    int cuts = 0;
+    int cuts = 0, restarted = 0;
     for (int tear = 0; tear < 2; tear++) {
         for (int k = 1; k <= total; k++) {
             relay_with_cut(len, k, tear, &hit);
             CHECK(hit);
             cuts++;
             relay_get();
-            // this half saw the other one lose its session: failed, link resumed
-            CHECK_EQ(ri.phase, RELAY_FAILED);
-            CHECK(!link_paused);
+            // this half saw the other one lose its session: it started over
+            // (relay_restart) and the image is verified there, or (the reset
+            // seen only as a dead link) it failed and resumed the link
+            CHECK(ri.phase == RELAY_VERIFIED || ri.phase == RELAY_FAILED);
+            if (ri.phase == RELAY_VERIFIED) {
+                restarted++;
+                CHECK_EQ(ri.restarts, 1);
+                CHECK(slot_is_img(len));
+            } else {
+                CHECK(!link_paused);
+            }
             // (a)/(c): only the other half's slot changed; its firmware boots
             CHECK(only_slot_changed());
             CHECK_EQ(outside_ops, 0);
             CHECK_EQ(sequence_errors, 0);
             CHECK_EQ(slave_commit_runs, 0);
-            // and a new relay over the dirty slot succeeds
+            // and a new relay over the slot succeeds
             update_relay_abort();
+            if (ri.phase == RELAY_VERIFIED) CHECK_EQ(relay_until(RELAY_IDLE, 10000), RELAY_IDLE); // the ABORT answered
             CHECK(update_relay_start(blob, len, body_crc()));
             CHECK_EQ(relay_until(RELAY_VERIFIED, 60000), RELAY_VERIFIED);
             CHECK(slot_is_img(len));
@@ -829,7 +838,8 @@ static void test_relay_cuts(void) {
             }
         }
     }
-    printf("slave power cuts: %d ROM ops in a relay, %d cuts, old image kept, retry succeeds\n", total, cuts);
+    CHECK(restarted > 0);
+    printf("slave power cuts: %d ROM ops in a relay, %d cuts (%d resumed by a restart), old image kept, retry succeeds\n", total, cuts, restarted);
 }
 
 // ---- updater.c: a session for the other half -----------------------------------------------

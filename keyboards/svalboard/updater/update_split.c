@@ -605,6 +605,10 @@ _Static_assert(SVAL_UPDATE_RELAY_RESYNC_US > SERIAL_USART_SHORT_TIMEOUT * 1000, 
 // so its interrupts are on and its copy has not begun): probe again every
 // SVAL_UPDATE_RELAY_PROBE_MS, still paused, at most this many times in all.
 #define RELAY_PROBES_MAX 20
+// The other half answers IDLE before COMMIT: it reset (its RAM and session are
+// gone; its firmware is untouched). The relay starts again from INFO, at most
+// this many times, rather than fail: the slot is erased and written again.
+#define RELAY_RESTARTS_MAX 2
 
 static uint8_t master_seq; // every new request gets the next one (retries keep theirs)
 
@@ -645,6 +649,7 @@ static struct {
     // relay said it has it (fast), and no request has gone unanswered since
     // that INFO, or since the last one (fast_ok: a PAGE2 may go).
     uint8_t         start_step; // RELAY_START: 0 INFO, 1 ABORT, 2 FAST
+    uint8_t         restarts;   // relay_restart() so far
     bool            fast, fast_ok;
     // Image bytes from page_off: two pages, as a PAGE2 fragment may cross one.
     uint8_t         page[2 * UPDATE_FLASH_PAGE] __attribute__((aligned(4)));
@@ -860,9 +865,30 @@ static void relay_timeout(uint32_t now) {
     }
 }
 
+// The other half answered IDLE before COMMIT: it reset (seen on the test
+// pair: QMK's split watchdog fired on a stray byte while it was out of step).
+// Its split watchdog has not been pinged since that boot and the link is
+// paused, so it is pinged now, or it resets again. Then the relay starts over
+// from INFO with the same image.
+static bool relay_restart(void) {
+    if (rl.slave_state != UPDATE_STATE_IDLE || rl.restarts >= RELAY_RESTARTS_MAX || rl.phase < RELAY_START || rl.phase > RELAY_VERIFIED) return false;
+    update_split_port_watchdog_ping();
+    rl.restarts++;
+    rl.phase      = RELAY_START;
+    rl.start_step = 0;
+    rl.pending    = false;
+    rl.off = rl.acked = 0;
+    rl.page_off       = UINT32_MAX;
+    rl.fast = rl.fast_ok = false;
+    rl.slave_erased = rl.slave_to_erase = 0;
+    rl.last_ok_ms   = update_split_port_now_ms();
+    return true;
+}
+
 // The other half answered in a state the relay did not expect: its error if
 // it latched one, else it lost the session (it rebooted, or timed out).
 static void relay_lost(void) {
+    if (rl.slave_error == UPDATE_OK && relay_restart()) return;
     relay_fail(rl.slave_error != UPDATE_OK ? (update_status_t)rl.slave_error : UPDATE_UNAVAILABLE);
 }
 
@@ -1142,6 +1168,7 @@ static bool relay_step(void) {
                 return false; // a new request next pass
             }
             if (r.state == UPDATE_STATE_IDLE) {
+                if (relay_restart()) return true;
                 relay_fail(UPDATE_UNAVAILABLE); // it lost the session: rebooted, or timed out
                 return false;
             }
@@ -1340,6 +1367,7 @@ void update_relay_info(update_relay_info_t *info) {
     info->busy           = rl.busy;
     info->resumes        = rl.resumes;
     info->fast           = rl.fast;
+    info->restarts       = rl.restarts;
 }
 
 void update_relay_last_failure(update_relay_fail_t *f) {
@@ -1434,6 +1462,8 @@ void update_split_host_master_reset(void) {
 #    include "synchronization_util.h"
 #    include "version.h" // QMK_GIT_HASH
 #    include "split_pause.h"
+#    include "split_common/transport.h"
+#    include "split_common/transaction_id_define.h"
 #    include "build_reset.h"
 #    include "updater.h"
 #    include "hardware/sync.h"
@@ -1567,6 +1597,14 @@ update_status_t update_split_port_settings_invalidate(uint8_t mode) {
     bool ok = build_reset_invalidate(mode); // its own interrupts-off section nests in this one
     restore_interrupts(irq);
     return ok ? UPDATE_OK : UPDATE_FLASH_ERR;
+}
+
+// One PUT_WATCHDOG while the link is paused: a half that reset during the
+// relay has its split watchdog armed and would reset again without it.
+void update_split_port_watchdog_ping(void) {
+    extern bool soft_serial_transaction(int index);
+    split_shmem->watchdog_pinged = true;
+    (void)soft_serial_transaction(PUT_WATCHDOG);
 }
 
 void update_split_port_reboot(void) {

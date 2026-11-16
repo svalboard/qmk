@@ -40,9 +40,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // debug console prints every key event (key_log.c) to any program on the
 // host. Dev builds only.
 //#define DEBUG_MATRIX_SCAN_RATE
-// Svalboard stores its config in VIA custom config area
-// saved_values_t (~54 bytes) + 3 bytes magic = ~60 bytes, round to 100
+// Retired: keyboard settings used to live in these 100 bytes, and nothing
+// reads or writes them now. The size stays so the keymap and macros keep their
+// addresses (VIA's stored layout stamp includes it).
 #define VIA_EEPROM_CUSTOM_CONFIG_SIZE 100
+// Every keyboard setting: labeled records (settings_area.h, settings_ids.h) in
+// a fixed block below the combo names, taken from the end of the macro buffer
+// (modules/svalboard/core/post_config.h). Changing the size moves the block,
+// so every setting in it reads as default once.
+#define SVAL_SETTINGS_AREA_SIZE 8192
 
 // The raw HID interface (VIA, the Sval protocol and the client wrapper) uses
 // 64-byte reports, the full-speed interrupt maximum, both ways. Hosts size their
@@ -150,6 +156,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // frame), and every PAGE2 fails at once until the link timeout. Seen on the
 // test pair in 3 of 36 Keybard installs (about 1 in 12): 1440 retries,
 // 1.4 ms each, then UNAVAILABLE ("The other half stopped answering").
+// Later traces showed that failure was the other half resetting, not this
+// desync: its split watchdog fired on a stray 0x07, 0x00 read while out of
+// step (fixed in transactions.c and serial_protocol.c; the relay now starts
+// over after such a reset, update_split.c relay_restart). The gap stays: it
+// still lets the other half drop a half-read frame before the next request.
 #define SVAL_UPDATE_RELAY_RESYNC_US 5000
 // After the other half accepts COMMIT, the link stays paused for its commit
 // (M1 #13: about 1-2 s from COMMIT to the reset) plus 2.5 s for its reboot
@@ -244,7 +255,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #define SVAL_FLIPFET_DEFAULT_IDLE_PERIOD_MS 1     // light idle: same as active by default
 #endif
 #ifndef SVAL_FLIPFET_DEFAULT_IDLE_AFTER_MS
-    #define SVAL_FLIPFET_DEFAULT_IDLE_AFTER_MS 10000   // light idle also dims the RGB, so not during typing pauses
+    #define SVAL_FLIPFET_DEFAULT_IDLE_AFTER_MS 0       // light idle off by default (opt-in; it also dims the RGB)
 #endif
 #ifndef SVAL_FLIPFET_DEFAULT_DEEP_AFTER_S
     #define SVAL_FLIPFET_DEFAULT_DEEP_AFTER_S 0       // deep idle off by default
@@ -253,15 +264,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #define SVAL_FLIPFET_DEFAULT_DEEP_PERIOD_MS 0
 #endif
 
-// Idle power features (saved_values.idle_flags). Each is a runtime toggle (VIA ids 25-27) so
-// their effect can be measured one at a time from the Scan Lab panel.
+// Idle power features (saved_values.idle_flags). Each is a runtime toggle (VIA ids 25-29) so
+// their effect can be measured one at a time from the Scan Lab panel. Every power-saving
+// mode is off by default: nothing saves power unless the user turns it on.
 #define SVAL_IDLE_POINTER_REST 0x01   // let the trackball sensor use its own rest modes
 #define SVAL_IDLE_RGB_DIM      0x02   // dim the RGB in light idle, off in deep idle
 #define SVAL_IDLE_CPU_SLEEP    0x04   // sleep the core between paced frames instead of spinning
 #define SVAL_IDLE_LOW_CLOCK    0x08   // deep idle: clk_sys from the USB PLL at 48 MHz, system PLL off
 #define SVAL_IDLE_LONG_NAP     0x10   // deep idle: naps of SVAL_DEEP_NAP_*_US instead of 1 ms
 #ifndef SVAL_IDLE_FLAGS_DEFAULT
-    #define SVAL_IDLE_FLAGS_DEFAULT (SVAL_IDLE_POINTER_REST | SVAL_IDLE_RGB_DIM | SVAL_IDLE_CPU_SLEEP | SVAL_IDLE_LOW_CLOCK | SVAL_IDLE_LONG_NAP)
+    #define SVAL_IDLE_FLAGS_DEFAULT 0 // opt-in: any of the SVAL_IDLE_* bits above
 #endif
 #ifndef SVAL_DEEP_NAP_MASTER_US
     #define SVAL_DEEP_NAP_MASTER_US 20000 // the sensor only reports every 100-500 ms in rest; USB replies wait at most this

@@ -13,6 +13,33 @@ Svalboard keeps its settings (keymap, macros, Sval tables, pointing settings) in
 
 Installing a different firmware build resets every setting to that build's defaults, on each half. Before flashing, export your layout file in Keybard; load it again afterwards. Flashing the same file again keeps your settings.
 
+## Keyboard settings: the settings area
+
+Every keyboard setting (pointer, Auto Mouse, layer colors, scan timing, touchpad, scroll speed) is a record in the settings area: 8,192 bytes at a fixed place in the 128 KB store, directly below the combo names. It is counted from the end of the store, so the tables in front of it can change size without moving it. The macro buffer ends below it.
+
+| Logical address | Bytes | Contents |
+|---|---|---|
+| `0x00000` | 37 | QMK eeconfig |
+| `0x00025` | 22,344 | Sval tables: tap dances, combos, key overrides, Alt Repeat, leader, QMK settings, fragments, labels |
+| `0x0576D` | 5 | VIA magic, keycode version, layout options |
+| `0x05772` | 100 | VIA custom config: retired, never read or written |
+| `0x057D6` | 1,920 | Keymap, 16 layers |
+| `0x05F56` | 94,370 | Macro buffer |
+| `0x1CFF8` | 8,192 | Settings area |
+| `0x1EFF8` | 4,104 | Combo names |
+
+Records (`settings_area.h`): an 8-byte header, then entries of id, capacity and two slots. A save writes the slot that does not hold the current value and gives it the next sequence number last, so a power cut during a save leaves the previous value: each setting reads as its old or its new value. A missing record, or one with no valid slot, reads as the setting's default. Ids from newer firmware are skipped.
+
+Adding a setting:
+
+1. A line in `settings_ids.h`: the next unused id (never reuse one) and the payload size.
+2. Load it with `settings_area_get()` over its default, save it with `settings_area_put()`.
+3. For Keybard: a VIA custom value id and a GET_INFO feature bit.
+
+No magic, stamp or protocol version changes. A record can grow later by appending fields: a shorter stored record fills the front, and the new fields keep their defaults. The build fails if the records can overflow the area, and `tools/settings_budget.py` (run by `tools/pre_pr.sh`) warns once they could fill half of it. Code that uses the retired custom config fails the same check.
+
+Installing a different build resets every setting (above), so moving the settings here needed no migration: the first boot writes the defaults into the area.
+
 ## Settings on a new build
 
 At boot the firmware hashes its own image in flash and compares the hash with the build reset record at `0xFFD000` (`build_reset.c`). If the record holds another hash, or no valid record (Vial, vLaunch2 and older never write one), the board resets every setting to the build's defaults, through the same path as a new `EECONFIG_MAGIC_NUMBER`, then records the hash. GET_INFO byte 18 bit 2 tells the host about the reset until it sends `0x2A`.
