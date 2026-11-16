@@ -9,7 +9,9 @@
 #    qmk_cli image, so the formatter versions match svalboard-lint.yml.
 # 2. Keyboard lint: qmk info for every svalboard/ keyboard, and the Svalboard
 #    targets and aliases (qmk ci-validate-*).
-# 3. Fast host tests: util/updater_test/run.sh, tests/sval_storage,
+# 3. The settings area budget (tools/settings_budget.py): fails on overflow,
+#    warns at half full.
+# 4. Fast host tests: util/updater_test/run.sh, tests/sval_storage,
 #    util/test_native_ptp.sh, and make test:sval_tap_dance,
 #    test:sval_alt_repeat and test:sval_tap_dance_limit (in the qmk_cli image).
 #
@@ -96,6 +98,10 @@ log=$(mktemp)
 bash util/updater_test/run.sh > "$log" 2>&1
 ec=$?; [ $ec -eq 0 ] && tail -2 "$log" || tail -30 "$log"
 result "updater host tests" $ec
+
+step "Settings area budget (tools/settings_budget.py)"
+python3 keyboards/svalboard/tools/settings_budget.py
+result "settings area budget" $?
 
 step "Storage tests (tests/sval_storage)"
 python3 -m unittest discover -s tests/sval_storage > "$log" 2>&1
