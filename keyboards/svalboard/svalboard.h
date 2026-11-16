@@ -21,6 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "quantum.h"
 #include "pointing_motion_vs.h"
 #include "sval_timing.h"
+#include "automouse_layers.h"
 
 struct layer_hsv {
     uint8_t hue;
@@ -57,6 +58,10 @@ struct __attribute__((__packed__)) saved_values {
     uint8_t  idle_flags;          // SVAL_IDLE_* bits: pointer rest, RGB dim, CPU sleep, low clock, long naps
     uint8_t  scan_deep_clock_idx; // deep-idle clock when SVAL_IDLE_LOW_CLOCK: 0 = 48 MHz, 1 = 24 MHz, 2 = 12 MHz
 };
+
+// Auto Mouse layers (automouse_layers.h), saved in their own record.
+extern uint8_t  sval_automouse_layers_mode;
+extern uint16_t sval_automouse_layer_mask;
 
 // RPC structure for split keyboard sync
 typedef struct __attribute__((__packed__)) _presence_rpc_t {
