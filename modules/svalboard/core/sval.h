@@ -463,6 +463,11 @@ void keyboard_post_init_core_kb(void);
 // Tap dance process_record hook
 bool process_record_sval_tap_dance(uint16_t keycode, keyrecord_t *record);
 
+// Leader key process_record hook
+bool process_record_sval_leader(uint16_t keycode, keyrecord_t *record);
+// Leader key housekeeping_task hook
+void housekeeping_task_sval_leader(void);
+
 // Fragment detection and selection functions
 // These are weak - keyboard can override for hardware-specific detection
 

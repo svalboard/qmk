@@ -98,7 +98,7 @@
 #endif
 
 // Dynamic leader timeout - Sval controls this variable
-#if defined(LEADER_ENABLE) && !defined(__ASSEMBLER__)
+#if defined(SVAL_LEADER_ENABLE) && !defined(__ASSEMBLER__)
 #    include <stdint.h>
 extern uint16_t sval_leader_timeout;
 #    define LEADER_TIMEOUT (sval_leader_timeout)

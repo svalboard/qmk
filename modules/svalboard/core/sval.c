@@ -179,7 +179,7 @@ uint8_t sval_get_feature_flags(void) {
 #ifdef ONESHOT_ENABLE
     flags |= sval_flag_oneshot;
 #endif
-#ifdef LEADER_ENABLE
+#ifdef SVAL_LEADER_ENABLE
     flags |= sval_flag_leader;
 #endif
     flags |= sval_flag_context_layer;
@@ -265,6 +265,7 @@ int sval_get_leader(uint16_t index, sval_leader_entry_t *entry) {
 int sval_set_leader(uint16_t index, const sval_leader_entry_t *entry) {
     if (index >= SVAL_LEADER_ENTRIES) return -1;
     sval_write_eeprom(SVAL_LEADER_OFFSET + index * sizeof(sval_leader_entry_t), entry, sizeof(sval_leader_entry_t));
+    dprintf("sval_leader %u: set entry\n", index);
     return 0;
 }
 
@@ -1304,7 +1305,11 @@ bool via_command_kb(uint8_t *data, uint8_t length) {
 // Process record hook for Sval features. Community-module hooks are named
 // after the module's directory (svalboard/core), not its module_name.
 bool process_record_core(uint16_t keycode, keyrecord_t *record) {
-    if (!process_record_sval_tap_dance(keycode, record)) {
+    if (
+#ifdef SVAL_LEADER_ENABLE
+            !process_record_sval_leader(keycode, record) ||
+#endif // SVAL_LEADER_ENABLE
+            !process_record_sval_tap_dance(keycode, record)) {
         return false;
     }
     if (keycode >= SVAL_MACRO_HIGH_BASE && keycode <= SVAL_MACRO_HIGH_MAX) {
@@ -1312,6 +1317,12 @@ bool process_record_core(uint16_t keycode, keyrecord_t *record) {
         return false;
     }
     return true;
+}
+
+void housekeeping_task_core(void) {
+#ifdef SVAL_LEADER_ENABLE
+    housekeeping_task_sval_leader();
+#endif // SVAL_LEADER_ENABLE
 }
 
 // Override keymap_key_to_keycode to handle magic position for tap dance/combo execution

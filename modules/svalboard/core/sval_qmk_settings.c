@@ -160,7 +160,7 @@ static const sval_setting_desc_t setting_descs[] = {
     {QSID_QUICK_TAP_TERM, 2, offsetof(sval_qmk_settings_t, quick_tap_term), 0},
     {QSID_CHORDAL_HOLD, 1, offsetof(sval_qmk_settings_t, tapping_v2), TAPPING_CHORDAL_HOLD_BIT},
     {QSID_FLOW_TAP_TERM, 2, offsetof(sval_qmk_settings_t, flow_tap_term), 0},
-#ifdef LEADER_ENABLE
+#ifdef SVAL_LEADER_ENABLE
     {QSID_LEADER_TIMEOUT, 2, offsetof(sval_qmk_settings_t, leader_timeout), 0},
     {QSID_LEADER_PER_KEY_TIMING, 1, offsetof(sval_qmk_settings_t, leader_options), LEADER_PER_KEY_TIMING_BIT},
 #endif
@@ -348,7 +348,7 @@ static void sval_qmk_settings_apply(void) {
     mk_wheel_time_to_max = SVAL_AT_MOST(settings.mousekey_wheel_time_to_max, SVAL_MK_8BIT_MAX);
 #endif
 
-#ifdef LEADER_ENABLE
+#ifdef SVAL_LEADER_ENABLE
     extern uint16_t sval_leader_timeout;
     sval_leader_timeout = settings.leader_timeout;
 #endif
