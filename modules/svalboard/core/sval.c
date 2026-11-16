@@ -265,7 +265,6 @@ int sval_get_leader(uint16_t index, sval_leader_entry_t *entry) {
 int sval_set_leader(uint16_t index, const sval_leader_entry_t *entry) {
     if (index >= SVAL_LEADER_ENTRIES) return -1;
     sval_write_eeprom(SVAL_LEADER_OFFSET + index * sizeof(sval_leader_entry_t), entry, sizeof(sval_leader_entry_t));
-    dprintf("sval_leader %u: set entry\n", index);
     return 0;
 }
 
