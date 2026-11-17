@@ -86,12 +86,9 @@
 #define SVAL_QMK_SETTINGS_SIZE 44
 
 // Leader key defaults written by a settings reset, and to a board that stored a
-// timeout of 0. 300 ms is QMK's own LEADER_TIMEOUT default. Per-key timing
-// restarts the 300 ms after each key, so a sequence can be any length as long
-// as no gap between keys is longer than that; most QMK keymaps that set a
-// leader timeout also turn it on.
+// timeout of 0.
 #ifndef SVAL_DEFAULT_LEADER_TIMEOUT
-#    define SVAL_DEFAULT_LEADER_TIMEOUT 300
+#    define SVAL_DEFAULT_LEADER_TIMEOUT 1000
 #endif
 #ifndef SVAL_DEFAULT_LEADER_PER_KEY_TIMING
 #    define SVAL_DEFAULT_LEADER_PER_KEY_TIMING 1

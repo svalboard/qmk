@@ -220,15 +220,15 @@ static void wheel_migration(void) {
 int main(void) {
     /* A settings reset writes the default leader timing, not the live variable (0 here). */
     sval_qmk_settings_reset();
-    assert(STORED.leader_timeout == SVAL_DEFAULT_LEADER_TIMEOUT && SVAL_DEFAULT_LEADER_TIMEOUT == 300);
-    assert(get16(28) == 300 && sval_leader_timeout == 300);
+    assert(STORED.leader_timeout == SVAL_DEFAULT_LEADER_TIMEOUT && SVAL_DEFAULT_LEADER_TIMEOUT == 1000);
+    assert(get16(28) == 1000 && sval_leader_timeout == 1000);
     assert(get8(29) == SVAL_DEFAULT_LEADER_PER_KEY_TIMING && sval_get_leader_per_key_timing());
     assert(get16(2) == 50 && get16(4) == 175 && get16(7) == 200 && get16(10) == 20);
 
-    /* A second reset from a live 0 still writes 300 (a board at 0 used to stay at 0). */
+    /* A second reset from a live 0 still writes 1000 (a board at 0 used to stay at 0). */
     sval_leader_timeout = 0;
     sval_qmk_settings_reset();
-    assert(STORED.leader_timeout == 300);
+    assert(STORED.leader_timeout == 1000);
 
     /* Boot migration: a stored 0 (the old reset) becomes the default, once, and is saved. */
     sval_qmk_settings_t old = STORED;
@@ -237,17 +237,17 @@ int main(void) {
     old.unused2 = 0x5A; /* the bytes around it are kept */
     boot_with(old);
     assert(eeprom_writes == 1);
-    assert(STORED.leader_timeout == 300 && (STORED.leader_options & 1) && STORED.unused2 == 0x5A);
-    assert(sval_leader_timeout == 300);
+    assert(STORED.leader_timeout == 1000 && (STORED.leader_options & 1) && STORED.unused2 == 0x5A);
+    assert(sval_leader_timeout == 1000);
     old = STORED;
     boot_with(old);
-    assert(eeprom_writes == 0 && STORED.leader_timeout == 300); /* nothing more on the next boot */
+    assert(eeprom_writes == 0 && STORED.leader_timeout == 1000); /* nothing more on the next boot */
 
     /* A value the user chose is kept, per-key off included. */
-    old.leader_timeout = 1000;
+    old.leader_timeout = 2000;
     old.leader_options = 0;
     boot_with(old);
-    assert(eeprom_writes == 0 && STORED.leader_timeout == 1000 && !(STORED.leader_options & 1) && sval_leader_timeout == 1000);
+    assert(eeprom_writes == 0 && STORED.leader_timeout == 2000 && !(STORED.leader_options & 1) && sval_leader_timeout == 2000);
 
     /* The other settings where 0 cannot work get their defaults; 0s that mean something stay. */
     old.combo_term = 0;
