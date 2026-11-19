@@ -19,8 +19,7 @@ DOWNSTREAM_IDS = range(0xF000, 0xF100)
 
 def records(text):
     """(name, id, capacity) of every X(...) line of settings_ids.h; ids may be decimal or hex."""
-    return [(name, int(num, 0), int(cap, 0))
-            for name, num, cap in re.findall(r'^\s*X\((\w+),\s*(0[xX][0-9A-Fa-f]+|\d+),\s*(0[xX][0-9A-Fa-f]+|\d+)\)', text, re.M)]
+    return [(name, int(num, 0), int(cap, 0)) for name, num, cap in re.findall(r'^\s*X\((\w+),\s*(0[xX][0-9A-Fa-f]+|\d+),\s*(0[xX][0-9A-Fa-f]+|\d+)\)', text, re.M)]
 
 
 def id_problems(ids):
