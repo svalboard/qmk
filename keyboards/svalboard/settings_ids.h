@@ -6,6 +6,8 @@
 // To add a setting: a new line with the next unused id (ids are never reused,
 // even after a setting is dropped) and its payload size. The build fails if
 // the area would overflow; tools/pre_pr.sh warns at half full.
+// IDs 0xF000-0xF0FF are reserved for downstream builds; never assign them here.
+// tools/settings_budget.py fails on any of them, as on 0, 0xFFFE and 0xFFFF.
 // A record may later grow: append fields at the end and raise its capacity.
 // A record stored by older firmware is then shorter, and the new fields keep
 // their defaults (settings_area_get() reports the stored length).
