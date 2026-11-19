@@ -811,7 +811,7 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
                 data[1] = sval_cmd_error;
                 return false;
             }
-            const uint32_t state    = sval_layer_state_view_kb(layer_state); // with app rules: the layers keys use now
+            const uint32_t state    = layer_state;
             const uint32_t defaults = default_layer_state;
             data[2]                 = state & 0xFF;
             data[3]                 = (state >> 8) & 0xFF;
@@ -1279,10 +1279,6 @@ __attribute__((weak)) void sval_app_foreground_kb(uint8_t *data, uint8_t length)
 
 __attribute__((weak)) void sval_app_rules_kb(uint8_t *data, uint8_t length) {
     data[1] = 0xFF;
-}
-
-__attribute__((weak)) uint32_t sval_layer_state_view_kb(uint32_t state) {
-    return state;
 }
 
 __attribute__((weak)) void sval_debug_console_kb(uint8_t *data, uint8_t length) {

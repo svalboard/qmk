@@ -424,9 +424,6 @@ void sval_app_foreground_kb(uint8_t *data, uint8_t length);
 void sval_app_rules_kb(uint8_t *data, uint8_t length);
 // sval_layer_lookup_kb(keypos_t key) (sval_context_layer.c): the layer a key's
 // action comes from when the keyboard decides it (app rules), else UINT8_MAX.
-// The active layer mask reported by LAYER_STATE_GET (0x16): what keys use now.
-// Weak, returns the state unchanged.
-uint32_t sval_layer_state_view_kb(uint32_t state);
 // DEBUG_CONSOLE (0x3E): data is [op] in, [op] [status] [state] out. Weak,
 // answers status 0xFF.
 void sval_debug_console_kb(uint8_t *data, uint8_t length);

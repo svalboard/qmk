@@ -77,9 +77,13 @@ typedef struct {
     uint8_t  front;         // front layer applied, FF none
     uint16_t on_mask;
     uint16_t off_mask;
+    uint16_t keep_mask; // layers no mask touches (the auto mouse layer)
 } sval_app_engine_t;
 
 void sval_app_engine_init(sval_app_engine_t *e);
+// Layers the masks never turn on or off: the auto mouse layer, which Auto
+// Mouse alone turns on and off (and the user's mouse keys).
+void sval_app_engine_keep(sval_app_engine_t *e, uint16_t layers);
 // A foreground message: app_id now in front, for lifetime_s (0: the default).
 void sval_app_engine_foreground(sval_app_engine_t *e, uint32_t app_id, uint8_t lifetime_s, uint32_t now);
 // The host is leaving: no app is in front.

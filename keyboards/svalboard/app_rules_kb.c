@@ -14,6 +14,7 @@
 #include "app_rules.h"
 #include "app_rules_kb.h"
 #include "dynamic_keymap.h"
+#include "keymaps/keymap_support.h"
 #if VIA_ENABLE
 #    include "settings_area.h"
 _Static_assert(SVAL_APP_RULES_RECORD_BYTES <= SVAL_SET_APP_RULES_CAP, "the app rules record fits its settings area entry");
@@ -33,6 +34,7 @@ static uint8_t layer_count(void) {
 static void engine_init_once(void) {
     if (!engine_ready) {
         sval_app_engine_init(&engine);
+        sval_app_engine_keep(&engine, (uint16_t)(1u << MH_AUTO_BUTTONS_LAYER)); // Auto Mouse owns it
         engine_ready = true;
     }
 }

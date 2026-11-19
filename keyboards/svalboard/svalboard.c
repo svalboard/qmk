@@ -755,10 +755,6 @@ uint8_t sval_layer_lookup_kb(keypos_t key) {
     return sval_app_rules_lookup(key);
 }
 
-uint32_t sval_layer_state_view_kb(uint32_t state) {
-    return sval_app_rules_layer_view(state);
-}
-
 void sval_pointing_sensor_kb(uint8_t *data, uint8_t length) {
     sval_squal_command(data, length);
 }

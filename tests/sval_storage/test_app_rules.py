@@ -203,11 +203,16 @@ int main(void) {
     assert(!sval_automouse_layer_blocked(1, B(2), 0, def, 15));    /* without the rule it would not */
     view = sval_app_engine_layers(&e, B(15)); /* the mouse layer on over it */
     assert(sval_automouse_current_layer(view, def, 15) == 2);
-    /* Masking the mouse layer off turns its keys off while the rule applies. */
+    /* The auto mouse layer is Auto Mouse's: no mask turns it on or off. */
     memset(rec, 0, sizeof(rec));
-    rule(0, "cad.exe", NONE, NONE, 0, B(15));
+    rule(0, "cad.exe", NONE, NONE, B(15) | B(3), B(15) | B(1));
+    sval_app_engine_init(&e);
+    sval_app_engine_keep(&e, B(15));
     front("cad.exe");
-    assert(look(B(15), 0) == 0);
+    assert(e.on_mask == B(3) && e.off_mask == B(1));
+    assert(look(B(15), 0) == 15); /* Auto Mouse turned it on: its keys work */
+    assert(sval_app_engine_layers(&e, 0) == B(3)); /* the rule never turns it on */
+    assert(sval_app_engine_layers(&e, B(15) | B(1)) == (B(15) | B(3)));
     puts("app rules: ok");
     return 0;
 }

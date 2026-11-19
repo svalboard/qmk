@@ -85,6 +85,10 @@ void sval_app_engine_init(sval_app_engine_t *e) {
     e->front = SVAL_APP_LAYER_NONE;
 }
 
+void sval_app_engine_keep(sval_app_engine_t *e, uint16_t layers) {
+    e->keep_mask = layers;
+}
+
 void sval_app_engine_foreground(sval_app_engine_t *e, uint32_t app_id, uint8_t lifetime_s, uint32_t now) {
     if (app_id != e->app_id) e->default_yield = false; // a new app: its rule may set the default layer again
     if (!lifetime_s) lifetime_s = SVAL_APP_LIFETIME_DEFAULT_S;
@@ -116,7 +120,7 @@ bool sval_app_engine_update(sval_app_engine_t *e, const uint8_t *rec, uint8_t la
         memset(&r, 0, sizeof(r));
         r.default_layer = r.front_layer = SVAL_APP_LAYER_NONE;
     }
-    uint16_t layers = layer_count >= 16 ? 0xFFFF : (uint16_t)((1u << layer_count) - 1);
+    uint16_t layers = (layer_count >= 16 ? 0xFFFF : (uint16_t)((1u << layer_count) - 1)) & (uint16_t)~e->keep_mask;
     e->on_mask      = r.on_mask & layers;
     e->off_mask     = r.off_mask & layers;
     e->front        = r.front_layer < layer_count && r.front_layer < 16 && !((e->off_mask >> r.front_layer) & 1) ? r.front_layer : SVAL_APP_LAYER_NONE;

@@ -588,8 +588,9 @@ A rule has an app ID, a default layer, a front layer, an on mask and an off mask
 - **Front layer:** a layer just above the default layer while the app is in front. Layers the user turns on (held, toggled or one-shot) stay above it, whatever their number; transparent keys on it fall through to the default layer.
 - **On and off masks:** applied over the user's layer state when the board looks up a key, never written into it: the layers used are `(user | on) & ~off`. Off wins over on, and over the front layer. A layer key the user holds still works unless the off mask includes its layer. The default layer itself is not masked: change it with the default layer action.
 - With no front layer, a key comes from the highest of the masked layers and the default layer, as in QMK. Keys already held keep the layer they were pressed on until released.
-- Lights show the highest layer on after the rule, as they do for layers the user turns on. Auto Mouse's "Only on Selected Layers" looks at the same layers, so a front layer or an on-mask layer counts as the layer the user is on. An off mask that includes the auto mouse layer (15) also turns off its keys while the rule applies.
-- `LAYER_STATE_GET` (`0x16`) reports the layers keys use now: the active mask is the rule's view (front layer and masks applied), and the default mask is the board's runtime default layer.
+- The auto mouse layer (15) belongs to Auto Mouse: the masks never turn it on or off (its bits are ignored), so mouse keys work whenever Auto Mouse turns it on, as without a rule. Hosts should leave it out of the masks they offer.
+- Lights show the highest layer on after the rule, as they do for layers the user turns on. Auto Mouse's "Only on Selected Layers" looks at the same layers, so a front layer or an on-mask layer counts as the layer the user is on.
+- `LAYER_STATE_GET` (`0x16`) is unchanged: its active mask is the user's own layer state (what `0x17` sets), so a host can read it, change it and write it back without baking a rule into it. Its default mask is the board's default layer now, which is the rule's while one holds it. The layers keys use now are in the `APP_FOREGROUND` STATUS reply (offset 26).
 - Layers past the board's layer count are ignored.
 
 ### Foreground app: `APP_FOREGROUND` (`0x40`)
