@@ -40,5 +40,7 @@ void sval_app_rules_task(void);
 uint8_t sval_app_rules_lookup(keypos_t key);
 // The layers on as the rules leave them: (state | on) & ~off, plus the front layer.
 uint32_t sval_app_rules_layer_view(uint32_t state);
+// The module hooks (sval.h, sval_context_layer.c) svalboard.c fills in.
+uint8_t sval_layer_lookup_kb(keypos_t key);
 void     sval_app_foreground_command(uint8_t *data, uint8_t length);
 void     sval_app_rules_command(uint8_t *data, uint8_t length);
