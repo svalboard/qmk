@@ -582,15 +582,15 @@ ID: drop spaces and tabs at both ends, change ASCII `A`-`Z` to `a`-`z` (nothing 
 
 ### What a rule does
 
-A rule has an app ID, a default layer, a front layer, an on mask and an off mask (16 bits, bit `n` = layer `n`). The first rule with the app's ID applies; a rule may use any of its actions together. `FF` means "none" for either layer.
+A rule has an app ID, a default layer, a "turn on" layer, and the other layers it turns on or off (two 16-bit masks, bit `n` = layer `n`). Keybard shows these as App Layers: "Default layer", "Turn on layer" and "Other layers while the app is in front". The first rule with the app's ID applies; a rule may use any of its actions together. `FF` means "none" for either layer.
 
 - **Default layer:** while the app is in front, the board's default layer is the rule's (the runtime default layer only: never written to storage). When the rule stops applying, the user's own default layer comes back. If the user changes the default layer (a `DF` or `PDF` key, or `0x2B`) while the rule holds it, the user's choice stands, and the rule leaves the default layer alone until a different app comes to the front.
-- **Front layer:** a layer just above the default layer while the app is in front. Layers the user turns on (held, toggled or one-shot) stay above it, whatever their number; transparent keys on it fall through to the default layer.
-- **On and off masks:** applied over the user's layer state when the board looks up a key, never written into it: the layers used are `(user | on) & ~off`. Off wins over on, and over the front layer. A layer key the user holds still works unless the off mask includes its layer. The default layer itself is not masked: change it with the default layer action.
-- With no front layer, a key comes from the highest of the masked layers and the default layer, as in QMK. Keys already held keep the layer they were pressed on until released.
+- **Turn on layer** (the "front layer" field): a layer that is on while the app is in front, just above the default layer. Layers the user turns on (held, toggled or one-shot) stay above it, whatever their number; transparent keys on it fall through to the default layer.
+- **Other layers** (the on and off masks): applied over the user's layer state when the board looks up a key, never written into it: the layers used are `(user | on) & ~off`. Off wins over on, and over the turn on layer. A layer key the user holds still works unless the off mask includes its layer. The default layer itself is not masked: change it with the default layer action.
+- With no turn on layer, a key comes from the highest of the masked layers and the default layer, as in QMK. Keys already held keep the layer they were pressed on until released.
 - The auto mouse layer (15) belongs to Auto Mouse: the masks never turn it on or off (its bits are ignored), so mouse keys work whenever Auto Mouse turns it on, as without a rule. Hosts should leave it out of the masks they offer.
-- Lights show the highest layer on after the rule, as they do for layers the user turns on. Auto Mouse's "Only on Selected Layers" looks at the same layers, so a front layer or an on-mask layer counts as the layer the user is on.
-- `LAYER_STATE_GET` (`0x16`) is unchanged: its active mask is the user's own layer state (what `0x17` sets), so a host can read it, change it and write it back without baking a rule into it. Its default mask is the board's default layer now, which is the rule's while one holds it. The layers keys use now are in the `APP_FOREGROUND` STATUS reply (offset 26).
+- Lights show the highest layer on after the rule, as they do for layers the user turns on. Auto Mouse's "Only on Selected Layers" looks at the same layers, so a turn on layer or a layer the masks turn on counts as the layer the user is on.
+- `LAYER_STATE_GET` (`0x16`) is unchanged: its active mask is the user's own layer state (what `0x17` sets), so a host can read it, change it and write it back without baking a rule into it. Its default mask is the board's default layer now, which is the rule's while one holds it. The layers keys use now are in the `APP_FOREGROUND` STATUS reply (offset 26). A host that shows the layer the user is on (Keybard's layer indicator, Keybard Host and Keybard Overlay) reads STATUS on a board with app rules, and `0x16` otherwise; it reads and writes back `0x16` only for the user's own state.
 - Layers past the board's layer count are ignored.
 
 ### Foreground app: `APP_FOREGROUND` (`0x40`)
@@ -612,13 +612,13 @@ STATUS reply, offsets from the first byte after `40` (31 bytes):
 | 2 | 4 | app in front, `0` none (or expired) |
 | 6 | 2 | ms until it expires |
 | 8 | 1 | rule that applies, `FF` none |
-| 9 | 1 | front layer applied, `FF` none |
+| 9 | 1 | turn on layer applied, `FF` none |
 | 10 | 2 | on mask applied |
 | 12 | 2 | off mask applied |
 | 14 | 4 | the user's own default layer state (restored when the rule lets go) |
 | 18 | 4 | default layer state now |
 | 22 | 4 | the user's layer state |
-| 26 | 4 | the layers keys use now (`(user \| on) & ~off`, plus the front layer) |
+| 26 | 4 | the layers keys use now (`(user \| on) & ~off`, plus the turn on layer) |
 | 30 | 1 | flags: bit 0 a rule applies; bit 1 the rule holds the default layer; bit 2 the user changed the default layer under the rule |
 
 ### The rules: `APP_RULES` (`0x41`)
@@ -629,7 +629,7 @@ One record, settings area record 10 (`settings_ids.h`), 1540 bytes: a 4-byte hea
 |---|---|---|
 | 0 | 4 | app ID (`0`: an empty rule, never matches) |
 | 4 | 1 | default layer, `FF` none |
-| 5 | 1 | front layer, `FF` none |
+| 5 | 1 | turn on layer, `FF` none |
 | 6 | 2 | on mask |
 | 8 | 2 | off mask |
 | 10 | 1 | flags (spare, `0`) |
