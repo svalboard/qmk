@@ -26,6 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "velocity_scroll.h"
 #include "pad_scroll.h"
 #include "scroll_speed.h"
+#include "app_rules_kb.h"
 #ifdef SVAL_SCROLL_TEST
 #    include "scroll_test.h"
 #endif
@@ -58,7 +59,7 @@ void mouse_mode(bool);
 // Auto Mouse layers (automouse_layers.h): true while the layer the user is on
 // is one where motion must not turn the mouse layer on.
 static bool automouse_layer_blocked(void) {
-    return sval_automouse_layer_blocked(sval_automouse_layers_mode, sval_automouse_layer_mask, layer_state, default_layer_state, MH_AUTO_BUTTONS_LAYER);
+    return sval_automouse_layer_blocked(sval_automouse_layers_mode, sval_automouse_layer_mask, sval_app_rules_layer_view(layer_state), default_layer_state, MH_AUTO_BUTTONS_LAYER);
 }
 
 #endif
