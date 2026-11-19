@@ -219,7 +219,12 @@ class AppRules(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory)
             (path / 'test.c').write_text(TEST)
-            subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-fsanitize=undefined', '-fno-sanitize-recover', '-I', str(KB), str(path / 'test.c'), str(KB / 'app_rules.c'), str(KB / 'automouse_layers.c'), '-o', str(path / 'test')], check=True)
+            subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-fsanitize=undefined', '-fno-sanitize-recover', '-I',
+                            str(KB), str(path / 'test.c'),
+                            str(KB / 'app_rules.c'),
+                            str(KB / 'automouse_layers.c'), '-o',
+                            str(path / 'test')],
+                           check=True)
             subprocess.run([str(path / 'test')], check=True)
 
     def test_budget(self):

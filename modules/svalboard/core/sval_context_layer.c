@@ -30,7 +30,7 @@ uint8_t sval_context_layer(void) {
 // must operate only on manual state. UINT8_MAX leaves the key to QMK's normal
 // lookup, which supplies the existing default/base fallback.
 // The keyboard's say over a key's layer (app rules), else UINT8_MAX. Weak.
-uint8_t sval_layer_lookup_kb(keypos_t key);
+uint8_t                       sval_layer_lookup_kb(keypos_t key);
 __attribute__((weak)) uint8_t sval_layer_lookup_kb(keypos_t key) {
     return UINT8_MAX;
 }
