@@ -43,7 +43,13 @@ void sval_app_rules_load(void) {
     engine_init_once();
     memset(rules, 0, sizeof(rules));
 #if VIA_ENABLE
-    settings_area_get(SVAL_SET_APP_RULES, rules, sizeof(rules), NULL);
+    uint16_t len = 0;
+    settings_area_get(SVAL_SET_APP_RULES, rules, sizeof(rules), &len);
+    // Format 1 (pre-release builds): upgrade it; it is saved as format 2 at the next COMMIT.
+    if (rules[0] == 1) {
+        memcpy(staging, rules, sizeof(rules));
+        if (!sval_app_rules_upgrade(staging, len < sizeof(staging) ? len : sizeof(staging), rules)) memset(rules, 0, sizeof(rules));
+    }
 #endif
     if (!sval_app_rules_valid(rules)) memset(rules, 0, sizeof(rules));
     sval_app_rules_tidy(rules);
@@ -105,7 +111,7 @@ static void put32(uint8_t *p, uint32_t v) {
 }
 
 static uint8_t status_flags(void) {
-    return (engine.rule >= 0 ? 1 : 0) | (engine.default_set ? 2 : 0) | (engine.default_yield ? 4 : 0);
+    return (engine.rule >= 0 ? 1 : 0) | (engine.default_set ? 2 : 0) | (engine.default_yield ? 4 : 0) | (sval_app_rules_enabled(rules) ? 0 : 8);
 }
 
 // APP_FOREGROUND (0x40), data after [0xDF] [0x40]: [op] ... -> [op] [status] ...
@@ -176,21 +182,27 @@ void sval_app_rules_command(uint8_t *d, uint8_t length) {
     }
     engine_init_once();
     switch (op) {
-        case SVAL_APP_RULES_INFO:
-            if (length < 10) {
+        case SVAL_APP_RULES_INFO: {
+            if (length < 14) {
                 d[1] = SVAL_APP_STATUS_SHORT;
                 return;
             }
             memset(d + 1, 0, length - 1);
-            d[2] = SVAL_APP_RULES_FORMAT;
-            d[3] = SVAL_APP_RULES_MAX;
-            d[4] = SVAL_APP_RULE_BYTES;
-            d[5] = sval_app_rules_count(rules);
-            d[6] = (uint8_t)SVAL_APP_RULES_RECORD_BYTES;
-            d[7] = (uint8_t)(SVAL_APP_RULES_RECORD_BYTES >> 8);
-            d[8] = SVAL_APP_RULES_CHUNK;
-            d[9] = layer_count();
+            uint16_t used = sval_app_rules_used(rules);
+            d[2]          = SVAL_APP_RULES_FORMAT;
+            d[3]          = SVAL_APP_RULES_MAX;
+            d[4]          = SVAL_APP_RULE_HEAD_BYTES;
+            d[5]          = sval_app_rules_count(rules);
+            d[6]          = (uint8_t)SVAL_APP_RULES_RECORD_BYTES;
+            d[7]          = (uint8_t)(SVAL_APP_RULES_RECORD_BYTES >> 8);
+            d[8]          = SVAL_APP_RULES_CHUNK;
+            d[9]          = layer_count();
+            d[10]         = (uint8_t)used;
+            d[11]         = (uint8_t)(used >> 8);
+            d[12]         = SVAL_APP_RULE_TEXT_MAX;
+            d[13]         = rules[2] & SVAL_APP_RULES_OFF;
             return;
+        }
         case SVAL_APP_RULES_READ:
         case SVAL_APP_RULES_WRITE: {
             if (length < 4) {

@@ -23,7 +23,7 @@
     X(SVAL_SET_PAD_MODE, 7, 2)         \
     X(SVAL_SET_SCROLL_SPEED, 8, 5)     \
     X(SVAL_SET_AUTOMOUSE_LAYERS, 9, 4) \
-    X(SVAL_SET_APP_RULES, 10, 1540)
+    X(SVAL_SET_APP_RULES, 10, 1792)
 
 #define SVAL_SETTINGS_ID_(name, id, cap) name = id,
 enum sval_setting_id { SVAL_SETTINGS_RECORDS(SVAL_SETTINGS_ID_) };

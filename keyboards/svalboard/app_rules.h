@@ -27,19 +27,28 @@
 #include <stdint.h>
 
 #define SVAL_APP_RULES_MAX 64
-#define SVAL_APP_RULE_BYTES 24
 #define SVAL_APP_RULES_HEADER_BYTES 4
-#define SVAL_APP_RULES_RECORD_BYTES (SVAL_APP_RULES_HEADER_BYTES + SVAL_APP_RULES_MAX * SVAL_APP_RULE_BYTES) // 1540
-#define SVAL_APP_RULES_FORMAT 1
-#define SVAL_APP_RULE_LABEL_BYTES 13
+#define SVAL_APP_RULE_HEAD_BYTES 12 // a rule's fixed fields, before its text
+#define SVAL_APP_RULE_TEXT_MAX 64
+#define SVAL_APP_RULES_RECORD_BYTES 1792 // the whole record: header, rules and their text
+#define SVAL_APP_RULES_FORMAT 2
 #define SVAL_APP_LAYER_NONE 0xFF
 #define SVAL_APP_LIFETIME_DEFAULT_S 15
 #define SVAL_APP_LIFETIME_MAX_S 60
+// Header byte 2.
+#define SVAL_APP_RULES_OFF 0x01 // App Layers off: no rule applies; the rules stay stored
+// A rule's flags.
+#define SVAL_APP_RULE_OFF 0x01  // this rule is off: matching skips it
+#define SVAL_APP_RULE_SITE 0x02 // a website rule: its text is the site (for hosts; the board ignores it)
 
-// Record: [format 1][count][0][0], then count rules of 24 bytes (little-endian):
+// Record (format 2): [format 2][count][flags][0], then count rules packed back
+// to back, each its fixed fields and its text (little-endian):
 //   0 app id u32 (0 = empty, never matches)   4 default layer (FF none)
-//   5 front layer (FF none)   6 on mask u16   8 off mask u16   10 flags (0)
-//   11 label, 13 bytes UTF-8, zero-padded
+//   5 front layer (FF none)   6 on mask u16   8 off mask u16   10 flags
+//   11 text length n (at most 64)   12 text, n bytes UTF-8 (the app key, or the site)
+// Header and rules together fit in SVAL_APP_RULES_RECORD_BYTES.
+// Format 1 (never released: 24-byte rules with a 13-byte label) is upgraded
+// when read (sval_app_rules_upgrade).
 typedef struct {
     uint32_t app_id;
     uint8_t  default_layer;
@@ -54,16 +63,33 @@ typedef struct {
 // returned as 1. An empty key is 0 (no app).
 uint32_t sval_app_id(const char *key, uint16_t len);
 
-// A record with format 1 and at most 64 rules. A blank record (all zero) is
-// valid and has no rules.
+// A format 2 record whose rules fit. A blank record (all zero) is valid and
+// has no rules.
 bool    sval_app_rules_valid(const uint8_t *rec);
 uint8_t sval_app_rules_count(const uint8_t *rec);
-void    sval_app_rule_get(const uint8_t *rec, uint8_t index, sval_app_rule_t *rule);
-void    sval_app_rule_put(uint8_t *rec, uint8_t index, const sval_app_rule_t *rule, const char *label);
-// The first rule for app_id, or -1. App id 0 never matches.
+// Whether App Layers is on (header byte 2 bit 0 clear).
+bool sval_app_rules_enabled(const uint8_t *rec);
+void sval_app_rules_set_enabled(uint8_t *rec, bool on);
+// Bytes the header and the rules use; 0 for a record that is not valid.
+uint16_t sval_app_rules_used(const uint8_t *rec);
+// Offset of rule index (index < count of a valid record).
+uint16_t sval_app_rule_offset(const uint8_t *rec, uint8_t index);
+void     sval_app_rule_get(const uint8_t *rec, uint8_t index, sval_app_rule_t *rule);
+// A rule's text and its length.
+const uint8_t *sval_app_rule_text(const uint8_t *rec, uint8_t index, uint8_t *len);
+// Add a rule at the end (a blank record becomes format 2). False when it does
+// not fit (64 rules, or the record's bytes); text longer than 64 bytes is cut.
+bool sval_app_rules_append(uint8_t *rec, const sval_app_rule_t *rule, const char *text);
+// The first rule for app_id that is on, or -1. App id 0 never matches, and
+// nothing matches while App Layers is off.
 int8_t sval_app_rules_match(const uint8_t *rec, uint32_t app_id);
-// Zero what lies past the count, so stored bytes depend only on the rules.
+// Zero what lies past the rules and the header's spare bits, so stored bytes
+// depend only on the rules. A record that is not valid becomes blank.
 void sval_app_rules_tidy(uint8_t *rec);
+// A format 1 record (len bytes) as format 2 into out (the record's size), App
+// Layers on. A label that names a site (its id is the hash of "site:" and it,
+// or it starts with "…") marks a website rule. False if in is not format 1.
+bool sval_app_rules_upgrade(const uint8_t *in, uint16_t len, uint8_t *out);
 
 typedef struct {
     uint32_t app_id;        // app in front, 0 for none

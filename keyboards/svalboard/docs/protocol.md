@@ -582,7 +582,9 @@ ID: drop spaces and tabs at both ends, change ASCII `A`-`Z` to `a`-`z` (nothing 
 
 ### What a rule does
 
-A rule has an app ID, a default layer, a "turn on" layer, and the other layers it turns on or off (two 16-bit masks, bit `n` = layer `n`). Keybard shows these as App Layers: "Default layer", "Turn on layer" and "Other layers while the app is in front". The first rule with the app's ID applies; a rule may use any of its actions together. `FF` means "none" for either layer.
+A rule has an app ID, a default layer, a "turn on" layer, and the other layers it turns on or off (two 16-bit masks, bit `n` = layer `n`). Keybard shows these as App Layers: "Default layer", "Turn on layer" and "Other layers while the app is in front". The first rule with the app's ID that is on applies; a rule may use any of its actions together. `FF` means "none" for either layer.
+
+- **On and off:** App Layers as a whole has a switch (header byte 2 bit 0, set = off), and each rule has one (its flags bit 0, set = off). Clear means on, so a rule written without flags, and a record without the header bit, are on. While App Layers is off no rule applies, exactly as with no app in front: the board restores the user's default layer and stops changing key lookup at once (at the COMMIT that turns it off), and keeps the rules stored. A rule that is off is skipped when matching, so a later rule for the same app applies instead. A host may stop sending the app in front while App Layers is off (STATUS flags bit 3, or INFO).
 
 - **Default layer:** while the app is in front, the board's default layer is the rule's (the runtime default layer only: never written to storage). When the rule stops applying, the user's own default layer comes back. If the user changes the default layer (a `DF` or `PDF` key, or `0x2B`) while the rule holds it, the user's choice stands, and the rule leaves the default layer alone until a different app comes to the front.
 - **Turn on layer** (the "front layer" field): a layer that is on while the app is in front, just above the default layer. Layers the user turns on (held, toggled or one-shot) stay above it, whatever their number; transparent keys on it fall through to the default layer.
@@ -619,11 +621,13 @@ STATUS reply, offsets from the first byte after `40` (31 bytes):
 | 18 | 4 | default layer state now |
 | 22 | 4 | the user's layer state |
 | 26 | 4 | the layers keys use now (`(user \| on) & ~off`, plus the turn on layer) |
-| 30 | 1 | flags: bit 0 a rule applies; bit 1 the rule holds the default layer; bit 2 the user changed the default layer under the rule |
+| 30 | 1 | flags: bit 0 a rule applies; bit 1 the rule holds the default layer; bit 2 the user changed the default layer under the rule; bit 3 App Layers is off |
+
+The SET reply's flags are the same.
 
 ### The rules: `APP_RULES` (`0x41`)
 
-One record, settings area record 10 (`settings_ids.h`), 1540 bytes: a 4-byte header `[format 1] [count] [0] [0]`, then up to 64 rules of 24 bytes, little-endian:
+One record, settings area record 10 (`settings_ids.h`), at most 1792 bytes: a 4-byte header `[format 2] [count] [flags] [0]`, then `count` rules packed back to back, each its 12 fixed bytes and its text (little-endian):
 
 | Offset | Size | Field |
 |---|---|---|
@@ -632,17 +636,22 @@ One record, settings area record 10 (`settings_ids.h`), 1540 bytes: a 4-byte hea
 | 5 | 1 | turn on layer, `FF` none |
 | 6 | 2 | on mask |
 | 8 | 2 | off mask |
-| 10 | 1 | flags (spare, `0`) |
-| 11 | 13 | label, UTF-8, zero-padded |
+| 10 | 1 | flags: bit 0 the rule is off; bit 1 a website rule (its text is the site); other bits `0` |
+| 11 | 1 | text length `n`, at most 64 |
+| 12 | `n` | text, UTF-8: the app key as typed (`notepad.exe`), or the site (`practice.svalboard.com`) |
 
-A board that never stored the record has no rules. Writes go to an edit copy; COMMIT checks it, puts it in use and saves it.
+Header flags (byte 2): bit 0 App Layers is off; other bits `0`. The rules and their text share the 1792 bytes, so 64 rules with names of about 15 bytes fit, or fewer rules with longer names (23 rules with 64-byte names). The board stores the text and returns it; it never reads it. A rule's next rule starts right after its text, so a reader walks the rules from the header. The text lets Keybard show the whole name (a site longer than any fixed label, for example) and Keybard Host find the website rules (bit 1).
+
+Format 1 (pre-release builds only: 24-byte rules with a 13-byte label) is upgraded when the board starts: same IDs and layers, the label becomes the text, a label whose ID is the hash of `site:` and it (or that starts with `…`) becomes a website rule, and App Layers is on. It is saved as format 2 at the next COMMIT. COMMIT accepts only format 2.
+
+A board that never stored the record has no rules (and App Layers is on). Writes go to an edit copy; COMMIT checks it, puts it in use and saves it.
 
 | Request | Reply (after `DF 41`) |
 |---|---|
-| `DF 41 00`: INFO | `00 <status> <format 1> <max rules 64> <rule bytes 24> <count> <record bytes u16> <chunk 48> <layer count>` |
+| `DF 41 00`: INFO | `00 <status> <format 2> <max rules 64> <rule fixed bytes 12> <count> <record bytes u16, 1792> <chunk 48> <layer count> <used bytes u16> <text max 64> <header flags>` |
 | `DF 41 01 <offset u16> <len ≤ 48>`: READ the rules in use | `01 <status> <offset u16> <len> <bytes>` |
 | `DF 41 03`: BEGIN, the edit copy = the rules in use | `03 <status>` |
 | `DF 41 02 <offset u16> <len ≤ 48> <bytes>`: WRITE into the edit copy | `02 <status>` |
 | `DF 41 04`: COMMIT the edit copy | `04 <status> <count>` |
 
-Status: `0` done; `1` unknown op, or offset and length past the record; `2` not the half with USB; `3` report too short; `4` COMMIT: the edit copy's header is not format 1 with at most 64 rules (nothing changed); `5` COMMIT: in use, but not saved to flash (lost on restart). COMMIT zeroes the bytes past the count, and the rules take effect at once. To save rules: BEGIN, WRITE the header and the rules (only the bytes up to the count are needed), COMMIT. A 64-byte report carries a 48-byte chunk; a client-wrapped 32-byte report is too short for a full chunk, so use smaller ones there.
+Status: `0` done; `1` unknown op, or offset and length past the record; `2` not the half with USB; `3` report too short; `4` COMMIT: the edit copy is not format 2 with at most 64 rules, each text at most 64 bytes, all within 1792 bytes (nothing changed); `5` COMMIT: in use, but not saved to flash (lost on restart). COMMIT zeroes the bytes past the last rule and the header's spare bits, and the rules (and the switches) take effect at once. To read the rules: INFO, then READ the used bytes from offset 0. To save them: BEGIN, WRITE the header and the rules (only the used bytes are needed), COMMIT. A 64-byte report carries a 48-byte chunk; a client-wrapped 32-byte report is too short for a full chunk, so use smaller ones there.

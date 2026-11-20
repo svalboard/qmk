@@ -27,18 +27,58 @@ static void wr16(uint8_t *p, uint16_t v) {
     p[1] = (uint8_t)(v >> 8);
 }
 
+static uint32_t rd32(const uint8_t *p) {
+    return (uint32_t)rd16(p) | ((uint32_t)rd16(p + 2) << 16);
+}
+
+// Bytes the rules of a format 2 header take, walking them; 0 when they do not fit.
+static uint16_t walk(const uint8_t *rec) {
+    uint16_t off = SVAL_APP_RULES_HEADER_BYTES;
+    for (uint8_t i = 0; i < rec[1]; i++) {
+        if (off + SVAL_APP_RULE_HEAD_BYTES > SVAL_APP_RULES_RECORD_BYTES) return 0;
+        uint8_t n = rec[off + 11];
+        if (n > SVAL_APP_RULE_TEXT_MAX || off + SVAL_APP_RULE_HEAD_BYTES + n > SVAL_APP_RULES_RECORD_BYTES) return 0;
+        off = (uint16_t)(off + SVAL_APP_RULE_HEAD_BYTES + n);
+    }
+    return off;
+}
+
+static bool blank(const uint8_t *rec) {
+    return rec[0] == 0 && rec[1] == 0;
+}
+
 bool sval_app_rules_valid(const uint8_t *rec) {
-    if (rec[0] == 0 && rec[1] == 0) return true; // never written
-    return rec[0] == SVAL_APP_RULES_FORMAT && rec[1] <= SVAL_APP_RULES_MAX;
+    if (blank(rec)) return true; // never written
+    return rec[0] == SVAL_APP_RULES_FORMAT && rec[1] <= SVAL_APP_RULES_MAX && walk(rec) != 0;
 }
 
 uint8_t sval_app_rules_count(const uint8_t *rec) {
-    return rec[0] == SVAL_APP_RULES_FORMAT && rec[1] <= SVAL_APP_RULES_MAX ? rec[1] : 0;
+    return !blank(rec) && sval_app_rules_valid(rec) ? rec[1] : 0;
+}
+
+uint16_t sval_app_rules_used(const uint8_t *rec) {
+    if (blank(rec)) return SVAL_APP_RULES_HEADER_BYTES;
+    return sval_app_rules_valid(rec) ? walk(rec) : 0;
+}
+
+bool sval_app_rules_enabled(const uint8_t *rec) {
+    return !(rec[2] & SVAL_APP_RULES_OFF);
+}
+
+void sval_app_rules_set_enabled(uint8_t *rec, bool on) {
+    if (blank(rec)) rec[0] = SVAL_APP_RULES_FORMAT;
+    rec[2] = on ? (uint8_t)(rec[2] & ~SVAL_APP_RULES_OFF) : (uint8_t)(rec[2] | SVAL_APP_RULES_OFF);
+}
+
+uint16_t sval_app_rule_offset(const uint8_t *rec, uint8_t index) {
+    uint16_t off = SVAL_APP_RULES_HEADER_BYTES;
+    for (uint8_t i = 0; i < index; i++) off = (uint16_t)(off + SVAL_APP_RULE_HEAD_BYTES + rec[off + 11]);
+    return off;
 }
 
 void sval_app_rule_get(const uint8_t *rec, uint8_t index, sval_app_rule_t *rule) {
-    const uint8_t *p    = rec + SVAL_APP_RULES_HEADER_BYTES + index * SVAL_APP_RULE_BYTES;
-    rule->app_id        = (uint32_t)rd16(p) | ((uint32_t)rd16(p + 2) << 16);
+    const uint8_t *p    = rec + sval_app_rule_offset(rec, index);
+    rule->app_id        = rd32(p);
     rule->default_layer = p[4];
     rule->front_layer   = p[5];
     rule->on_mask       = rd16(p + 6);
@@ -46,9 +86,20 @@ void sval_app_rule_get(const uint8_t *rec, uint8_t index, sval_app_rule_t *rule)
     rule->flags         = p[10];
 }
 
-void sval_app_rule_put(uint8_t *rec, uint8_t index, const sval_app_rule_t *rule, const char *label) {
-    uint8_t *p = rec + SVAL_APP_RULES_HEADER_BYTES + index * SVAL_APP_RULE_BYTES;
-    memset(p, 0, SVAL_APP_RULE_BYTES);
+const uint8_t *sval_app_rule_text(const uint8_t *rec, uint8_t index, uint8_t *len) {
+    const uint8_t *p = rec + sval_app_rule_offset(rec, index);
+    *len             = p[11];
+    return p + SVAL_APP_RULE_HEAD_BYTES;
+}
+
+bool sval_app_rules_append(uint8_t *rec, const sval_app_rule_t *rule, const char *text) {
+    if (blank(rec)) rec[0] = SVAL_APP_RULES_FORMAT;
+    if (!sval_app_rules_valid(rec) || rec[1] >= SVAL_APP_RULES_MAX) return false;
+    size_t   n   = text ? strlen(text) : 0;
+    uint16_t off = walk(rec);
+    if (n > SVAL_APP_RULE_TEXT_MAX) n = SVAL_APP_RULE_TEXT_MAX;
+    if (off + SVAL_APP_RULE_HEAD_BYTES + n > SVAL_APP_RULES_RECORD_BYTES) return false;
+    uint8_t *p = rec + off;
     wr16(p, (uint16_t)rule->app_id);
     wr16(p + 2, (uint16_t)(rule->app_id >> 16));
     p[4] = rule->default_layer;
@@ -56,27 +107,61 @@ void sval_app_rule_put(uint8_t *rec, uint8_t index, const sval_app_rule_t *rule,
     wr16(p + 6, rule->on_mask);
     wr16(p + 8, rule->off_mask);
     p[10] = rule->flags;
-    if (label) strncpy((char *)p + 11, label, SVAL_APP_RULE_LABEL_BYTES);
+    p[11] = (uint8_t)n;
+    if (n) memcpy(p + SVAL_APP_RULE_HEAD_BYTES, text, n);
+    rec[1]++;
+    return true;
 }
 
 int8_t sval_app_rules_match(const uint8_t *rec, uint32_t app_id) {
-    if (!app_id) return -1;
-    uint8_t n = sval_app_rules_count(rec);
+    if (!app_id || !sval_app_rules_enabled(rec)) return -1;
+    uint8_t  n   = sval_app_rules_count(rec);
+    uint16_t off = SVAL_APP_RULES_HEADER_BYTES;
     for (uint8_t i = 0; i < n; i++) {
-        const uint8_t *p = rec + SVAL_APP_RULES_HEADER_BYTES + i * SVAL_APP_RULE_BYTES;
-        if (((uint32_t)rd16(p) | ((uint32_t)rd16(p + 2) << 16)) == app_id) return (int8_t)i;
+        const uint8_t *p = rec + off;
+        if (rd32(p) == app_id && !(p[10] & SVAL_APP_RULE_OFF)) return (int8_t)i;
+        off = (uint16_t)(off + SVAL_APP_RULE_HEAD_BYTES + p[11]);
     }
     return -1;
 }
 
 void sval_app_rules_tidy(uint8_t *rec) {
-    if (!(rec[0] == SVAL_APP_RULES_FORMAT && rec[1] <= SVAL_APP_RULES_MAX)) {
+    if (blank(rec) || !sval_app_rules_valid(rec)) {
         memset(rec, 0, SVAL_APP_RULES_RECORD_BYTES);
         return;
     }
-    rec[2] = rec[3] = 0;
-    uint16_t used = SVAL_APP_RULES_HEADER_BYTES + rec[1] * SVAL_APP_RULE_BYTES;
+    rec[2] &= SVAL_APP_RULES_OFF;
+    rec[3]        = 0;
+    uint16_t used = walk(rec);
     memset(rec + used, 0, SVAL_APP_RULES_RECORD_BYTES - used);
+}
+
+// Format 1: [1][count][0][0], then 24-byte rules: id u32, default, front, on
+// u16, off u16, flags, 13-byte label.
+#define V1_RULE_BYTES 24
+#define V1_LABEL_BYTES 13
+
+bool sval_app_rules_upgrade(const uint8_t *in, uint16_t len, uint8_t *out) {
+    if (len < SVAL_APP_RULES_HEADER_BYTES || in[0] != 1 || in[1] > SVAL_APP_RULES_MAX) return false;
+    memset(out, 0, SVAL_APP_RULES_RECORD_BYTES);
+    out[0] = SVAL_APP_RULES_FORMAT;
+    for (uint8_t i = 0; i < in[1]; i++) {
+        uint16_t o = (uint16_t)(SVAL_APP_RULES_HEADER_BYTES + i * V1_RULE_BYTES);
+        if (o + V1_RULE_BYTES > len) break;
+        const uint8_t  *p = in + o;
+        sval_app_rule_t r = {rd32(p), p[4], p[5], rd16(p + 6), rd16(p + 8), 0};
+        char            label[V1_LABEL_BYTES + 1];
+        memcpy(label, p + 11, V1_LABEL_BYTES);
+        label[V1_LABEL_BYTES] = 0;
+        // A site: its id is the hash of "site:" and the label, or the label is "…" and the site's end.
+        char    key[5 + V1_LABEL_BYTES + 1] = "site:";
+        uint8_t n                           = (uint8_t)strlen(label);
+        memcpy(key + 5, label, (size_t)n + 1);
+        bool cut = n > 3 && (uint8_t)label[0] == 0xE2 && (uint8_t)label[1] == 0x80 && (uint8_t)label[2] == 0xA6;
+        if (n && (cut || sval_app_id(key, (uint16_t)(5 + n)) == r.app_id)) r.flags |= SVAL_APP_RULE_SITE;
+        if (!sval_app_rules_append(out, &r, label)) break;
+    }
+    return true;
 }
 
 void sval_app_engine_init(sval_app_engine_t *e) {
