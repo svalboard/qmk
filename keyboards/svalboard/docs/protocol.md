@@ -560,3 +560,98 @@ How long the auto mouse layer stays on after the pointer stops, in milliseconds.
 - `id_automouse_no_timeout` (VIA value `50`): `1`, the layer stays on until it is turned off another way (the old "Infinite"); `0`, it times out after value 49. Value 49 keeps its time while this is on.
 - `id_automouse_timeout` (VIA value `5`), kept for older hosts: the old choice, `0`-`5` = 200, 300, 400, 500, 800 ms, no timeout. A write sets value 49 to that time (or turns value 50 on for `5`); a read returns the nearest old choice. The `SV_MH_CHANGE_TIMEOUTS` key steps through the old choices, as before.
 - Storage: the time is kept in 10 ms units in the byte that held the turbo index, and the old choice byte keeps the nearest old choice, so firmware from before this on the same settings still finds a valid one. Values 100-2000 fit in that byte (10-200); a turbo index left there (0-6) is cleared at the first boot.
+
+## App rules
+
+Layer changes while a given app is in front on the computer. The rules live on the board; a host app (Keybard Host) tells the board which app is in front. Nothing a rule does is saved, and the user's own layer state is never written.
+
+- Discovery: GET_INFO byte 22 (the fifth feature byte), bit 0 (`sval_flag5_app_rules`, `0x01`). Older firmware leaves it zero (or sends a shorter reply) and answers `0x40` and `0x41` with the command byte `0xFF`.
+- Only the half with USB runs the rules; it owns the layer state. Both commands answer status `2` on the other half. The other half's lights follow the half with USB through the RGB split sync, so both halves show what a rule does. The rules are stored on the half that received them, as the keymap is.
+
+### App IDs
+
+An app is named by a key, and the board stores a 4-byte ID made from it:
+
+| System | Key | Example |
+|---|---|---|
+| Windows | the program's file name, with `.exe` | `notepad.exe` |
+| macOS | the bundle ID | `com.apple.Safari` |
+| Linux | the Wayland `app_id`, or the X11 `WM_CLASS` class | `firefox` |
+
+ID: drop spaces and tabs at both ends, change ASCII `A`-`Z` to `a`-`z` (nothing else), then FNV-1a 32 (offset basis `0x811C9DC5`, prime `0x01000193`) over the key's UTF-8 bytes. A result of `0` is sent as `1`; an empty key is `0`, "no app". Test values: `notepad.exe` and `Notepad.EXE` → `0xB884A32C`; `chrome.exe` → `0xFC0C788D`; `com.apple.Safari` → `0xECE537F6`; `firefox` → `0xF4D4D03A`.
+
+### What a rule does
+
+A rule has an app ID, a default layer, a "turn on" layer, and the other layers it turns on or off (two 16-bit masks, bit `n` = layer `n`). Keybard shows these as App Layers: "Default layer", "Turn on layer" and "Other layers while the app is in front". The first rule with the app's ID that is on applies; a rule may use any of its actions together. `FF` means "none" for either layer.
+
+- **On and off:** App Layers as a whole has a switch (header byte 2 bit 0, set = off), and each rule has one (its flags bit 0, set = off). Clear means on, so a rule written without flags, and a record without the header bit, are on. While App Layers is off no rule applies, exactly as with no app in front: the board restores the user's default layer and stops changing key lookup at once (at the COMMIT that turns it off), and keeps the rules stored. A rule that is off is skipped when matching, so a later rule for the same app applies instead. A host may stop sending the app in front while App Layers is off (STATUS flags bit 3, or INFO).
+
+- **Default layer:** while the app is in front, the board's default layer is the rule's (the runtime default layer only: never written to storage). When the rule stops applying, the user's own default layer comes back. If the user changes the default layer (a `DF` or `PDF` key, or `0x2B`) while the rule holds it, the user's choice stands, and the rule leaves the default layer alone until a different app comes to the front.
+- **Turn on layer** (the "front layer" field): a layer that is on while the app is in front, just above the default layer. Layers the user turns on (held, toggled or one-shot) stay above it, whatever their number; transparent keys on it fall through to the default layer.
+- **Other layers** (the on and off masks): applied over the user's layer state when the board looks up a key, never written into it: the layers used are `(user | on) & ~off`. Off wins over on, and over the turn on layer. A layer key the user holds still works unless the off mask includes its layer. The default layer itself is not masked: change it with the default layer action.
+- With no turn on layer, a key comes from the highest of the masked layers and the default layer, as in QMK. Keys already held keep the layer they were pressed on until released.
+- The auto mouse layer (15) belongs to Auto Mouse: the masks never turn it on or off (its bits are ignored), so mouse keys work whenever Auto Mouse turns it on, as without a rule. Hosts should leave it out of the masks they offer.
+- Lights show the highest layer on after the rule, as they do for layers the user turns on. Auto Mouse's "Only on Selected Layers" looks at the same layers, so a turn on layer or a layer the masks turn on counts as the layer the user is on.
+- `LAYER_STATE_GET` (`0x16`) is unchanged: its active mask is the user's own layer state (what `0x17` sets), so a host can read it, change it and write it back without baking a rule into it. Its default mask is the board's default layer now, which is the rule's while one holds it. The layers keys use now are in the `APP_FOREGROUND` STATUS reply (offset 26). A host that shows the layer the user is on (Keybard's layer indicator, Keybard Host and Keybard Overlay) reads STATUS on a board with app rules, and `0x16` otherwise; it reads and writes back `0x16` only for the user's own state.
+- Layers past the board's layer count are ignored.
+
+### Foreground app: `APP_FOREGROUND` (`0x40`)
+
+The host sends the app in front at every focus change and every 5 s while a board with the feature is connected. When the board hears nothing for the lifetime (15 s by default), or nothing since power-up, no app is in front and no rule applies: it restores the user's default layer and stops changing key lookup.
+
+| Request | Reply (after `DF 40`) |
+|---|---|
+| `DF 40 01 <id u32> <lifetime s>`: SET. Lifetime `0` = 15 s; at most 60. ID `0` = no app | `01 <status> <rule index or FF> <flags>` |
+| `DF 40 02`: CLEAR, the host is leaving (no app in front now) | `02 <status>` |
+| `DF 40 00`: STATUS | below |
+
+STATUS reply, offsets from the first byte after `40` (31 bytes):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | op `0` |
+| 1 | 1 | status |
+| 2 | 4 | app in front, `0` none (or expired) |
+| 6 | 2 | ms until it expires |
+| 8 | 1 | rule that applies, `FF` none |
+| 9 | 1 | turn on layer applied, `FF` none |
+| 10 | 2 | on mask applied |
+| 12 | 2 | off mask applied |
+| 14 | 4 | the user's own default layer state (restored when the rule lets go) |
+| 18 | 4 | default layer state now |
+| 22 | 4 | the user's layer state |
+| 26 | 4 | the layers keys use now (`(user \| on) & ~off`, plus the turn on layer) |
+| 30 | 1 | flags: bit 0 a rule applies; bit 1 the rule holds the default layer; bit 2 the user changed the default layer under the rule; bit 3 App Layers is off |
+
+The SET reply's flags are the same.
+
+### The rules: `APP_RULES` (`0x41`)
+
+One record, settings area record 10 (`settings_ids.h`), at most 1792 bytes: a 4-byte header `[format 2] [count] [flags] [0]`, then `count` rules packed back to back, each its 12 fixed bytes and its text (little-endian):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | app ID (`0`: an empty rule, never matches) |
+| 4 | 1 | default layer, `FF` none |
+| 5 | 1 | turn on layer, `FF` none |
+| 6 | 2 | on mask |
+| 8 | 2 | off mask |
+| 10 | 1 | flags: bit 0 the rule is off; bit 1 a website rule (its text is the site); other bits `0` |
+| 11 | 1 | text length `n`, at most 64 |
+| 12 | `n` | text, UTF-8: the app key as typed (`notepad.exe`), or the site (`practice.svalboard.com`) |
+
+Header flags (byte 2): bit 0 App Layers is off; other bits `0`. The rules and their text share the 1792 bytes, so 64 rules with names of about 15 bytes fit, or fewer rules with longer names (23 rules with 64-byte names). The board stores the text and returns it; it never reads it. A rule's next rule starts right after its text, so a reader walks the rules from the header. The text lets Keybard show the whole name (a site longer than any fixed label, for example) and Keybard Host find the website rules (bit 1).
+
+Format 1 (pre-release builds only: 24-byte rules with a 13-byte label) is upgraded when the board starts: same IDs and layers, the label becomes the text, a label whose ID is the hash of `site:` and it (or that starts with `…`) becomes a website rule, and App Layers is on. It is saved as format 2 at the next COMMIT. COMMIT accepts only format 2. A firmware update resets every stored setting (a different build), the rules included, so in practice a host carries them across: Keybard reads format 1 for the layout backup it takes before the update and writes format 2 when it puts the layout back.
+
+A board that never stored the record has no rules (and App Layers is on). Writes go to an edit copy; COMMIT checks it, puts it in use and saves it.
+
+| Request | Reply (after `DF 41`) |
+|---|---|
+| `DF 41 00`: INFO | `00 <status> <format 2> <max rules 64> <rule fixed bytes 12> <count> <record bytes u16, 1792> <chunk 48> <layer count> <used bytes u16> <text max 64> <header flags>` |
+| `DF 41 01 <offset u16> <len ≤ 48>`: READ the rules in use | `01 <status> <offset u16> <len> <bytes>` |
+| `DF 41 03`: BEGIN, the edit copy = the rules in use | `03 <status>` |
+| `DF 41 02 <offset u16> <len ≤ 48> <bytes>`: WRITE into the edit copy | `02 <status>` |
+| `DF 41 04`: COMMIT the edit copy | `04 <status> <count>` |
+
+Status: `0` done; `1` unknown op, or offset and length past the record; `2` not the half with USB; `3` report too short; `4` COMMIT: the edit copy is not format 2 with at most 64 rules, each text at most 64 bytes, all within 1792 bytes (nothing changed); `5` COMMIT: in use, but not saved to flash (lost on restart). COMMIT zeroes the bytes past the last rule and the header's spare bits, and the rules (and the switches) take effect at once. To read the rules: INFO, then READ the used bytes from offset 0. To save them: BEGIN, WRITE the header and the rules (only the used bytes are needed), COMMIT. A 64-byte report carries a 48-byte chunk; a client-wrapped 32-byte report is too short for a full chunk, so use smaller ones there.

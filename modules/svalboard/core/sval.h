@@ -100,6 +100,8 @@ enum sval_command_id {
     sval_cmd_typing_pause    = 0x3C, // advertised by sval_flag3_typing_pause
     sval_cmd_flicker_latch   = 0x3D, // advertised by sval_flag3_flicker_latch
     sval_cmd_debug_console   = 0x3E, // advertised by sval_flag4_debug_console
+    sval_cmd_app_foreground  = 0x40, // advertised by sval_flag5_app_rules: the app in front on the computer
+    sval_cmd_app_rules       = 0x41, // advertised by sval_flag5_app_rules: the app rules record
     sval_cmd_error           = 0xFF,
 };
 
@@ -150,6 +152,11 @@ enum sval_feature_flags4 {
     sval_flag4_scroll_speed           = (1 << 5), // VIA values 61 and 62: each hand's Scroll speed, percent (every build)
     sval_flag4_trackpoint_speed       = (1 << 6), // a TrackPoint's DPI list is a software Pointer speed, 200 to 3200 (every build)
     sval_flag4_automouse_layers       = (1 << 7), // VIA values 63 and 64: the layers where Auto Mouse is off (Svalboard builds)
+};
+
+// Fifth feature byte, GET_INFO byte 22. Older firmware leaves it zero.
+enum sval_feature_flags5 {
+    sval_flag5_app_rules = (1 << 0), // 0x40 and 0x41: app rules (keyboards/svalboard/docs/protocol.md)
 };
 
 // Status byte after the modifiers in the 0x16 reply (sval_flag2_modifier_state).
@@ -410,6 +417,13 @@ void sval_client_packet_kb(uint32_t client_id);
 // GET_INFO byte 20 (sval_feature_flags3). Weak, returns 0.
 uint8_t sval_get_feature_flags3_kb(void);
 uint8_t sval_get_feature_flags4_kb(void);
+uint8_t sval_get_feature_flags5_kb(void);
+// APP_FOREGROUND (0x40) and APP_RULES (0x41): as TYPING_PAUSE, data after the
+// command byte, handled in place. The module's weak defaults answer status 0xFF.
+void sval_app_foreground_kb(uint8_t *data, uint8_t length);
+void sval_app_rules_kb(uint8_t *data, uint8_t length);
+// sval_layer_lookup_kb(keypos_t key) (sval_context_layer.c): the layer a key's
+// action comes from when the keyboard decides it (app rules), else UINT8_MAX.
 // DEBUG_CONSOLE (0x3E): data is [op] in, [op] [status] [state] out. Weak,
 // answers status 0xFF.
 void sval_debug_console_kb(uint8_t *data, uint8_t length);
