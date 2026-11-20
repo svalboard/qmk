@@ -642,7 +642,7 @@ One record, settings area record 10 (`settings_ids.h`), at most 1792 bytes: a 4-
 
 Header flags (byte 2): bit 0 App Layers is off; other bits `0`. The rules and their text share the 1792 bytes, so 64 rules with names of about 15 bytes fit, or fewer rules with longer names (23 rules with 64-byte names). The board stores the text and returns it; it never reads it. A rule's next rule starts right after its text, so a reader walks the rules from the header. The text lets Keybard show the whole name (a site longer than any fixed label, for example) and Keybard Host find the website rules (bit 1).
 
-Format 1 (pre-release builds only: 24-byte rules with a 13-byte label) is upgraded when the board starts: same IDs and layers, the label becomes the text, a label whose ID is the hash of `site:` and it (or that starts with `…`) becomes a website rule, and App Layers is on. It is saved as format 2 at the next COMMIT. COMMIT accepts only format 2.
+Format 1 (pre-release builds only: 24-byte rules with a 13-byte label) is upgraded when the board starts: same IDs and layers, the label becomes the text, a label whose ID is the hash of `site:` and it (or that starts with `…`) becomes a website rule, and App Layers is on. It is saved as format 2 at the next COMMIT. COMMIT accepts only format 2. A firmware update resets every stored setting (a different build), the rules included, so in practice a host carries them across: Keybard reads format 1 for the layout backup it takes before the update and writes format 2 when it puts the layout back.
 
 A board that never stored the record has no rules (and App Layers is on). Writes go to an edit copy; COMMIT checks it, puts it in use and saves it.
 
