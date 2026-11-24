@@ -1306,9 +1306,9 @@ bool via_command_kb(uint8_t *data, uint8_t length) {
 bool process_record_core(uint16_t keycode, keyrecord_t *record) {
     if (
 #ifdef SVAL_LEADER_ENABLE
-            !process_record_sval_leader(keycode, record) ||
+        !process_record_sval_leader(keycode, record) ||
 #endif // SVAL_LEADER_ENABLE
-            !process_record_sval_tap_dance(keycode, record)) {
+        !process_record_sval_tap_dance(keycode, record)) {
         return false;
     }
     if (keycode >= SVAL_MACRO_HIGH_BASE && keycode <= SVAL_MACRO_HIGH_MAX) {

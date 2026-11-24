@@ -36,7 +36,7 @@ PRELUDE = r'''
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#define LEADER_ENABLE
+#define SVAL_LEADER_ENABLE
 #define MOUSEKEY_ENABLE
 #define AUTO_SHIFT_ENABLE
 #define TAPPING_TERM 200

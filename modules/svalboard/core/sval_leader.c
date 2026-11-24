@@ -10,8 +10,8 @@
 #ifdef SVAL_LEADER_ENABLE
 
 enum {
-    STATE_OFF,      // Leader inactive.
-    STATE_ACTIVE,   // Accepting sequence keys.
+    STATE_OFF,    // Leader inactive.
+    STATE_ACTIVE, // Accepting sequence keys.
 };
 
 enum { LEADER_MAX_LENGTH = 5 };
@@ -152,7 +152,9 @@ static bool append_to_buffer(uint16_t keycode, keyrecord_t *record) {
 // should continue for this key event.
 static bool find_sequence(uint16_t keycode, keyrecord_t *record) {
     bool partial_match = false;
-    sval_leader_reset_timer();
+    if (sval_get_leader_per_key_timing()) {
+        sval_leader_reset_timer();
+    }
 
     for (uint16_t i = 0; i < SVAL_LEADER_ENTRIES; ++i) {
         const sval_leader_entry_t *entry = &leader_entries[i];
@@ -229,6 +231,7 @@ static bool sval_leader_start_internal(keyrecord_t *record) {
         append_to_buffer(QK_LEAD, record);
     }
 
+    sval_leader_reset_timer();
     return find_sequence(QK_LEAD, record);
 }
 
