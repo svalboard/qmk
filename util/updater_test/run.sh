@@ -26,6 +26,11 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 # halves; the auto mouse layer timeout, 100-2000 ms.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
     -I"$kb" "$root/tests/sval_timing/test_timing.c" "$kb/sval_timing.c" -o "$out/test_timing"
+
+# Status report (kb/status_report.c): STATUS_REPORT (Sval 0x3F) packing, and
+# SV_OUTPUT_STATUS typing only characters that are the same on QWERTY and QWERTZ.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$kb" "$root/tests/sval_status/test_status.c" "$kb/status_report.c" -o "$out/test_status"
+"$out/test_status"
 "$out/test_timing"
 "$out/test_debounce"
 
