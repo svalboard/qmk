@@ -383,7 +383,7 @@ STATS (`op 1`), over the newest bins:
 
 **Page 1, the build:** `QMK_KEYBOARD:QMK_KEYMAP @ QMK_VERSION`, from byte `<arg>`: `DF 3F 01 <format> <total> <offset> <n> <n bytes>`. A host reads from offset 0, adding `n`, until it has `total` bytes; `n` is `0` past the end.
 
-The typed report has the same content. It uses only characters on the same keys in the common QWERTY and QWERTZ layouts (US, UK, German, Swiss, Nordic, Spanish, Italian, Portuguese): letters other than y and z, digits, space, comma, period and Enter. So "MHz" types as "M", "yes" and "no" as "on" and "off", and the build text loses its slashes, colon, at sign and dashes. AZERTY moves digits and more letters, so the typed report is still wrong there; this command is the fix.
+The typed report has the same content, in standard units: ms, s, MHz and CPI, with "us" for microseconds because `send_string()` can't type the micro sign. Its first line names it "Svalboard status report", as Keybard does. `send_string()` types US key positions, so on other keyboard layouts some characters come out as others; the typed report is the fallback, and this command is the way to read the report on any layout.
 
 ## Debounce mode
 

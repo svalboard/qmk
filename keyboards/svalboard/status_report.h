@@ -4,13 +4,11 @@
 // The board's status report, in one place for both of its outputs:
 // - STATUS_REPORT (Sval 0x3F) returns it as data, for a host app to show
 //   (docs/protocol.md, "Status report").
-// - SV_OUTPUT_STATUS types it as text. The text uses only characters that sit
-//   on the same keys on the common QWERTY and QWERTZ layouts (US, UK, German,
-//   Swiss, Nordic, Spanish, Italian, Portuguese): letters other than y and z,
-//   digits, space, comma, period and Enter. send_string() types US key
-//   positions, so any other character comes out as something else on one of
-//   those layouts. AZERTY moves digits and more letters; there, read the
-//   report in Keybard.
+// - SV_OUTPUT_STATUS types it as text, in standard units (ms, s, MHz, CPI;
+//   "us" for microseconds, as send_string() can't type the micro sign).
+//   send_string() types US key positions, so on another keyboard layout some
+//   characters come out as others. The typed text is the fallback: Keybard
+//   reads this command and shows the report right on any layout.
 //
 // Pure: no QMK headers, so the host tests build it on their own.
 #pragma once
@@ -95,11 +93,7 @@ uint8_t sval_status_pack(const sval_status_t *s, uint8_t *out, uint8_t len);
 // Page 1: from byte offset of build, into out (len bytes). Returns the bytes written.
 uint8_t sval_status_pack_build(const char *build, uint8_t offset, uint8_t *out, uint8_t len);
 
-// Whether c types the same on the layouts above (see the top of this file).
-bool sval_status_safe_char(char c);
-
-// Line `line` of the typed report into buf (NUL-terminated, ending in '\n'),
-// every character safe. The build text is cleaned of unsafe characters.
+// Line `line` of the typed report into buf (NUL-terminated, ending in '\n').
 // Returns false when there is no such line (the report has ended).
 // Lines that don't apply (the storage notices) come back empty ("").
 bool sval_status_text_line(const sval_status_t *s, const char *build, uint8_t line, char *buf, size_t n);

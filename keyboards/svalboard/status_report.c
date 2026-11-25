@@ -67,13 +67,6 @@ uint8_t sval_status_pack_build(const char *build, uint8_t offset, uint8_t *out, 
     return 5 + n;
 }
 
-bool sval_status_safe_char(char c) {
-    if (c >= '0' && c <= '9') return true;
-    if (c >= 'a' && c <= 'z') return c != 'y' && c != 'z';
-    if (c >= 'A' && c <= 'Z') return c != 'Y' && c != 'Z';
-    return c == ' ' || c == ',' || c == '.' || c == '\n';
-}
-
 static const char *on_off(bool on) {
     return on ? "on" : "off";
 }
@@ -106,25 +99,11 @@ bool sval_status_text_line(const sval_status_t *s, const char *build, uint8_t li
     const uint8_t a = s->flags_a, b = s->flags_b;
     char          w1[24], w2[24];
     switch (line) {
-        case 0: {
-            // The build text, cleaned: QMK_KEYBOARD:QMK_KEYMAP @ QMK_VERSION has
-            // slashes, a colon, an at sign and dashes, none of them safe.
-            int len = snprintf(buf, n, "Svalboard status. Firmware ");
-            if (len < 0 || (size_t)len + 2 > n) break;
-            size_t at    = (size_t)len;
-            bool   space = true; // collapse runs of cleaned characters into one space
-            for (const char *p = build; *p && at + 2 < n; p++) {
-                char c = *p;
-                if (c == '\n' || !sval_status_safe_char(c)) c = ' ';
-                if (c == ' ' && space) continue;
-                buf[at++] = c;
-                space     = c == ' ';
-            }
-            while (at > 0 && buf[at - 1] == ' ') at--;
-            buf[at++] = '\n';
-            buf[at]   = '\0';
+        case 0:
+            // The name Keybard and support use, then the build text as is,
+            // still ending in Enter if a long one is cut short.
+            if (snprintf(buf, n, "Svalboard status report. Firmware %s\n", build) >= (int)n && n > 1) buf[n - 2] = '\n';
             break;
-        }
         case 1:
             if (b & SVAL_STATUS_B_STORAGE_RESET) snprintf(buf, n, "Settings were reset because storage could not be read. Load a saved backup.\n");
             break;
@@ -148,7 +127,7 @@ bool sval_status_text_line(const sval_status_t *s, const char *build, uint8_t li
             snprintf(buf, n, "Boost 2x 3x 5x, held %u %u %u, toggled %s %s %s, multiplier %u.\n", s->boost_hold[0], s->boost_hold[1], s->boost_hold[2], on_off(s->boost_toggle & 1), on_off(s->boost_toggle & 2), on_off(s->boost_toggle & 4), s->boost_mult);
             break;
         case 7:
-            snprintf(buf, n, "Hardware revision %s. Scan wait %u us before, %u us after. Optical debounce %s.\n", (b & SVAL_STATUS_B_HW_REV_B) ? "B" : "A", s->prewait_us, s->postwait_us, on_off(b & SVAL_STATUS_B_OPTICAL_DEBOUNCE));
+            snprintf(buf, n, "Hardware revision %s. Scan wait %u us before, %u us after. Optical debounce %s.\n", (b & SVAL_STATUS_B_HW_REV_B) ? "B (FlipFET)" : "A", s->prewait_us, s->postwait_us, on_off(b & SVAL_STATUS_B_OPTICAL_DEBOUNCE));
             break;
         case 8:
             if (s->period_us)
@@ -165,8 +144,7 @@ bool sval_status_text_line(const sval_status_t *s, const char *build, uint8_t li
             snprintf(buf, n, "Measured frame %lu us, LED on %u us, now %s.\n", (unsigned long)s->frame_us, s->led_us, w2);
             break;
         case 10:
-            // MHz has a z: the clocks are in M, for MHz.
-            snprintf(buf, n, "Idle power, pointer rest %s, RGB dim %s, CPU sleep %s, low clock %s at %u M, long naps %s. Clock now %u M.\n", on_off(s->idle_flags & 0x01), on_off(s->idle_flags & 0x02), on_off(s->idle_flags & 0x04), on_off(s->idle_flags & 0x08), s->deep_mhz, on_off(s->idle_flags & 0x10), s->clock_mhz);
+            snprintf(buf, n, "Idle power, pointer rest %s, RGB dim %s, CPU sleep %s, low clock %s at %u MHz, long naps %s. Clock now %u MHz.\n", on_off(s->idle_flags & 0x01), on_off(s->idle_flags & 0x02), on_off(s->idle_flags & 0x04), on_off(s->idle_flags & 0x08), s->deep_mhz, on_off(s->idle_flags & 0x10), s->clock_mhz);
             break;
         default:
             return false;

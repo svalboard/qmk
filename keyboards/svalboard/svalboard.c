@@ -618,8 +618,7 @@ static void sval_status_collect(sval_status_t *st) {
     st->clock_mhz  = sval_clock_mhz();
 }
 
-// SV_OUTPUT_STATUS: types the report, one line at a time, in characters that
-// type the same on the common QWERTY and QWERTZ layouts (status_report.h).
+// SV_OUTPUT_STATUS: types the report, one line at a time (status_report.h).
 void output_keyboard_info(void) {
     sval_status_t st;
     sval_status_collect(&st);

@@ -2,8 +2,8 @@
 //
 // STATUS_REPORT (Sval 0x3F): page 0 packs every field at its documented
 // offset; page 1 returns the build text in chunks. SV_OUTPUT_STATUS: every
-// line it types uses only characters that type the same on QWERTY and QWERTZ,
-// for ordinary, empty and extreme values, and the build text is cleaned.
+// line it types gives every quantity a standard unit (no "M" for MHz), for
+// ordinary, empty and extreme values, and the build text is typed as is.
 #include "status_report.h"
 #include <stdio.h>
 #include <string.h>
@@ -112,17 +112,47 @@ static void test_build(void) {
     CHECK(out[4] == 0, "past the end");
 }
 
+// Every number in a line is followed by nothing, punctuation, another number,
+// or one of these standard units: no ambiguous abbreviations such as "M" for MHz.
+static const char *const UNITS[] = {"ms", "s", "us", "MHz", "CPI", "x", NULL};
+
+static bool is_unit(const char *word, size_t len) {
+    for (const char *const *u = UNITS; *u; u++)
+        if (strlen(*u) == len && strncmp(*u, word, len) == 0) return true;
+    return false;
+}
+
+static bool is_letter(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+static void check_units(uint8_t i, const char *line) {
+    for (const char *p = line; *p; p++) {
+        // A number: digits not glued to a word before them (x4.6.7 in the build text isn't one).
+        if (!(*p >= '0' && *p <= '9') || (p > line && (is_letter(p[-1]) || (p[-1] >= '0' && p[-1] <= '9') || p[-1] == '.'))) continue;
+        const char *q = p;
+        while (*q >= '0' && *q <= '9')
+            q++;
+        if (*q == '.' && q[1] >= '0' && q[1] <= '9') continue; // a version, not a quantity
+        const char *w = *q == ' ' ? q + 1 : q;
+        if (!is_letter(*w)) continue;
+        size_t len = 0;
+        while (is_letter(w[len]))
+            len++;
+        CHECK(is_unit(w, len), "line %u: %.*s after a number is not a standard unit: %s", i, (int)len, w, line);
+    }
+}
+
 static int count_lines(const sval_status_t *s, const char *build, char *all, size_t n) {
     char line[192];
     int  lines = 0;
     all[0]     = '\0';
     for (uint8_t i = 0; sval_status_text_line(s, build, i, line, sizeof line); i++) {
         size_t len = strlen(line);
-        CHECK(len < sizeof line - 1, "line %u fits: %s", i, line);
+        CHECK(i == 0 || len < sizeof line - 1, "line %u fits: %s", i, line); // the build text may be cut short
         if (!len) continue;
         CHECK(line[len - 1] == '\n', "line %u ends with Enter", i);
-        for (size_t c = 0; c < len; c++)
-            CHECK(sval_status_safe_char(line[c]), "line %u has '%c' (0x%02x): %s", i, line[c], (unsigned char)line[c], line);
+        if (i > 0) check_units(i, line); // line 0 is the build text, as the build names itself
         lines++;
         strncat(all, line, n - strlen(all) - 1);
     }
@@ -135,15 +165,15 @@ static void test_text(void) {
     const char    build[] = "svalboard/either:sval @ x4.6.7-3-gdeadbeef";
     int           lines   = count_lines(&s, build, all, sizeof all);
     CHECK(lines == 9, "lines %d", lines);
-    CHECK(strstr(all, "Firmware svalboard either sval x4.6.7 3 gdeadbeef\n") != NULL, "build cleaned:\n%s", all);
+    CHECK(strncmp(all, "Svalboard status report. Firmware svalboard/either:sval @ x4.6.7-3-gdeadbeef\n", 77) == 0, "first line:\n%s", all);
     CHECK(strstr(all, "Left pointer, scroll mode off, 800 CPI. Right pointer, scroll mode on, 16000 CPI.") != NULL, "pointers");
     CHECK(strstr(all, "Computer macOS, Mac mode on. Axis scroll lock off. Natural scroll on.") != NULL, "computer");
     CHECK(strstr(all, "Auto Mouse on, left on, right off, timeout 650 ms.") != NULL, "auto mouse");
     CHECK(strstr(all, "Boost 2x 3x 5x, held 1 0 2, toggled off off on, multiplier 5.") != NULL, "boost");
-    CHECK(strstr(all, "Hardware revision B. Scan wait 45 us before, 90 us after. Optical debounce on.") != NULL, "scan");
+    CHECK(strstr(all, "Hardware revision B (FlipFET). Scan wait 45 us before, 90 us after. Optical debounce on.") != NULL, "scan");
     CHECK(strstr(all, "Scan period 1000 us. Light idle 10 ms, after 5000 ms. Deep idle 20 ms, after 300 s.") != NULL, "idle");
     CHECK(strstr(all, "Measured frame 100003 us, LED on 123 us, now light idle.") != NULL, "measured");
-    CHECK(strstr(all, "pointer rest on, RGB dim off, CPU sleep off, low clock off at 24 M, long naps on. Clock now 125 M.") != NULL, "power");
+    CHECK(strstr(all, "pointer rest on, RGB dim off, CPU sleep off, low clock off at 24 MHz, long naps on. Clock now 125 MHz.") != NULL, "power");
     CHECK(strstr(all, "Settings") == NULL, "no storage notices");
 
     // Storage notices, no timeout, unpaced, never, every OS.
@@ -163,27 +193,33 @@ static void test_text(void) {
     memset(&s, 0xFF, sizeof s);
     s.am_timeout_ms = 2147483647;
     count_lines(&s, build, all, sizeof all);
-    // A build text with every printable ASCII character: all cleaned.
+    // A build text with every printable ASCII character: typed as is.
     char every[96];
     for (int c = 32; c < 127; c++)
         every[c - 32] = (char)c;
     every[95] = '\0';
     count_lines(&s, every, all, sizeof all);
+    CHECK(strstr(all, every) != NULL, "build typed as is");
+    // A build text too long for the line: cut short, still ending in Enter.
+    char long_build[300];
+    memset(long_build, 'a', sizeof long_build - 1);
+    long_build[sizeof long_build - 1] = '\0';
+    count_lines(&s, long_build, all, sizeof all);
     // A small buffer truncates, never overflows.
     char tiny[8];
     CHECK(sval_status_text_line(&s, build, 0, tiny, sizeof tiny) && strlen(tiny) < sizeof tiny, "tiny buffer");
 }
 
-static void test_safe_set(void) {
-    CHECK(!sval_status_safe_char('y') && !sval_status_safe_char('Z') && !sval_status_safe_char(':') && !sval_status_safe_char('-'), "unsafe");
-    CHECK(sval_status_safe_char('a') && sval_status_safe_char('M') && sval_status_safe_char('0') && sval_status_safe_char(',') && sval_status_safe_char('.'), "safe");
+static void test_unit_list(void) {
+    CHECK(is_unit("MHz", 3) && is_unit("us", 2) && is_unit("ms", 2) && is_unit("CPI", 3), "standard units");
+    CHECK(!is_unit("M", 1) && !is_unit("mhz", 3) && !is_unit("u", 1), "ambiguous units");
 }
 
 int main(void) {
     test_pack();
     test_build();
     test_text();
-    test_safe_set();
+    test_unit_list();
     if (failures) {
         printf("status report: %d of %d checks failed\n", failures, checks);
         return 1;
