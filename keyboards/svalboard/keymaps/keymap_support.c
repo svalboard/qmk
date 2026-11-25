@@ -82,6 +82,9 @@ static uint16_t automouse_accumulator_timer = 0;
 // (scroll_speed.h). The Mac divider applies after the multiplier.
 static sval_ball_scroll_t ball_scroll_state[2];
 
+// Velocity Scroll's Mac divider. Scroll Mode and Drag Scroll use
+// SVAL_BALL_SCROLL_MAC_DIV (scroll_speed.h), the pad's two-finger scroll
+// SVAL_PAD_SCROLL_MAC_DIV (pad_scroll.h).
 #define MAC_DIVISOR 12
 bool is_mac = false;
 bool process_detected_host_os_kb(os_variant_t os) {
