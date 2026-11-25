@@ -73,7 +73,8 @@ static void test_pack(void) {
     CHECK(le16(&out[20]) == 1000 && le16(&out[22]) == 10 && le16(&out[24]) == 5000 && le16(&out[26]) == 20 && le16(&out[28]) == 300, "idle timing");
     CHECK(le32(&out[30]) == 100003 && le16(&out[34]) == 123 && out[36] == 1, "measured");
     CHECK(out[37] == 0x11 && out[38] == 24 && out[39] == 125, "power");
-    for (unsigned i = SVAL_STATUS_STATE_LEN; i < sizeof out; i++) CHECK(out[i] == 0, "tail %u zeroed", i);
+    for (unsigned i = SVAL_STATUS_STATE_LEN; i < sizeof out; i++)
+        CHECK(out[i] == 0, "tail %u zeroed", i);
 
     // No timeout: the flag, and 0 in the field.
     s.am_timeout_ms = -1;
@@ -120,7 +121,8 @@ static int count_lines(const sval_status_t *s, const char *build, char *all, siz
         CHECK(len < sizeof line - 1, "line %u fits: %s", i, line);
         if (!len) continue;
         CHECK(line[len - 1] == '\n', "line %u ends with Enter", i);
-        for (size_t c = 0; c < len; c++) CHECK(sval_status_safe_char(line[c]), "line %u has '%c' (0x%02x): %s", i, line[c], (unsigned char)line[c], line);
+        for (size_t c = 0; c < len; c++)
+            CHECK(sval_status_safe_char(line[c]), "line %u has '%c' (0x%02x): %s", i, line[c], (unsigned char)line[c], line);
         lines++;
         strncat(all, line, n - strlen(all) - 1);
     }
@@ -129,9 +131,9 @@ static int count_lines(const sval_status_t *s, const char *build, char *all, siz
 
 static void test_text(void) {
     static char   all[2048];
-    sval_status_t s     = sample();
+    sval_status_t s       = sample();
     const char    build[] = "svalboard/either:sval @ x4.6.7-3-gdeadbeef";
-    int           lines = count_lines(&s, build, all, sizeof all);
+    int           lines   = count_lines(&s, build, all, sizeof all);
     CHECK(lines == 9, "lines %d", lines);
     CHECK(strstr(all, "Firmware svalboard either sval x4.6.7 3 gdeadbeef\n") != NULL, "build cleaned:\n%s", all);
     CHECK(strstr(all, "Left pointer, scroll mode off, 800 CPI. Right pointer, scroll mode on, 16000 CPI.") != NULL, "pointers");
@@ -163,7 +165,8 @@ static void test_text(void) {
     count_lines(&s, build, all, sizeof all);
     // A build text with every printable ASCII character: all cleaned.
     char every[96];
-    for (int c = 32; c < 127; c++) every[c - 32] = (char)c;
+    for (int c = 32; c < 127; c++)
+        every[c - 32] = (char)c;
     every[95] = '\0';
     count_lines(&s, every, all, sizeof all);
     // A small buffer truncates, never overflows.
