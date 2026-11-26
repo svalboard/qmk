@@ -743,28 +743,31 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
                         keycode == SV_VELOCITY_SCROLL_TOGGLE)
 
         uint16_t layer_keycode = keymap_key_to_keycode(MH_AUTO_BUTTONS_LAYER, record->event.key);
-        if (MOUSE_PASSTHROUGH_KEYCODE) {
-            // Fall through to switch statement without touching mouse mode state
-        } else if (BAD_KEYCODE_CONDITONAL ||
-	    layer_keycode != keycode) {
-            dprint("process_record - mh_auto_buttons: off\n");
-            if (BAD_KEYCODE_CONDITONAL) {
+        // A layer key on the mouse layer, or one of Svalboard's own layer
+        // holds, ends the mouse layer when pressed, so the layer it turns on
+        // is the one keys read (automouse_keys.h).
+        bool layer_key = sval_automouse_layer_key(keycode, record->tap.count > 0, MH_AUTO_BUTTONS_LAYER) || keycode == SV_TOGGLE_23_67 || keycode == SV_TOGGLE_45_67;
+        switch (sval_automouse_key(keycode, layer_keycode, record->event.pressed, MOUSE_PASSTHROUGH_KEYCODE, layer_key, BAD_KEYCODE_CONDITONAL)) {
+            case SVAL_AM_KEY_NONE:
+                // Fall through to switch statement without touching mouse mode state
+                break;
+            case SVAL_AM_KEY_END_SWALLOW:
+                dprint("process_record - mh_auto_buttons: off\n");
                 mouse_mode(false);
-	        return false;
-            } else {
+                return false;
+            case SVAL_AM_KEY_END:
+                dprint("process_record - mh_auto_buttons: off\n");
                 mouse_mode(false);
-            }
-        } else {
-            if (record->event.pressed) {
-                mouse_keys_pressed++;
-                mouse_mode(true);
-            } else {
-                // keys that are held before the mouse layer is active can mess this up.
-                if (mouse_keys_pressed > 0) {
+                break;
+            case SVAL_AM_KEY_MOUSE:
+                if (record->event.pressed) {
+                    mouse_keys_pressed++;
+                } else if (mouse_keys_pressed > 0) {
+                    // keys that are held before the mouse layer is active can mess this up.
                     mouse_keys_pressed--;
                 }
                 mouse_mode(true);
-            }
+                break;
         }
     }
 

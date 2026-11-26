@@ -22,6 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pointing_motion_vs.h"
 #include "sval_timing.h"
 #include "automouse_layers.h"
+#include "automouse_keys.h"
 
 struct layer_hsv {
     uint8_t hue;
