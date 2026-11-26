@@ -115,6 +115,11 @@ static int16_t take_units(float *acc) {
     return (int16_t)whole;
 }
 
+float sval_vs_units_per_notch(uint16_t hires, bool mac) {
+    if (mac) return (float)SVAL_VS_MAC_UNITS_PER_NOTCH;
+    return hires ? (float)hires : 1.0f;
+}
+
 void sval_vs_step(sval_vs_t *s, const sval_vs_curve_t *ball, const sval_vs_curve_t *pad, bool axis_lock, float dt_ms, float units_per_notch, int16_t *h, int16_t *v) {
     *h = *v = 0;
     if (!s->active) return;

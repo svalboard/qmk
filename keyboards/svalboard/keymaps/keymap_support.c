@@ -82,10 +82,10 @@ static uint16_t automouse_accumulator_timer = 0;
 // (scroll_speed.h). The Mac divider applies after the multiplier.
 static sval_ball_scroll_t ball_scroll_state[2];
 
-// Velocity Scroll's Mac divider. Scroll Mode and Drag Scroll use
-// SVAL_BALL_SCROLL_MAC_DIV (scroll_speed.h), the pad's two-finger scroll
-// SVAL_PAD_SCROLL_MAC_DIV (pad_scroll.h).
-#define MAC_DIVISOR 12
+// The Mac scaling: Scroll Mode and Drag Scroll SVAL_BALL_SCROLL_MAC_DIV
+// (scroll_speed.h), Velocity Scroll SVAL_VS_MAC_UNITS_PER_NOTCH
+// (velocity_scroll.h), the pad's two-finger scroll SVAL_PAD_SCROLL_MAC_DIV
+// (pad_scroll.h).
 bool is_mac = false;
 bool process_detected_host_os_kb(os_variant_t os) {
     if (!process_detected_host_os_user(os)) {
@@ -410,9 +410,9 @@ static report_mouse_t velocity_scroll_report(report_mouse_t left, report_mouse_t
     if (elapsed >= SVAL_VS_PERIOD_MS) {
         vs_sent_at = timer_read32();
 #    ifdef POINTING_DEVICE_HIRES_SCROLL_ENABLE
-        float units = (float)POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER / (is_mac ? MAC_DIVISOR : 1);
+        float units = sval_vs_units_per_notch(POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER, is_mac);
 #    else
-        float units = 1.0f;
+        float units = sval_vs_units_per_notch(0, is_mac);
 #    endif
         int16_t h, v;
         sval_vs_step(&vs, &vs_ball, &vs_pad, SVAL_VS_AXIS_LOCK, (float)elapsed, units, &h, &v);

@@ -7,7 +7,7 @@
 // POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER). Windows applies that; macOS treats
 // each count as a line, so on a Mac the counts are divided by the pad's own
 // divider (Drag Scroll has its own, SVAL_BALL_SCROLL_MAC_DIV in scroll_speed.h;
-// Velocity Scroll's MAC_DIVISOR stays as shipped).
+// Velocity Scroll SVAL_VS_MAC_UNITS_PER_NOTCH in velocity_scroll.h).
 //
 // The distance is fixed in pad pixels per detent, so the pointer's DPI does not
 // change it; the hand's Scroll speed (scroll_speed.h, a percent) multiplies it,

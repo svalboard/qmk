@@ -428,7 +428,7 @@ Whether the pads are a touchpad when Windows or Linux asks for one. Touchpad mod
 
 ## Scroll speed
 
-How fast motion becomes scroll, one setting per hand, the same on every pointing module. It applies wherever a hand's motion scrolls: Scroll Mode, the Scroll Toggle keys, Drag Scroll, and a touchpad's two-finger scroll in built-in gestures. Velocity Scroll has its own curve and is not changed by it. Sniper and Boost still act on top while held.
+How fast motion becomes scroll, one setting per hand, the same on every pointing module. It applies wherever a hand's motion scrolls: Scroll Mode, the Scroll Toggle keys, Drag Scroll, and a touchpad's two-finger scroll in built-in gestures. Velocity Scroll has its own curve and is not changed by it; on a Mac a notch of it is 3 counts, 3 lines as on Windows (it was 10 through x4.6.7). Sniper and Boost still act on top while held.
 
 - Discovery: GET_INFO byte 21, bit 5 (`sval_flag4_scroll_speed`, `0x20`). Every build sets it. Older firmware leaves it zero. (Bit 3 is the trackball sensor page, `0x39`. The test build set bit 4 for value `60` alone, so a host must not read bit 4 as values `61` and `62`.)
 - Values `61` (`id_scroll_speed_left`) and `62` (`id_scroll_speed_right`), channel `0`, 16-bit little-endian: the hand's Scroll speed as a percent, 20 to 1000 (0.2x to 10x); 100 is 1.0x, the default. A write outside the range stores the nearest end. Read it back for the stored value.
