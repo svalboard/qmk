@@ -21,6 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "key_log.h"
 #include "keymap_support.h"
 #include "axis_scale.h"
+#include "automouse_threshold.h"
 #include "caps_word.h"
 #include "pointing_motion.h"
 #include "velocity_scroll.h"
@@ -72,8 +73,8 @@ static bool automouse_layer_blocked(void) {
 #define SCROLL_FREQUENCY_MS 0
 bool mouse_mode_enabled = false;
 
-// Automouse threshold accumulator (normalized to 800 DPI, fixed point: AUTOMOUSE_FP_SCALE units per count)
-#define AUTOMOUSE_FP_SCALE 16
+// Automouse threshold accumulator, shared by mouse and touchpad motion. Units:
+// 1/SVAL_AUTOMOUSE_FP_SCALE of an 800 DPI count (automouse_threshold.h).
 static int32_t automouse_accumulator = 0;
 static uint16_t automouse_accumulator_timer = 0;
 
@@ -310,22 +311,17 @@ void update_boost_multiplier(void) {
 
 #ifdef SVAL_NATIVE_PTP
 // Native touchpad contact motion feeds the same accumulator as mouse motion,
-// with the same per-hand gates, threshold and decay, normalized to the
-// mouse's 800 DPI. A pad is SVAL_PTP_PAD_X counts over 43 mm.
+// in the same units, with the same per-hand gates, threshold and decay,
+// normalized to the mouse's 800 DPI. A pad is SVAL_PTP_PAD_X counts over 43 mm.
 #    define SVAL_PTP_COUNTS_PER_INCH ((SVAL_PTP_PAD_X * 254 + 215) / 430)
-#    define SVAL_PTP_AUTOMOUSE_DPI 800
 static void sval_ptp_automouse(void) {
     int32_t left  = sval_ptp_take_motion(0);
     int32_t right = sval_ptp_take_motion(1);
     if (!global_saved_values.left_automouse) left = 0;
     if (!global_saved_values.right_automouse) right = 0;
-    int32_t movement = ((left > right ? left : right) * SVAL_PTP_AUTOMOUSE_DPI) / SVAL_PTP_COUNTS_PER_INCH;
-    if (movement <= 0 || automouse_layer_blocked()) return;
-    uint16_t decay_ms = global_saved_values.automouse_decay * 10;
-    if (decay_ms > 0 && timer_elapsed(automouse_accumulator_timer) > decay_ms) automouse_accumulator = 0;
-    automouse_accumulator_timer = timer_read();
-    automouse_accumulator += movement;
-    if (global_saved_values.automouse_threshold == 0 || automouse_accumulator >= global_saved_values.automouse_threshold) mouse_mode(true);
+    int32_t units = sval_automouse_pad_units(left > right ? left : right, SVAL_PTP_COUNTS_PER_INCH);
+    if (units <= 0 || automouse_layer_blocked()) return;
+    if (sval_automouse_accumulate(&automouse_accumulator, &automouse_accumulator_timer, timer_read(), global_saved_values.automouse_decay * 10, units, global_saved_values.automouse_threshold)) mouse_mode(true);
 }
 #endif
 
@@ -538,21 +534,13 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     if (!global_saved_values.left_automouse) left_movement = 0;
     if (!global_saved_values.right_automouse) right_movement = 0;
     // Normalize in fixed point so sub-reference-unit motion (common at DPI > 800) isn't truncated to 0.
-    int32_t left_normalized = (left_movement > 0) ? (left_movement * 800 * AUTOMOUSE_FP_SCALE) / get_left_dpi() : 0;
-    int32_t right_normalized = (right_movement > 0) ? (right_movement * 800 * AUTOMOUSE_FP_SCALE) / get_right_dpi() : 0;
+    int32_t left_normalized = sval_automouse_mouse_units(left_movement, get_left_dpi());
+    int32_t right_normalized = sval_automouse_mouse_units(right_movement, get_right_dpi());
     int32_t normalized_movement = (left_normalized > right_normalized) ? left_normalized : right_normalized;
     // Gate on raw movement: normalized_movement can still be 0 for tiny reports at very high DPI.
     // On a layer where Auto Mouse is off, motion neither turns the layer on nor counts toward it.
     if ((left_movement > 0 || right_movement > 0) && !automouse_layer_blocked()) {
-        uint16_t decay_ms = global_saved_values.automouse_decay * 10;
-        if (decay_ms > 0 && timer_elapsed(automouse_accumulator_timer) > decay_ms) {
-            automouse_accumulator = 0;
-        }
-        automouse_accumulator_timer = timer_read();
-        automouse_accumulator += normalized_movement;
-
-        if (global_saved_values.automouse_threshold == 0 ||
-            automouse_accumulator >= (int32_t)global_saved_values.automouse_threshold * AUTOMOUSE_FP_SCALE) {
+        if (sval_automouse_accumulate(&automouse_accumulator, &automouse_accumulator_timer, timer_read(), global_saved_values.automouse_decay * 10, normalized_movement, global_saved_values.automouse_threshold)) {
             mouse_mode(true);
         }
     }
