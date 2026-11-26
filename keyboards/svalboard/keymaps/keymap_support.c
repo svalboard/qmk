@@ -682,7 +682,20 @@ void check_layer_67(void) {
 bool in_mod_tap = false;
 int8_t in_mod_tap_layer = -1;
 int8_t mouse_keys_pressed = 0;
+// A layer key on the mouse layer: the mouse layer ends after its action ran.
+static bool mouse_mode_end_after = false;
+
+void post_process_record_kb(uint16_t keycode, keyrecord_t *record) {
+    if (mouse_mode_end_after) {
+        mouse_mode_end_after = false;
+        dprint("process_record - mh_auto_buttons: off (layer key)\n");
+        mouse_mode(false);
+    }
+    post_process_record_user(keycode, record);
+}
+
 bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
+    mouse_mode_end_after = false;
 
     // Abort additional processing if userspace code did
     if (!process_record_user(keycode, record)) { return false;}
@@ -758,6 +771,10 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
             case SVAL_AM_KEY_END:
                 dprint("process_record - mh_auto_buttons: off\n");
                 mouse_mode(false);
+                break;
+            case SVAL_AM_KEY_END_AFTER:
+                // post_process_record_kb, once the key's own action has run.
+                mouse_mode_end_after = true;
                 break;
             case SVAL_AM_KEY_MOUSE:
                 if (record->event.pressed) {

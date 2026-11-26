@@ -13,7 +13,10 @@
 // layer's held-key count stuck, so it never timed out again.
 //
 // Now a key on the mouse layer that changes to another layer ends the mouse
-// layer when it is pressed, and then does what it does from any other layer:
+// layer when it is pressed, once its own action has run (post_process_record_kb:
+// QMK looks the action up after process_record_kb, so ending the mouse layer
+// any earlier would run the key below it instead), and so does what it does
+// from any other layer:
 // MO(1) holds layer 1 until it is released, TO(1) moves to layer 1. Its
 // release leaves the mouse layer alone. A key whose target is the mouse
 // layer itself stays a mouse key.
@@ -36,7 +39,8 @@ bool sval_automouse_layer_key(uint16_t keycode, bool tapped, uint8_t mouse_layer
 typedef enum {
     SVAL_AM_KEY_NONE,         // leaves the mouse layer as it is (passthrough keys, a layer key's release)
     SVAL_AM_KEY_MOUSE,        // a key of the mouse layer's own: counts as held, refreshes the timeout
-    SVAL_AM_KEY_END,          // ends the mouse layer, then runs
+    SVAL_AM_KEY_END,          // ends the mouse layer, then runs (as the key of the layer below it shows through to)
+    SVAL_AM_KEY_END_AFTER,    // runs as the mouse layer's own key, then ends the mouse layer (a layer key)
     SVAL_AM_KEY_END_SWALLOW,  // ends the mouse layer and does nothing else (Blank, and the keys in BAD_KEYCODE_CONDITONAL)
 } sval_am_key_t;
 

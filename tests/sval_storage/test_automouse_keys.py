@@ -58,12 +58,14 @@ static uint8_t lookup(int pos) {
     return 0;
 }
 
-/* One key event: the mouse layer handling as in process_record_kb, then the
-   layer action, as QMK runs it. Returns the keycode that ran (KC_NO if it was
-   swallowed). */
+/* One key event, in QMK's order: process_record_kb sees the key as looked
+   up at the press; the action is looked up again after it (store_or_get_action,
+   so a layer process_record_kb turned off is no longer read), and fixed for
+   the release; then post_process_record_kb. Returns the keycode whose action
+   ran (KC_NO if it was swallowed). */
 static uint16_t key(int pos, bool pressed, bool tapped) {
-    if (pressed) source[pos] = lookup(pos);
-    uint16_t kc = keymap[source[pos]][pos];
+    uint16_t kc = keymap[pressed ? lookup(pos) : source[pos]][pos];
+    bool end_after = false;
     if (mouse_on && (layer_state & B(ML))) {
         bool lk = sval_automouse_layer_key(kc, tapped, ML);
         switch (sval_automouse_key(kc, keymap[ML][pos], pressed, false, lk, kc == KC_NO || kc == KC_TRNS)) {
@@ -75,6 +77,9 @@ static uint16_t key(int pos, bool pressed, bool tapped) {
             case SVAL_AM_KEY_END:
                 mouse_mode(false);
                 break;
+            case SVAL_AM_KEY_END_AFTER:
+                end_after = true;
+                break;
             case SVAL_AM_KEY_MOUSE:
                 if (pressed) held++;
                 else if (held > 0) held--;
@@ -82,14 +87,17 @@ static uint16_t key(int pos, bool pressed, bool tapped) {
                 break;
         }
     }
-    if (IS_QK_MOMENTARY(kc) || (IS_QK_LAYER_TAP(kc) && !tapped)) {
-        uint8_t l = IS_QK_MOMENTARY(kc) ? (kc & 0x1F) : ((kc >> 8) & 0xF);
+    if (pressed) source[pos] = lookup(pos);
+    uint16_t ac = keymap[source[pos]][pos];
+    if (IS_QK_MOMENTARY(ac) || (IS_QK_LAYER_TAP(ac) && !tapped)) {
+        uint8_t l = IS_QK_MOMENTARY(ac) ? (ac & 0x1F) : ((ac >> 8) & 0xF);
         if (pressed) layer_state |= B(l);
         else layer_state &= ~B(l);
-    } else if (IS_QK_TO(kc) && pressed) {
-        layer_state = B(kc & 0x1F);
+    } else if (IS_QK_TO(ac) && pressed) {
+        layer_state = B(ac & 0x1F);
     }
-    return kc;
+    if (end_after) mouse_mode(false);
+    return ac;
 }
 static void tap(int pos) { key(pos, true, false); key(pos, false, false); }
 
@@ -135,7 +143,8 @@ int main(void) {
        release goes back to the base layer. (It used to keep the mouse layer
        on top, so the key under it read MS_BTN1.) */
     reset(MO_(1));
-    key(THUMB, true, false);
+    keymap[0][THUMB] = KC_A; /* so the mouse layer's own MO(1) is what holds layer 1 */
+    assert(key(THUMB, true, false) == MO_(1));
     assert(!mouse_on && layer_state == B(1));
     assert(key(BUTTON, true, false) == KC_1);
     key(BUTTON, false, false);
@@ -154,7 +163,7 @@ int main(void) {
     /* TO(1): moves to layer 1, and the mouse layer's state is cleared (it
        used to keep one key counted as held, so it never timed out again). */
     reset(TO_(1));
-    key(THUMB, true, false);
+    assert(key(THUMB, true, false) == TO_(1));
     key(THUMB, false, false);
     assert(layer_state == B(1) && !mouse_on && held == 0);
 
@@ -181,11 +190,12 @@ int main(void) {
     /* LT(1, Enter) on the mouse layer: tapped, Enter, a mouse key as before;
        held, layer 1. */
     reset(LT_(1, KC_ENTER));
+    keymap[0][THUMB] = KC_A;
     key(THUMB, true, true);
     assert(mouse_on && held == 1);
     key(THUMB, false, true);
     assert(mouse_on && held == 0 && layer_state == B(ML));
-    key(THUMB, true, false);
+    assert(key(THUMB, true, false) == LT_(1, KC_ENTER));
     assert(!mouse_on && layer_state == B(1));
     key(THUMB, false, false);
     assert(layer_state == 0);

@@ -20,7 +20,7 @@ bool sval_automouse_layer_key(uint16_t keycode, bool tapped, uint8_t mouse_layer
 
 sval_am_key_t sval_automouse_key(uint16_t keycode, uint16_t layer_keycode, bool pressed, bool passthrough, bool layer_key, bool ends_swallowed) {
     if (passthrough) return SVAL_AM_KEY_NONE;
-    if (layer_key) return pressed ? SVAL_AM_KEY_END : SVAL_AM_KEY_NONE;
+    if (layer_key) return pressed ? SVAL_AM_KEY_END_AFTER : SVAL_AM_KEY_NONE;
     if (ends_swallowed) return SVAL_AM_KEY_END_SWALLOW;
     // Transparent on the mouse layer: a key of the layers below, so it ends the mouse layer.
     if (layer_keycode != keycode) return SVAL_AM_KEY_END;
