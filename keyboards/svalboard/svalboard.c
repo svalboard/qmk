@@ -24,6 +24,7 @@
 #include "sval.h"
 #include "pointing_motion.h" // after sval.h: needs the generated fragment ids
 #include "identity.h"
+#include "automouse_threshold.h"
 #ifdef SVAL_SCROLL_TEST
 #    include "scroll_test.h"
 #endif
@@ -339,7 +340,7 @@ static void pointer_unpack(const uint8_t r[SVAL_SET_POINTER_CAP]) {
     global_saved_values.mh_timer_index      = r[3];
     global_saved_values.automouse_10ms      = r[4];
     global_saved_values.automouse_threshold = get16(r + 5);
-    global_saved_values.automouse_decay     = r[7];
+    global_saved_values.automouse_decay     = sval_automouse_decay_setting(r[7]);
 }
 static void scan_pack(uint8_t r[SVAL_SET_SCAN_CAP]) {
     put16(r + 0, global_saved_values.scan_prewait_us);
@@ -484,7 +485,7 @@ void svalboard_saved_values_defaults(void) {
     global_saved_values.left_automouse      = true;
     global_saved_values.right_automouse     = true;
     global_saved_values.automouse_threshold = 15;
-    global_saved_values.automouse_decay     = 7; // 70ms
+    global_saved_values.automouse_decay     = SVAL_AUTOMOUSE_DECAY_DEFAULT; // 70ms
     // Revision B settles more slowly; start it on conservative timing.
     // Revision A starts on the first preset, 90 / 90 us, as it always has.
     global_saved_values.scan_prewait_us     = sval_hw_rev_is_flipfet() ? SVAL_FLIPFET_DEFAULT_PREWAIT_US : sval_turbo_us[0];
@@ -1663,7 +1664,7 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     global_saved_values.automouse_threshold = value_data[0] | (value_data[1] << 8);
                     break;
                 case id_automouse_decay:
-                    global_saved_values.automouse_decay = value_data[0];
+                    global_saved_values.automouse_decay = sval_automouse_decay_setting(value_data[0]);
                     break;
                 case id_left_automouse:
                     global_saved_values.left_automouse = value_data[0];

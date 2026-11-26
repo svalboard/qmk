@@ -247,7 +247,7 @@
                                 {
                                     "label": "Activation Decay (x10ms)",
                                     "type": "range",
-                                    "options": [0, 255],
+                                    "options": [1, 255],
                                     "content": ["id_automouse_decay", 1, 10]
                                 },
                                 {

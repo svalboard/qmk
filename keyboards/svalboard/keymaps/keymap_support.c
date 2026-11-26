@@ -311,17 +311,19 @@ void update_boost_multiplier(void) {
 
 #ifdef SVAL_NATIVE_PTP
 // Native touchpad contact motion feeds the same accumulator as mouse motion,
-// in the same units, with the same per-hand gates, threshold and decay,
-// normalized to the mouse's 800 DPI. A pad is SVAL_PTP_PAD_X counts over 43 mm.
+// in the same units and with the same per-hand gates, threshold and decay:
+// counts at the pad's resolution, normalized to 800 DPI in fixed point, as a
+// mouse's are. A pad is SVAL_PTP_PAD_X counts over 43 mm.
 #    define SVAL_PTP_COUNTS_PER_INCH ((SVAL_PTP_PAD_X * 254 + 215) / 430)
 static void sval_ptp_automouse(void) {
     int32_t left  = sval_ptp_take_motion(0);
     int32_t right = sval_ptp_take_motion(1);
     if (!global_saved_values.left_automouse) left = 0;
     if (!global_saved_values.right_automouse) right = 0;
-    int32_t units = sval_automouse_pad_units(left > right ? left : right, SVAL_PTP_COUNTS_PER_INCH);
-    if (units <= 0 || automouse_layer_blocked()) return;
-    if (sval_automouse_accumulate(&automouse_accumulator, &automouse_accumulator_timer, timer_read(), global_saved_values.automouse_decay * 10, units, global_saved_values.automouse_threshold)) mouse_mode(true);
+    int32_t movement = left > right ? left : right;
+    if (movement <= 0 || automouse_layer_blocked()) return;
+    int32_t units = sval_automouse_units(movement, SVAL_PTP_COUNTS_PER_INCH);
+    if (sval_automouse_accumulate(&automouse_accumulator, &automouse_accumulator_timer, timer_read(), global_saved_values.automouse_decay, units, global_saved_values.automouse_threshold)) mouse_mode(true);
 }
 #endif
 
@@ -534,13 +536,13 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     if (!global_saved_values.left_automouse) left_movement = 0;
     if (!global_saved_values.right_automouse) right_movement = 0;
     // Normalize in fixed point so sub-reference-unit motion (common at DPI > 800) isn't truncated to 0.
-    int32_t left_normalized = sval_automouse_mouse_units(left_movement, get_left_dpi());
-    int32_t right_normalized = sval_automouse_mouse_units(right_movement, get_right_dpi());
+    int32_t left_normalized = sval_automouse_units(left_movement, get_left_dpi());
+    int32_t right_normalized = sval_automouse_units(right_movement, get_right_dpi());
     int32_t normalized_movement = (left_normalized > right_normalized) ? left_normalized : right_normalized;
     // Gate on raw movement: normalized_movement can still be 0 for tiny reports at very high DPI.
     // On a layer where Auto Mouse is off, motion neither turns the layer on nor counts toward it.
     if ((left_movement > 0 || right_movement > 0) && !automouse_layer_blocked()) {
-        if (sval_automouse_accumulate(&automouse_accumulator, &automouse_accumulator_timer, timer_read(), global_saved_values.automouse_decay * 10, normalized_movement, global_saved_values.automouse_threshold)) {
+        if (sval_automouse_accumulate(&automouse_accumulator, &automouse_accumulator_timer, timer_read(), global_saved_values.automouse_decay, normalized_movement, global_saved_values.automouse_threshold)) {
             mouse_mode(true);
         }
     }

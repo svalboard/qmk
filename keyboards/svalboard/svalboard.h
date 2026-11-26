@@ -47,7 +47,7 @@ struct __attribute__((__packed__)) saved_values {
     // in 10 ms units (10-200), or 0 for "use mh_timer_index".
     uint8_t  automouse_10ms;
     uint16_t automouse_threshold; // Movement distance required for layer activation (0=disabled)
-    uint8_t  automouse_decay;     // Accumulator decay time in 10ms units (0=no decay)
+    uint8_t  automouse_decay;     // Accumulator decay time in 10ms units (at least 1; 0 reads as the default, 70 ms)
     uint16_t scan_prewait_us;     // Row-on settle time before reading (never 0 after the boot migration)
     uint16_t scan_postwait_us;    // Row-off recovery time after reading (never 0 after the boot migration)
     uint16_t scan_period_us;      // Frame period while active (0 = unpaced, scan back to back)
