@@ -19,7 +19,7 @@ static unsigned gestures_writes; // successful writes of the gesture registers
 static unsigned gestures_tries;  // every write of the gesture registers
 static uint8_t  setting;
 
-void i2c_init(void) {}
+void         i2c_init(void) {}
 i2c_status_t i2c_ping_address(uint8_t address, uint16_t timeout) {
     (void)address;
     (void)timeout;
@@ -95,8 +95,8 @@ static void poll(uint32_t ms) {
 }
 
 static void start(void) {
-    fail_gestures   = false;
-    now_ms          = 1000;
+    fail_gestures = false;
+    now_ms        = 1000;
     assert(pointing_device_driver_init());
     poll(1);
     assert(!azo_gestures_pending);
@@ -144,7 +144,7 @@ static void test_bounded(void) {
     start();
     setting = 2;
     sval_pad_gestures_changed();
-    fail_gestures = true;
+    fail_gestures   = true;
     unsigned passes = 0;
     while (azo_gestures_pending && passes < 100000) {
         poll(1);
