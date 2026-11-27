@@ -16,7 +16,7 @@ using testing::InSequence;
 extern "C" bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     int8_t layer = sval_trns_mod_tap_layer(keycode, record);
     if (layer >= 0) {
-        sval_trns_mod_tap_begin((uint8_t)layer);
+        sval_trns_mod_tap_begin((uint8_t)layer, record->event.key);
         return true;
     }
     sval_trns_mod_tap_end(record);
