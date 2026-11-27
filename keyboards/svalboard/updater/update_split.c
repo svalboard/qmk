@@ -5,6 +5,7 @@
 // KEYBOARD_UPDATE split RPC, and the relay from the half with USB (see
 // update_split.h and update_split_wire.h).
 
+#include <stddef.h>
 #include <string.h>
 #include "update_split.h"
 #include "update_flash.h"
@@ -30,6 +31,9 @@ static uint16_t get16(const uint8_t *p) {
 }
 static uint32_t get24(const uint8_t *p) {
     return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16);
+}
+static uint32_t get32(const uint8_t *p) {
+    return get24(p) | ((uint32_t)p[3] << 24);
 }
 static bool due(uint32_t now, uint32_t at) {
     return (int32_t)(now - at) >= 0;
@@ -632,6 +636,8 @@ static struct {
     uint8_t         probes;   // RELAY_HOLD: probes so far
     bool            saw_committing; // the last probe found the other half COMMITTING
     bool            unconfirmed;    // DONE without an answer after COMMIT (the probe went unanswered)
+    bool            commit_accepted; // COMMIT was answered ACCEPTED (not IDLE, not unanswered)
+    uint32_t        slave_fw;        // the other half's fw_version, from its INFO at the start
     uint32_t        page_off; // the slot page in page[], or UINT32_MAX
     bool            from_self; // the boot relay (update_pair.c): this half's own image, not the slot
     // Timing (the RELAY op): when each phase began (0: not yet), and the RPCs.
@@ -869,9 +875,13 @@ static void relay_timeout(uint32_t now) {
 // pair: QMK's split watchdog fired on a stray byte while it was out of step).
 // Its split watchdog has not been pinged since that boot and the link is
 // paused, so it is pinged now, or it resets again. Then the relay starts over
-// from INFO with the same image.
+// from INFO with the same image. From RELAY_VERIFIED the link was resumed for
+// the wait for COMMIT: it is paused again first (the other half's manifest
+// check and erase come straight after the manifest, D15); with no pause, no
+// restart.
 static bool relay_restart(void) {
     if (rl.slave_state != UPDATE_STATE_IDLE || rl.restarts >= RELAY_RESTARTS_MAX || rl.phase < RELAY_START || rl.phase > RELAY_VERIFIED) return false;
+    if (!relay_pause()) return false;
     update_split_port_watchdog_ping();
     rl.restarts++;
     rl.phase      = RELAY_START;
@@ -969,6 +979,30 @@ static bool relay_fast_check(void) {
     return true;
 }
 
+// The probe found the other half IDLE with no error, and COMMIT was never
+// answered ACCEPTED. A half that took COMMIT and rebooted (the answer lost)
+// answers so, and so does one that reset before COMMIT, its session gone and
+// its old image kept. Its INFO tells which: on the image's fw_version, it
+// committed; still on the one it had at the start, it never did (the relay
+// fails, so a pair session never installs this half's image alone). When the
+// two are the same, INFO goes unanswered or shows neither, it cannot tell:
+// DONE, unconfirmed (the host checks presence). False when the relay failed.
+static bool relay_probe_version(void) {
+    uint8_t      req[USPLIT_MSG_MAX], buf[USPLIT_MSG_MAX];
+    usplit_rsp_t r;
+    uint8_t      len   = usplit_req_build(req, USPLIT_OP_INFO, ++master_seq, NULL, 0);
+    uint8_t      want  = usplit_rsp_len(USPLIT_OP_INFO);
+    uint32_t     image = get32(rl.manifest + offsetof(sval_update_manifest_t, fw_version));
+    memset(buf, 0, sizeof(buf));
+    bool ok = relay_rpc(req, len, buf, want, false) && usplit_rsp_parse(buf, want, USPLIT_OP_INFO, req[1], &r) == UPDATE_OK && r.status == UPDATE_OK;
+    if (ok && image != rl.slave_fw && get32(&r.payload[3]) == rl.slave_fw) {
+        relay_fail(UPDATE_UNAVAILABLE);
+        return false;
+    }
+    if (!ok || image == rl.slave_fw || get32(&r.payload[3]) != image) rl.unconfirmed = true;
+    return true;
+}
+
 static void relay_status_payload(const usplit_rsp_t *r) {
     rl.slave_error    = r->payload[0];
     rl.slave_erased   = get16(&r->payload[4]);
@@ -1006,6 +1040,7 @@ static bool relay_step(void) {
                 // (Protocol 1 builds, never released, used bit4 for their test key.)
                 rl.fast       = SVAL_UPDATE_RELAY_FAST && r.payload[0] >= 2 && (r.payload[14] & USPLIT_INFO_FAST);
                 rl.fast_ok    = rl.fast;
+                rl.slave_fw   = get32(&r.payload[3]);
                 rl.start_step = 1;
                 return true;
             }
@@ -1195,6 +1230,7 @@ static bool relay_step(void) {
             // half does not stall on a silent link (R18), and is not resumed
             // in the middle of the other half's commit.
             if (r.status != UPDATE_ACCEPTED && r.state != UPDATE_STATE_IDLE) break;
+            rl.commit_accepted = r.status == UPDATE_ACCEPTED;
             relay_hold(now);
             return false;
 
@@ -1230,6 +1266,7 @@ static bool relay_step(void) {
                     relay_lost();
                     return false;
                 }
+                if (!rl.commit_accepted && !relay_probe_version()) return false;
             } else if (rl.saw_committing) {
                 // COMMITTING at the last probe and silent now: it has begun
                 // its copy (interrupts off). The whole hold again.

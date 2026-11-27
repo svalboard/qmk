@@ -202,7 +202,7 @@ One-side builds (the release files `svalboard_sval_left_<tag>.uf2` and `svalboar
 **SET:** `DF 33 01 <target> <side> <source> <flags>` → `DF 33 01 <status>`
 - `target`: `0` this half (the one with USB), `1` the other half, over the split link.
 - `side`: `0` left or `1` right. `source`: `1` factory or `2` Keybard.
-- `status`: `0` OK, `1` invalid request, `2` no room for the record, `3` the write did not read back, `4` refused because the thumb strap says the other side, `5` the other half is not connected, `6` the other half did not answer (older firmware), `7` the other half took the request and saves it from its main loop: read its side again after it restarts, `8` refused because that half runs a one-side build for the other side (install the one-image firmware on it first).
+- `status`: `0` OK, `1` invalid request, `2` no room for the record, `3` the write did not read back, `4` refused because the thumb strap says the other side, `5` the other half is not connected, `6` the other half did not answer (older firmware), `7` the other half took the request and saves it from its main loop: read its side again after it restarts, `8` refused because that half runs a one-side build for the other side (install the one-image firmware on it first), `9` refused because a firmware update is running on either half (send it again after the update; older firmware never sends `9`).
 
 **CLEAR:** `DF 33 02 <target> <flags>` → `DF 33 02 <status>`. Stores "unknown", so the half starts with no side (unless a strap says otherwise: then `4`; or the half runs a one-side build: then `8`). For testing and factory rework.
 
