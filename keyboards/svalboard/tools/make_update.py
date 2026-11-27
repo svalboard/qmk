@@ -62,6 +62,9 @@ POINTING = {"none": 0, "trackpoint": 1, "pmw3360": 2, "pmw3389": 3, "azoteq": 4,
 KEYMAP = {"sval": 1, "blank": 2}  # the release keymaps (D22)
 FLAG_RELEASE, FLAG_DIAGNOSTIC = 0x0001, 0x0002
 STORAGE_FORMAT = 2  # SVAL_UPDATE_STORAGE_FORMAT in keyboards/svalboard/config.h
+# SVAL_UPDATE_SECURITY_EPOCH in keyboards/svalboard/config.h: raise both together. A
+# board refuses a manifest below its own epoch, so every later release carries it.
+SECURITY_EPOCH = 0
 
 # ---- build info (update_build_info.h) ----------------------------------------------
 
@@ -373,6 +376,8 @@ def release_image_problems(manifest, image):
         problems.append(f"hand {m['hand']} or pointing_id {m['pointing_id']} is unknown")
     if m["updater_proto"] != UPDATER_PROTO or m["storage_format"] < STORAGE_FORMAT:
         problems.append(f"updater_proto {m['updater_proto']} or storage_format {m['storage_format']} is not this release's")
+    if m["security_epoch"] < SECURITY_EPOCH:
+        problems.append(f"security epoch {m['security_epoch']} is below this release's {SECURITY_EPOCH}: its boards refuse it")
     if m["image_len"] != len(image):
         problems.append(f"image_len {m['image_len']} but the image is {len(image)} B")
     elif hashlib.sha512(image).digest() != m["sha512"]:
@@ -457,6 +462,11 @@ def _verify_parts(manifest, image, args):
         problems.append("BAD_HASH: the image does not match the manifest's SHA-512")
     problems += ["BAD_IMAGE: " + p for p in image_problems(image)]
     info = build_info(image)
+    # update_image_build_check: a release build refuses a dev build's image at END,
+    # whatever the manifest's flags say (a .svup another packer made).
+    if release_build and info is not None and info["flags"] & (BI_NO_CHORD | BI_DEV_KEEP):
+        dev = ", ".join(BI_NOT_IN_RELEASE[b] for b in (BI_NO_CHORD, BI_DEV_KEEP) if info["flags"] & b)
+        problems.append(f"BAD_IMAGE: a dev build ({dev}) on a release build")
     what = (f"hand {m['hand']}, pointing {m['pointing_id']}, flags {m['flags']:#x}, "
             f"version {manifest_version(m)!r} ({m['fw_version']}), image {len(image)} B, "
             f"build info {'none' if info is None else hex(info['flags'])}")
@@ -701,7 +711,7 @@ def main(argv=None):
         ap.add_argument("--version-string", help="display version, at most 16 ASCII characters "
                         "(default: the image's SVAL_FW_VERSION_STRING)")
         ap.add_argument("--fw-version", type=lambda s: int(s, 0), help="numeric version, u32 (default: the image's SVAL_FW_VERSION)")
-        ap.add_argument("--epoch", type=lambda s: int(s, 0), default=0, help="security epoch (u16)")
+        ap.add_argument("--epoch", type=lambda s: int(s, 0), default=SECURITY_EPOCH, help=f"security epoch (u16, default {SECURITY_EPOCH}: SVAL_UPDATE_SECURITY_EPOCH)")
         ap.add_argument("--storage-format", type=int, default=STORAGE_FORMAT)
         ap.add_argument("--release", action="store_true", help="set flags.RELEASE and run the release checks")
         ap.add_argument("--diagnostic", action="store_true", help="set flags.DIAGNOSTIC (scanlab/keytest/host-bootloader images)")

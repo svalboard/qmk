@@ -86,6 +86,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // Downgrade floors (D19): an image whose manifest is below either is refused.
 // Raise SVAL_UPDATE_SECURITY_EPOCH in a release that fixes a security problem,
 // and SVAL_UPDATE_STORAGE_FORMAT when stored settings change incompatibly.
+// Raise SECURITY_EPOCH and STORAGE_FORMAT in tools/make_update.py with them:
+// the release manifests carry the tool's values (tests/sval_updater checks).
 #ifndef SVAL_UPDATE_SECURITY_EPOCH
 #    define SVAL_UPDATE_SECURITY_EPOCH 0
 #endif
@@ -306,8 +308,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #endif
 
 #define SERIAL_DEBUG
-#define RP2040_BOOTLOADER_DOUBLE_TAP_RESET
-#define RP2040_BOOTLOADER_DOUBLE_TAP_RESET_TIMEOUT 500 // Timeout window in ms in which the double tap can occur.
+// Double-tap RESET into the bootloader is double_tap_reset.c, which arms
+// earlier than QMK's RP2040_BOOTLOADER_DOUBLE_TAP_RESET; leave that one off.
+#undef RP2040_BOOTLOADER_DOUBLE_TAP_RESET
+#undef RP2040_BOOTLOADER_DOUBLE_TAP_RESET_TIMEOUT
 
 // Macro count (Sval entry counts are now in each keymap's sval.json)
 // 256 macros: QMK's macro keycodes (0x7700-0x777F) reach macro 127; the Sval
