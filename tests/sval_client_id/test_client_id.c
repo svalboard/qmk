@@ -33,26 +33,26 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
 #define TTL_MS ((uint32_t)CLIENT_WRAPPER_TTL_SECS * 1000)
 #define STEP 0x10000u // the ID keeps the timer's high 16 bits: 65.536 s steps
 
-// An ID allocated at `start` is valid for at least one step (65.5 s) and never
-// past two (131 s), wherever it falls, including across the wrap.
+// An ID allocated at `start` is valid for at least the TTL the bootstrap
+// advertises, wherever it falls, including across the wrap, and expires within
+// two steps after it.
 static void check_from(uint32_t start) {
     now          = start;
     uint32_t id  = client_wrapper_allocate_id();
     uint32_t end = 0;
-    for (uint32_t t = 0; t <= 3 * STEP; t += 64) {
+    for (uint32_t t = 0; t <= TTL_MS + 3 * STEP; t += 64) {
         now = start + t;
         if (!client_wrapper_valid_id(id)) {
             end = t;
             break;
         }
     }
-    CHECK(end != 0);             // it expires
-    CHECK(end >= STEP - 64);     // not before ~65.5 s
-    CHECK(end <= 2 * STEP);      // and by 131 s
-    CHECK(end <= TTL_MS + STEP); // never much past the TTL
+    CHECK(end != 0);                 // it expires
+    CHECK(end > TTL_MS);             // not before the advertised TTL
+    CHECK(end <= TTL_MS + 2 * STEP); // never much past it
     // ... and stays expired for the rest of the timer's period (49.7 days),
     // sampled, until it would alias at the wrap of the age itself.
-    for (uint64_t t = 2 * STEP; t < 0xFFFF0000u - STEP; t += 0x01000000u) {
+    for (uint64_t t = TTL_MS + 2 * STEP; t < 0xFFFF0000u - STEP; t += 0x01000000u) {
         now = start + (uint32_t)t;
         CHECK(!client_wrapper_valid_id(id));
     }
