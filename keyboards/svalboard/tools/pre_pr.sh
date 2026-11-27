@@ -15,6 +15,7 @@
 #    util/test_native_ptp.sh, and make test:sval_tap_dance,
 #    test:sval_alt_repeat, test:sval_tap_dance_limit and test:sval_trns_mod_tap
 #    (in the qmk_cli image).
+#    (also test:sval_usb_wake)
 #
 # Needs docker (for the qmk_cli image), cc and python3. Exits nonzero if any
 # step fails. Releases run the same checks, and more, in release.yml.
@@ -111,7 +112,7 @@ result "storage tests" $ec
 
 step "Tap dance and Alt Repeat host tests (make test:..., qmk_cli image)"
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp "${mounts[@]}" -w "$root" "$IMAGE" \
-    bash -c 'git config --global --add safe.directory "*"; make test:sval_tap_dance test:sval_alt_repeat test:sval_tap_dance_limit test:sval_trns_mod_tap' > "$log" 2>&1
+    bash -c 'git config --global --add safe.directory "*"; make test:sval_tap_dance test:sval_alt_repeat test:sval_tap_dance_limit test:sval_trns_mod_tap test:sval_usb_wake' > "$log" 2>&1
 ec=$?; [ $ec -eq 0 ] && grep -a PASSED "$log" | tail -4 || tail -30 "$log"
 result "tap dance and Alt Repeat host tests" $ec
 

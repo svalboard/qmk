@@ -29,6 +29,7 @@
 #endif
 #include "build_reset.h"
 #include "link_light.h"
+#include "usb_wake.h"
 #include "nvm_via.h"
 #ifdef SVAL_EITHER_HAND
 #    include "side.h"
@@ -1316,7 +1317,7 @@ static void sval_usb_wake_handler(void) {
         // Check if host has enabled remote wakeup capability
         if (USB_DRIVER.status & USB_GETSTATUS_REMOTE_WAKEUP_ENABLED) {
             // Check for wake condition (key pressed)
-            if (suspend_wakeup_condition()) {
+            if (sval_usb_wake_key_down()) {
                 usbWakeupHost(&USB_DRIVER);
 #if USB_SUSPEND_WAKEUP_DELAY > 0
                 wait_ms(USB_SUSPEND_WAKEUP_DELAY);

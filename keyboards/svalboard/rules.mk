@@ -19,6 +19,8 @@ SRC += settings_area.c key_log.c debug_console.c axis_scale.c sval_timing.c matr
 SRC += full_reset.c
 # Double-tap RESET into the bootloader, armed early (double_tap_reset.c).
 SRC += double_tap_reset.c
+# Waking a suspended host (usb_wake.h).
+SRC += usb_wake.c
 
 # Settings start at 0x160000; keep firmware below them.
 LDFLAGS += -Wl,-T,keyboards/svalboard/flash_reservation.ld
