@@ -11,12 +11,16 @@
 #    targets and aliases (qmk ci-validate-*).
 # 3. The settings area budget (tools/settings_budget.py): fails on overflow,
 #    warns at half full.
-# 4. Fast host tests: util/updater_test/run.sh, tests/sval_storage,
-#    util/test_native_ptp.sh, and make test:sval_tap_dance,
-#    test:sval_alt_repeat, test:sval_tap_dance_limit and test:sval_trns_mod_tap
-#    (in the qmk_cli image).
-#    (also test:sval_usb_wake)
-#    (also test:sval_combo test:sval_key_override test:sval_chordal_hold)
+# 4. Every tests/sval_* suite, found by its files, so a new one is never left
+#    out:
+#    - util/updater_test/run.sh (tests/sval_updater and the C tests it
+#      compiles) and util/test_native_ptp.sh (tests/sval_native_ptp);
+#    - python3 -m unittest in every other folder with test_*.py files
+#      (sval_storage, sval_pointing, sval_keytest, sval_layers,
+#      sval_runtime_tap, ...);
+#    - make test:<folder> for every folder with a test.mk, subfolders too,
+#      and tests/sval_runtime_tap/build_non_sval.py (in the qmk_cli image);
+#    - a check that fails if a tests/sval_* folder is run by none of these.
 #
 # Needs docker (for the qmk_cli image), cc and python3. Exits nonzero if any
 # step fails. Releases run the same checks, and more, in release.yml.
@@ -106,22 +110,73 @@ step "Settings area budget (tools/settings_budget.py)"
 python3 keyboards/svalboard/tools/settings_budget.py
 result "settings area budget" $?
 
-step "Storage tests (tests/sval_storage)"
-python3 -m unittest discover -s tests/sval_storage > "$log" 2>&1
-ec=$?; [ $ec -eq 0 ] && tail -1 "$log" || tail -30 "$log"
-result "storage tests" $ec
+# The tests/sval_* suites, found by their files, so a new one is run without
+# editing this script. Folders whose test_*.py files take arguments are run by
+# their own scripts instead (own_runner).
+own_runner="sval_updater sval_native_ptp"
+py_suites=()
+for d in tests/sval_*/; do
+    d=${d%/}
+    case " $own_runner " in *" ${d#tests/} "*) continue ;; esac
+    compgen -G "$d/test_*.py" > /dev/null && py_suites+=("$d")
+done
+mapfile -t gtests < <(find tests -path 'tests/sval_*' -name test.mk -printf '%h\n' | sed 's|^tests/||' | sort)
 
-step "Tap dance, Alt Repeat, combo, key override and Chordal Hold host tests (make test:..., qmk_cli image)"
+step "Python host tests (python3 -m unittest, ${#py_suites[@]} folders)"
+py=0
+for d in "${py_suites[@]}"; do
+    if python3 -m unittest discover -s "$d" -p 'test_*.py' > "$log" 2>&1; then
+        echo "$d: $(grep -a '^Ran ' "$log")"
+    else
+        tail -30 "$log"
+        echo "FAILED: $d"
+        py=1
+    fi
+done
+result "python host tests" $py
+
+step "QMK host tests (make test:..., ${#gtests[@]} suites, qmk_cli image)"
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp "${mounts[@]}" -w "$root" "$IMAGE" \
-    bash -c 'git config --global --add safe.directory "*"; make test:sval_tap_dance test:sval_alt_repeat test:sval_tap_dance_limit test:sval_trns_mod_tap test:sval_usb_wake test:sval_combo test:sval_key_override test:sval_chordal_hold' > "$log" 2>&1
-ec=$?; [ $ec -eq 0 ] && grep -a PASSED "$log" | tail -4 || tail -30 "$log"
-result "tap dance and Alt Repeat host tests" $ec
+    bash -c 'git config --global --add safe.directory "*"; make "${@/#/test:}"' make "${gtests[@]}" > "$log" 2>&1
+ec=$?
+if [ $ec -eq 0 ]; then
+    echo "${gtests[*]}"
+    grep -ac PASSED "$log" | sed 's/$/ suites passed/'
+else
+    tail -30 "$log"
+fi
+result "QMK host tests" $ec
+
+step "A non-Svalboard build with TT() and Grave Escape (tests/sval_runtime_tap/build_non_sval.py)"
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp "${mounts[@]}" -w "$root" "$IMAGE" \
+    bash -c 'git config --global --add safe.directory "*"; python3 tests/sval_runtime_tap/build_non_sval.py' > "$log" 2>&1
+ec=$?; [ $ec -eq 0 ] && grep -a '^Linking' "$log" | tail -1 || tail -30 "$log"
+rm -f handwired_onekey_rp2040_runtime_tap_*.uf2
+result "non-Svalboard build" $ec
 
 step "Native touchpad host tests (util/test_native_ptp.sh)"
 bash util/test_native_ptp.sh > "$log" 2>&1
 ec=$?; [ $ec -eq 0 ] && tail -1 "$log" || tail -30 "$log"
 result "native touchpad host tests" $ec
 rm -f "$log"
+
+# Every tests/sval_* folder must be run by a step above: unittest, make test,
+# or by name in util/updater_test/run.sh or util/test_native_ptp.sh.
+step "Every tests/sval_* folder is run"
+missed=()
+for d in tests/sval_*/; do
+    d=${d%/}
+    n=${d#tests/}
+    printf '%s\n' "${py_suites[@]}" | grep -qx "$d" && continue
+    printf '%s\n' "${gtests[@]}" | grep -qE "^$n(/|$)" && continue
+    grep -qE "tests/$n([/\"' ]|$)" util/updater_test/run.sh util/test_native_ptp.sh && continue
+    missed+=("$d")
+done
+if [ ${#missed[@]} -gt 0 ]; then
+    printf 'not run: %s\n' "${missed[@]}"
+    echo "give it test_*.py files or a test.mk, or run it from util/updater_test/run.sh"
+fi
+result "every tests/sval_* folder is run" ${#missed[@]}
 
 echo
 if [ ${#failed[@]} -eq 0 ]; then
