@@ -129,6 +129,83 @@ int main(void) {
 """
         )
 
+    def test_macro_playback_stops_on_zero_and_bounds_nesting(self):
+        core = 'modules/svalboard/core/'
+        source = (ROOT / core / 'sval.c').read_text()
+        send = function(core + 'sval.c', 'void dynamic_keymap_macro_send')
+        # Everything from the override comment through the function, so any
+        # helpers or limits the playback defines next to it come along.
+        playback = source[source.index('// Override dynamic_keymap_macro_send'):source.index(send)] + send
+        run_c(
+            PRELUDE + r'''
+#define SS_QMK_PREFIX 1
+#define SS_TAP_CODE 1
+#define SS_DOWN_CODE 2
+#define SS_UP_CODE 3
+#define SS_DELAY_CODE 4
+#define VIAL_MACRO_EXT_TAP 5
+#define VIAL_MACRO_EXT_DOWN 6
+#define VIAL_MACRO_EXT_UP 7
+#define QK_MACRO 0x7700
+static uint8_t buf[64];
+static char out[256];
+static size_t out_len;
+static unsigned depth, max_depth;
+uint16_t dynamic_keymap_macro_get_count(void) { return 4; }
+uint32_t dynamic_keymap_macro_get_buffer_size(void) { return sizeof(buf); }
+void dynamic_keymap_macro_get_buffer(uint32_t o, uint16_t n, uint8_t *b) { assert(o + n <= sizeof(buf)); memcpy(b, buf + o, n); }
+static void record(const char *s) { size_t n = strlen(s); assert(out_len + n < sizeof(out)); memcpy(out + out_len, s, n); out_len += n; out[out_len] = 0; }
+void send_string(const char *s) { record(s); }
+void send_string_with_delay(const char *s, uint8_t d) { record(s); }
+uint16_t get_tap_code_delay(void) { return 0; }
+void wait_ms(int ms) {}
+void dynamic_keymap_macro_send(uint8_t id);
+// A tap of a macro keycode plays that macro, as process_record_via does.
+void sval_keycode_tap(uint16_t kc) {
+ record("T");
+ if (kc >= QK_MACRO && kc < QK_MACRO + 4) {
+  if (++depth > max_depth) max_depth = depth;
+  assert(depth < 20 && "macro playback recursed without limit");
+  dynamic_keymap_macro_send(kc - QK_MACRO);
+  depth--;
+ }
+}
+void sval_keycode_down(uint16_t kc) { record("D"); }
+void sval_keycode_up(uint16_t kc) { record("U"); }
+''' + function(core + 'sval.c', 'static uint16_t decode_keycode') + '\n' + playback + r'''
+static void play(const uint8_t *b, size_t n, uint8_t id) {
+ memset(buf, 0, sizeof(buf)); memcpy(buf, b, n);
+ out_len = 0; out[0] = 0; max_depth = 0;
+ dynamic_keymap_macro_send(id);
+}
+int main(void) {
+ // M0 taps M1 (01 05 01 77), M1 types "a": one nested macro still plays.
+ const uint8_t nested[] = {1, 5, 0x01, 0x77, 0, 'a', 0};
+ play(nested, sizeof(nested), 0); assert(strcmp(out, "Ta") == 0 && max_depth == 1);
+ // M0 taps itself (0xFF77 is M0 with the high-byte escape): it plays once
+ // more inside itself and stops there.
+ const uint8_t self[] = {1, 5, 0x77, 0xFF, 0};
+ play(self, sizeof(self), 0); assert(strcmp(out, "TT") == 0);
+ play(self, sizeof(self), 0); assert(strcmp(out, "TT") == 0); // depth restored
+ // A cycle M0 -> M1 -> M0 stops the same way.
+ const uint8_t cycle[] = {1, 5, 0x01, 0x77, 0, 1, 5, 0x77, 0xFF, 0};
+ play(cycle, sizeof(cycle), 0); assert(strcmp(out, "TT") == 0);
+ // A zero byte inside an action ends the macro, as the start-of-macro search
+ // counts it: nothing after it is typed.
+ const uint8_t ext_low[] = {1, 5, 0x00, 0x52, 0, 'b', 0};
+ play(ext_low, sizeof(ext_low), 0); assert(out_len == 0);
+ const uint8_t ext_high[] = {1, 5, 0x04, 0x00, 'y', 0};
+ play(ext_high, sizeof(ext_high), 0); assert(out_len == 0);
+ const uint8_t tap0[] = {1, 1, 0x00, 'x', 0};
+ play(tap0, sizeof(tap0), 0); assert(out_len == 0);
+ // A whole tap action still plays, and text after it too.
+ const uint8_t tap[] = {1, 1, 0x04, 'z', 0};
+ play(tap, sizeof(tap), 0); assert(strcmp(out, "\x01\x01\x04z") == 0);
+ return 0;
+}
+'''
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
