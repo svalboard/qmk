@@ -900,6 +900,10 @@ void sval_set_active_layer(uint32_t layer, bool save) {
 static uint8_t       rgb_resyncs;                     // the half with USB: pings left that resend everything
 static uint8_t       rgb_redraws = SVAL_RGB_SYNC_PINGS; // the other half: pings left that redraw (from boot)
 static volatile bool rgb_redraw_due;
+// The other half: the idle flags changed in a ping, so the trackball's rest mode is applied
+// from housekeeping. The link's handler runs in its own thread and must not write the
+// sensor between the main loop's SPI steps (a burst read, a firmware upload).
+static volatile bool pointer_rest_due;
 
 void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
     const presence_rpc_t *in                = (const presence_rpc_t *)in_data;
@@ -913,7 +917,7 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
     global_saved_values.scan_deep_period_ms = in->scan_deep_period_ms;
     if (global_saved_values.idle_flags != in->idle_flags) {
         global_saved_values.idle_flags = in->idle_flags;
-        sval_pointer_rest_apply();
+        pointer_rest_due               = true; // applied from housekeeping, not from the link's handler
     }
     global_saved_values.scan_deep_clock_idx = in->scan_deep_clock_idx;
     // The master's optical debounce mode, when its ping carries it (RAM only, as above).
@@ -1382,6 +1386,10 @@ void housekeeping_task_kb(void) {
     if (is_keyboard_master()) sval_typing_pause_task();
     scanlab_housekeeping();
     sval_link_task();
+    if (pointer_rest_due) { // the other half, after a ping changed the idle flags
+        pointer_rest_due = false;
+        sval_pointer_rest_apply();
+    }
     if (rgb_redraw_due) { // the other half, after a ping: draw what the half with USB sent
         rgb_redraw_due = false;
         rgb_redraws--;
