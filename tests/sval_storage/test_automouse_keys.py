@@ -149,7 +149,8 @@ class AutoMouseKeys(unittest.TestCase):
         # F40: TO(0) on the mouse layer. Its press counted as a held mouse key,
         # and its release came after the layer was gone, so the count stayed at
         # 1 and the mouse layer never timed out again.
-        self.check(r'''
+        self.check(
+            r'''
             keymap[MH_AUTO_BUTTONS_LAYER][1][0] = TO(0);
             motion();
             press(1, 0, TO(0));
@@ -160,12 +161,14 @@ class AutoMouseKeys(unittest.TestCase):
             assert(MOUSE_LAYER_ON());
             wait(TIMEOUT_MS + 1);
             assert(!MOUSE_LAYER_ON());
-        ''')
+        '''
+        )
 
     def test_transparent_mod_tap_on_the_mouse_layer_keeps_auto_mouse(self):
         # The F40 fix must not end Auto Mouse while a transparent mod-tap on the
         # mouse layer has lifted it for the length of its tap.
-        self.check(r'''
+        self.check(
+            r'''
             keymap[MH_AUTO_BUTTONS_LAYER][2][0] = MT(MOD_LSFT, KC_TRNS);
             motion();
             event(2, 0, true, MT(MOD_LSFT, KC_TRNS), KEY_EVENT, 1);
@@ -175,12 +178,14 @@ class AutoMouseKeys(unittest.TestCase):
             assert(MOUSE_LAYER_ON() && mouse_mode_enabled);
             wait(TIMEOUT_MS + 1);
             assert(!MOUSE_LAYER_ON());
-        ''')
+        '''
+        )
 
     def test_combo_of_a_mouse_layer_key_keeps_the_mouse_layer(self):
         # F41: a combo has no key position (QMK gives it row 0, col 0), so it was
         # compared with the mouse layer's key at 0,0 and ended Auto Mouse.
-        self.check(r'''
+        self.check(
+            r'''
             keymap[MH_AUTO_BUTTONS_LAYER][0][0] = KC_A;
             keymap[MH_AUTO_BUTTONS_LAYER][3][2] = MS_BTN1;
             motion();
@@ -191,12 +196,14 @@ class AutoMouseKeys(unittest.TestCase):
             /* A combo of a key that is not on the mouse layer still ends it. */
             event(0, 0, true, KC_B, COMBO_EVENT, 0);
             assert(!MOUSE_LAYER_ON());
-        ''')
+        '''
+        )
 
     def test_release_of_a_key_held_from_before_keeps_auto_mouse(self):
         # F44: a key pressed before the mouse layer came on, released after,
         # ended Auto Mouse. Only presses end it.
-        self.check(r'''
+        self.check(
+            r'''
             press(1, 1, KC_F);
             motion();
             release(1, 1, KC_F);
@@ -204,14 +211,16 @@ class AutoMouseKeys(unittest.TestCase):
             /* Pressing a key that is not on the mouse layer still ends it. */
             press(1, 1, KC_F);
             assert(!MOUSE_LAYER_ON());
-        ''')
+        '''
+        )
 
     def test_transparent_mod_tap_waits_for_its_own_release(self):
         # F43: while a transparent mod-tap's tap was out, the release of any
         # other key was taken for the mod-tap's: that key's own release handling
         # was skipped (here a Sniper hold stayed counted) and the layer came back
         # early.
-        self.check(r'''
+        self.check(
+            r'''
             layer_state = (1u << 0) | (1u << 1);
             press(3, 0, SV_SNIPER_2);
             assert(sniper_hold_2 == 1);
@@ -222,7 +231,8 @@ class AutoMouseKeys(unittest.TestCase):
             assert(layer_state == (1u << 0));
             event(4, 0, false, MT(MOD_LSFT, KC_TRNS), KEY_EVENT, 1);
             assert(layer_state == ((1u << 0) | (1u << 1)) && !in_mod_tap && in_mod_tap_layer == -1);
-        ''')
+        '''
+        )
 
 
 if __name__ == '__main__':
