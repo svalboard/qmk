@@ -6,7 +6,8 @@
 // 44.8 up and down). The wheel is declared at 120 counts per detent (config.h,
 // POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER). Windows applies that; macOS treats
 // each count as a line, so on a Mac the counts are divided by the pad's own
-// divider (Drag Scroll's MAC_DIVISOR and Velocity Scroll stay as shipped).
+// divider (Drag Scroll has its own, SVAL_BALL_SCROLL_MAC_DIV in scroll_speed.h;
+// Velocity Scroll's MAC_DIVISOR stays as shipped).
 //
 // The distance is fixed in pad pixels per detent, so the pointer's DPI does not
 // change it; the hand's Scroll speed (scroll_speed.h, a percent) multiplies it,

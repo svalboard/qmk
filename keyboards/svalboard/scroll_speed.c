@@ -68,7 +68,8 @@ uint16_t sval_scroll_motion_dpi(uint8_t kind, uint16_t dpi, bool vertical) {
     return dpi;
 }
 
-// counts x (800 / dpi) x pct / 100, divided by 12 on a Mac. The remainder is
+// counts x (800 / dpi) x pct / 100, divided by SVAL_BALL_SCROLL_MAC_DIV on a
+// Mac. The remainder is
 // in units of 1/(dpi x 100 x div), so it is only kept while those hold.
 static int16_t axis(int32_t counts, uint16_t dpi, uint16_t pct, bool mac, int32_t *rem) {
     int64_t den = (int64_t)dpi * 100 * (mac ? SVAL_BALL_SCROLL_MAC_DIV : 1);
