@@ -3,6 +3,8 @@
 #include <string.h>
 #include "timer.h"
 
+#define SVAL_SCROLL_TEST_MAX_COUNTS 2000 // the most y counts one report gets
+
 static struct {
     bool     on;
     uint8_t  hand;
@@ -49,12 +51,18 @@ void sval_scroll_test_motion(report_mouse_t *left, report_mouse_t *right) {
     uint32_t dt = TIMER_DIFF_32(now, st.last);
     if (!dt) return;
     st.last = now;
-    st.rem += st.rate * (int32_t)dt;
-    int32_t y = st.rem / 1000;
-    if (y > 2000) y = 2000;
-    if (y < -2000) y = -2000;
-    st.rem -= y * 1000;
-    st.total += y;
+    // In 64 bits: any int32 rate times any dt fits. A rate past what a report
+    // carries (2000 counts) keeps at most one report's worth waiting, so the
+    // remainder never overflows; total counts only what was sent.
+    int64_t acc = (int64_t)st.rem + (int64_t)st.rate * dt;
+    int64_t y   = acc / 1000;
+    if (y > SVAL_SCROLL_TEST_MAX_COUNTS) y = SVAL_SCROLL_TEST_MAX_COUNTS;
+    if (y < -SVAL_SCROLL_TEST_MAX_COUNTS) y = -SVAL_SCROLL_TEST_MAX_COUNTS;
+    acc -= y * 1000;
+    if (acc > SVAL_SCROLL_TEST_MAX_COUNTS * 1000) acc = SVAL_SCROLL_TEST_MAX_COUNTS * 1000;
+    if (acc < -SVAL_SCROLL_TEST_MAX_COUNTS * 1000) acc = -SVAL_SCROLL_TEST_MAX_COUNTS * 1000;
+    st.rem = (int32_t)acc;
+    st.total += (int32_t)y;
     report_mouse_t *r = st.hand ? right : left;
     r->y += (mouse_xy_report_t)y;
 }

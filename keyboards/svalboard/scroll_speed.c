@@ -94,6 +94,35 @@ void sval_ball_scroll(sval_ball_scroll_t *s, int32_t x, int32_t y, uint16_t dpi_
     *v  = axis(y, dpi_y, pct, mac, &s->rem_y);
 }
 
+static int16_t add_sat16(int32_t a, int32_t b) {
+    int32_t t = a + b;
+    return (int16_t)(t > 32767 ? 32767 : t < -32768 ? -32768 : t);
+}
+
+static int32_t mm5(int32_t counts, uint16_t dpi) {
+    return (int32_t)(((int64_t)counts * 100000) / dpi); // |counts| <= 32768 and dpi >= 1: fits
+}
+
+void sval_hand_scroll(sval_ball_scroll_t *s, int32_t x, int32_t y_up, int16_t h_in, int16_t v_in, uint16_t dpi_x, uint16_t dpi_y, uint16_t pct, bool mac, int16_t *h, int16_t *v, int32_t *mm_h, int32_t *mm_v) {
+    if (dpi_x == 0) dpi_x = SVAL_BALL_SCROLL_BASE_DPI;
+    if (dpi_y == 0) dpi_y = SVAL_BALL_SCROLL_BASE_DPI;
+    int16_t bh, bv;
+    *mm_h = mm5(x, dpi_x);
+    *mm_v = mm5(y_up, dpi_y);
+    sval_ball_scroll(s, x, y_up, dpi_x, dpi_y, pct, mac, &bh, &bv);
+    *h = add_sat16(h_in, bh);
+    *v = add_sat16(v_in, bv);
+}
+
+bool sval_scroll_hand_settled(uint8_t state, bool local, bool searched, bool settle_passed) {
+    switch (state) {
+        case SVAL_SCROLL_MODULE_UNSEEN: return false;
+        case SVAL_SCROLL_MODULE_UNCHECKED: return settle_passed;
+        case SVAL_SCROLL_MODULE_NO_ANSWER: return local ? searched : settle_passed;
+        default: return true;
+    }
+}
+
 void sval_scroll_migrate(uint8_t kind, uint8_t dpi_index, uint16_t legacy_pct, const uint16_t *choices, uint8_t n, uint16_t *speed, uint8_t *new_index) {
     uint8_t idx = dpi_index >= n ? n - 1 : dpi_index;
     *speed      = sval_scroll_speed_from_dpi(choices[idx], kind);

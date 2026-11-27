@@ -126,6 +126,7 @@ enum sval_side_status {
     SVAL_SIDE_NO_ANSWER     = 6, // the other half did not answer (older firmware, or the link failed)
     // 7: the other half took the write (side.c, SIDE_ACCEPTED)
     SVAL_SIDE_BUILD         = 8, // this half runs a one-side build for the other side; the build wins
+    SVAL_SIDE_BUSY          = 9, // a firmware update is running (or the split link is paused for one): try again after it
 };
 // Whether a host may write side (SVAL_SIDE_LEFT/RIGHT, or UNKNOWN to clear) with source.
 uint8_t sval_side_host_check(uint8_t strap_side, uint8_t build_side, uint8_t side, uint8_t source);

@@ -29,6 +29,7 @@
 #endif
 #include "build_reset.h"
 #include "link_light.h"
+#include "usb_wake.h"
 #include "nvm_via.h"
 #ifdef SVAL_EITHER_HAND
 #    include "side.h"
@@ -830,6 +831,10 @@ void sval_set_active_layer(uint32_t layer, bool save) {
 static uint8_t       rgb_resyncs;                     // the half with USB: pings left that resend everything
 static uint8_t       rgb_redraws = SVAL_RGB_SYNC_PINGS; // the other half: pings left that redraw (from boot)
 static volatile bool rgb_redraw_due;
+// The other half: the idle flags changed in a ping, so the trackball's rest mode is applied
+// from housekeeping. The link's handler runs in its own thread and must not write the
+// sensor between the main loop's SPI steps (a burst read, a firmware upload).
+static volatile bool pointer_rest_due;
 
 void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
     const presence_rpc_t *in                = (const presence_rpc_t *)in_data;
@@ -843,7 +848,7 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
     global_saved_values.scan_deep_period_ms = in->scan_deep_period_ms;
     if (global_saved_values.idle_flags != in->idle_flags) {
         global_saved_values.idle_flags = in->idle_flags;
-        sval_pointer_rest_apply();
+        pointer_rest_due               = true; // applied from housekeeping, not from the link's handler
     }
     global_saved_values.scan_deep_clock_idx = in->scan_deep_clock_idx;
     // The master's optical debounce mode, when its ping carries it (RAM only, as above).
@@ -1034,16 +1039,23 @@ uint8_t sval_pad_hands(void) {
 // The scroll kind of each hand's module (enum sval_scroll_kind), and whether
 // the hand has settled: its module answered, or the boot search gave up on one.
 #define SVAL_SCROLL_SETTLE_MS (SVAL_POINTER_PROBE_AFTER_MS + 1000)
+// A hand no half reports (the other half, before or without the link) never
+// settles (sval_scroll_hand_settled).
 static bool scroll_hand_kind(uint8_t hand, uint8_t *kind) {
     sval_pointer_identity_t id;
-    bool                    local;
-    *kind = SVAL_SCROLL_KIND_BALL;
-    if (!sval_pointer_for_hand(hand == 0, &id, &local)) return timer_read32() >= SVAL_SCROLL_SETTLE_MS; // no such half
-    if (id.detected == SVAL_SENSOR_AZOTEQ) *kind = SVAL_SCROLL_KIND_PAD;
-    if (id.detected == SVAL_SENSOR_TRACKPOINT) *kind = SVAL_SCROLL_KIND_TRACKPOINT;
-    if (id.detected == SVAL_SENSOR_NONE) return timer_read32() >= SVAL_SCROLL_SETTLE_MS;
-    if (id.detected == SVAL_SENSOR_NO_RESPONSE) return local ? sval_pointer_searched() : timer_read32() >= SVAL_SCROLL_SETTLE_MS;
-    return true;
+    bool                    local  = false;
+    uint8_t                 state  = SVAL_SCROLL_MODULE_ANSWERED;
+    const bool              passed = timer_read32() >= SVAL_SCROLL_SETTLE_MS;
+    *kind                          = SVAL_SCROLL_KIND_BALL;
+    if (!sval_pointer_for_hand(hand == 0, &id, &local)) {
+        state = SVAL_SCROLL_MODULE_UNSEEN;
+    } else {
+        if (id.detected == SVAL_SENSOR_AZOTEQ) *kind = SVAL_SCROLL_KIND_PAD;
+        if (id.detected == SVAL_SENSOR_TRACKPOINT) *kind = SVAL_SCROLL_KIND_TRACKPOINT;
+        if (id.detected == SVAL_SENSOR_NONE) state = SVAL_SCROLL_MODULE_UNCHECKED;
+        if (id.detected == SVAL_SENSOR_NO_RESPONSE) state = SVAL_SCROLL_MODULE_NO_ANSWER;
+    }
+    return sval_scroll_hand_settled(state, local, sval_pointer_searched(), passed);
 }
 
 // The module a hand's DPI list is held to (enum sval_dpi_module): SVAL_DPI_MODULE_ANY until it is found.
@@ -1247,7 +1259,7 @@ static void sval_usb_wake_handler(void) {
         // Check if host has enabled remote wakeup capability
         if (USB_DRIVER.status & USB_GETSTATUS_REMOTE_WAKEUP_ENABLED) {
             // Check for wake condition (key pressed)
-            if (suspend_wakeup_condition()) {
+            if (sval_usb_wake_key_down()) {
                 usbWakeupHost(&USB_DRIVER);
 #if USB_SUSPEND_WAKEUP_DELAY > 0
                 wait_ms(USB_SUSPEND_WAKEUP_DELAY);
@@ -1312,6 +1324,10 @@ void housekeeping_task_kb(void) {
     if (is_keyboard_master()) sval_typing_pause_task();
     scanlab_housekeeping();
     sval_link_task();
+    if (pointer_rest_due) { // the other half, after a ping changed the idle flags
+        pointer_rest_due = false;
+        sval_pointer_rest_apply();
+    }
     if (rgb_redraw_due) { // the other half, after a ping: draw what the half with USB sent
         rgb_redraw_due = false;
         rgb_redraws--;
