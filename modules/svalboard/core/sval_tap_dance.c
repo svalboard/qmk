@@ -47,11 +47,28 @@ static void on_dance(tap_dance_state_t *state, void *user_data) {
     }
 }
 
+static void dance_finished_outputs(uint16_t index);
+
+// sval_keycode_down() runs a keycode above QK_MODS_MAX (MO, sniper, boost,
+// Repeat and the like) through action_exec(), so process_record_quantum()
+// hands it to preprocess_tap_dance() as a key pressed during this dance: QMK
+// clears active_td only after this callback returns. For a dance key already
+// released, that nested call resets the dance at once, so the output's release
+// went out before its press and the press then stayed on. The dance counts as
+// held while its outputs go out, so the nested call leaves the reset to QMK,
+// which then sends the release after the press.
 static void on_dance_finished(tap_dance_state_t *state, void *user_data) {
     uint16_t index = (uintptr_t)user_data;
     if (sval_get_tap_dance(index, &td_entry) != 0) return;
     if (!TD_ENABLED(td_entry)) return;
     dance_state[index] = dance_step(state);
+    bool pressed       = state->pressed;
+    state->pressed     = true;
+    dance_finished_outputs(index);
+    state->pressed = pressed;
+}
+
+static void dance_finished_outputs(uint16_t index) {
     switch (dance_state[index]) {
         case SINGLE_TAP: {
             if (td_entry.on_tap) sval_keycode_down(td_entry.on_tap);

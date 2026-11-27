@@ -16,6 +16,7 @@ python3 -I "$tests/test_make_update.py" "$out/cross" "$@"
 python3 -I "$tests/test_release_version.py" "$out/release_version"
 python3 -I "$tests/test_release_artifacts.py" "$out/release_artifacts"
 python3 -I "$tests/test_either_hand.py"
+python3 -I "$tests/test_check_ram_funcs.py"
 
 # Debounce (kb/debounce_sval.c): optical keys off (same scan) and on
 # (sym_defer_g), the thumb Double Down debounced in both, mode changes, split sync.
@@ -50,6 +51,11 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -DCONSOLE_ENABLE     -I"$root/tests/sval_key_log/stub" -I"$kb" "$root/tests/sval_key_log/test_key_log.c" -o "$out/test_key_log_console"
 "$out/test_key_log_console"
 "$out/test_key_log"
+
+# Double-tap RESET (kb/double_tap_reset.h): only RUN-pin resets count, a
+# software reboot never enters the bootloader, two quick taps do.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$kb" "$root/tests/sval_double_tap/test_double_tap.c" -o "$out/test_double_tap"
+"$out/test_double_tap"
 
 # Settings reset on the first boot of a different firmware build (kb/build_reset.c).
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \

@@ -182,7 +182,7 @@ def one_side_image_problems(img, kb, km, side, version, fw_versions=()):
     if fw_versions and info["fw_version"] not in fw_versions:
         problems.append(f"the image's fw_version is {info['fw_version']}, the pair builds' {sorted(fw_versions)}")
     # The release checks make_update.py --release runs, on the manifest a host would make for it.
-    m = mu.build_manifest(img, flags=mu.FLAG_RELEASE, epoch=0, storage_format=mu.STORAGE_FORMAT, fw_version=info["fw_version"], version=version, **ident)
+    m = mu.build_manifest(img, flags=mu.FLAG_RELEASE, epoch=mu.SECURITY_EPOCH, storage_format=mu.STORAGE_FORMAT, fw_version=info["fw_version"], version=version, **ident)
     return problems + mu.release_image_problems(m, img)
 
 

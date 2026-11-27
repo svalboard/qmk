@@ -53,8 +53,11 @@ bool client_wrapper_valid_id(uint32_t id) {
     // Calculate age (subtraction handles wrap correctly)
     uint32_t age = now - id_time;
 
-    // Valid if younger than TTL
-    return age < ((uint32_t)CLIENT_WRAPPER_TTL_SECS * 1000);
+    // Valid if younger than TTL. Both times keep only the timer's high 16 bits,
+    // so age can read up to one 65.536 s step more than the true age: allow
+    // that step, so an ID is never refused before the TTL the bootstrap
+    // advertises (it can then live up to one step past it).
+    return age < (uint32_t)CLIENT_WRAPPER_TTL_SECS * 1000 + 0x10000u;
 }
 
 bool client_wrapper_in_via(void) {

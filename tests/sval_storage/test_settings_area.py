@@ -4,7 +4,8 @@ Run: python3 -m unittest discover -s tests/sval_storage -v
 
 The production file is compiled against a RAM store. It covers a blank and a
 foreign area, reading and writing records, the two slots, a power cut at every
-byte of a save (each setting then reads as its old or its new value), unknown
+byte of a save (each setting then reads as its old or its new value), and of
+a save that grows a record past its entry's capacity, unknown
 and retired ids, records stored shorter or longer than this build's, a full
 area, a damaged list, and the sequence number wrapping. It also checks the
 capacity budget in settings_ids.h (tools/settings_budget.py).
@@ -132,6 +133,44 @@ static void test_power_cut(void) {
         assert(get(SVAL_SET_PAD_MODE, v, 2) == 2 && v[0] == 5);
         if (finished) break;
     }
+    // A cut while a record grows past its entry's capacity (a firmware update
+    // raised it): a new entry is added and the old one retired. It still reads
+    // as its old or its new value, never as missing.
+    for (long at = 0;; at++) {
+        memset(mem, 0, SIZE);
+        uint8_t small[2] = {3, 4}, big[30], other[16] = {7}, v[30];
+        for (int i = 0; i < 30; i++) big[i] = (uint8_t)(100 + i);
+        settings_area_put(SVAL_SET_PAD_PALM, small, 2);
+        settings_area_put(SVAL_SET_SCAN, other, 16);
+        budget = at;
+        int finished = 0;
+        if (!setjmp(cut)) {
+            assert(settings_area_put(SVAL_SET_PAD_PALM, big, 30));
+            finished = 1;
+        }
+        budget = -1;
+        int n = get(SVAL_SET_PAD_PALM, v, 30);
+        assert((n == 2 && v[0] == 3 && v[1] == 4) || (n == 30 && !memcmp(v, big, 30)));
+        if (finished) assert(n == 30);
+        assert(get(SVAL_SET_SCAN, v, 16) == 16 && !memcmp(v, other, 16));
+        uint8_t again[30] = {4, 4, 4};
+        assert(settings_area_put(SVAL_SET_PAD_PALM, again, 30));
+        assert(get(SVAL_SET_PAD_PALM, v, 30) == 30 && !memcmp(v, again, 30));
+        if (finished) break;
+    }
+}
+
+// A record that must grow when the area has no room for its new entry: the
+// save fails and the old value stays.
+static void test_grow_without_room(void) {
+    memset(mem, 0, SIZE);
+    uint8_t small[2] = {3, 4}, blob[200] = {1}, big[300] = {9}, v[8];
+    assert(settings_area_put(SVAL_SET_PAD_PALM, small, 2));
+    for (uint16_t id = 1000; settings_area_put(id, blob, 200); id++) {}
+    assert(!settings_area_put(SVAL_SET_PAD_PALM, big, 300));
+    assert(get(SVAL_SET_PAD_PALM, v, 8) == 2 && v[0] == 3 && v[1] == 4);
+    assert(settings_area_put(SVAL_SET_PAD_PALM, small + 1, 1)); // still fits the old entry
+    assert(get(SVAL_SET_PAD_PALM, v, 8) == 1 && v[0] == 4);
 }
 
 static void test_lengths_and_ids(void) {
@@ -191,6 +230,7 @@ int main(void) {
     test_blank_and_format();
     test_put_get_and_slots();
     test_power_cut();
+    test_grow_without_room();
     test_lengths_and_ids();
     test_full_and_damaged();
     puts("settings area: ok");
