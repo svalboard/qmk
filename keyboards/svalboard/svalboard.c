@@ -1108,16 +1108,23 @@ uint8_t sval_pad_hands(void) {
 // The scroll kind of each hand's module (enum sval_scroll_kind), and whether
 // the hand has settled: its module answered, or the boot search gave up on one.
 #define SVAL_SCROLL_SETTLE_MS (SVAL_POINTER_PROBE_AFTER_MS + 1000)
+// A hand no half reports (the other half, before or without the link) never
+// settles (sval_scroll_hand_settled).
 static bool scroll_hand_kind(uint8_t hand, uint8_t *kind) {
     sval_pointer_identity_t id;
-    bool                    local;
-    *kind = SVAL_SCROLL_KIND_BALL;
-    if (!sval_pointer_for_hand(hand == 0, &id, &local)) return timer_read32() >= SVAL_SCROLL_SETTLE_MS; // no such half
-    if (id.detected == SVAL_SENSOR_AZOTEQ) *kind = SVAL_SCROLL_KIND_PAD;
-    if (id.detected == SVAL_SENSOR_TRACKPOINT) *kind = SVAL_SCROLL_KIND_TRACKPOINT;
-    if (id.detected == SVAL_SENSOR_NONE) return timer_read32() >= SVAL_SCROLL_SETTLE_MS;
-    if (id.detected == SVAL_SENSOR_NO_RESPONSE) return local ? sval_pointer_searched() : timer_read32() >= SVAL_SCROLL_SETTLE_MS;
-    return true;
+    bool                    local  = false;
+    uint8_t                 state  = SVAL_SCROLL_MODULE_ANSWERED;
+    const bool              passed = timer_read32() >= SVAL_SCROLL_SETTLE_MS;
+    *kind                          = SVAL_SCROLL_KIND_BALL;
+    if (!sval_pointer_for_hand(hand == 0, &id, &local)) {
+        state = SVAL_SCROLL_MODULE_UNSEEN;
+    } else {
+        if (id.detected == SVAL_SENSOR_AZOTEQ) *kind = SVAL_SCROLL_KIND_PAD;
+        if (id.detected == SVAL_SENSOR_TRACKPOINT) *kind = SVAL_SCROLL_KIND_TRACKPOINT;
+        if (id.detected == SVAL_SENSOR_NONE) state = SVAL_SCROLL_MODULE_UNCHECKED;
+        if (id.detected == SVAL_SENSOR_NO_RESPONSE) state = SVAL_SCROLL_MODULE_NO_ANSWER;
+    }
+    return sval_scroll_hand_settled(state, local, sval_pointer_searched(), passed);
 }
 
 // The module a hand's DPI list is held to (enum sval_dpi_module): SVAL_DPI_MODULE_ANY until it is found.

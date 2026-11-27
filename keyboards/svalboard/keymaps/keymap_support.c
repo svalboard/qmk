@@ -28,6 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "axis_lock.h"
 #include "scroll_speed.h"
 #include "trns_mod_tap.h"
+#include "automouse_decay.h"
 #ifdef SVAL_SCROLL_TEST
 #    include "scroll_test.h"
 #endif
@@ -77,7 +78,7 @@ bool mouse_mode_enabled = false;
 // Automouse threshold accumulator (normalized to 800 DPI, fixed point: AUTOMOUSE_FP_SCALE units per count)
 #define AUTOMOUSE_FP_SCALE 16
 static int32_t automouse_accumulator = 0;
-static uint16_t automouse_accumulator_timer = 0;
+static uint32_t automouse_accumulator_timer = 0; // timer_read32(): a 16-bit time wraps every 65.5 s
 
 // A hand's motion in Scroll Mode, on a Scroll key or as Drag Scroll, as wheel
 // counts: millimeters, then the fixed base rate, then the hand's Scroll speed
@@ -103,7 +104,9 @@ bool process_detected_host_os_kb(os_variant_t os) {
     return true;
 }
 
-axis_scale_t sniper_x = {1, 1, 0};
+// Sniper's scales, one set per hand (0 left, 1 right): a hand's leftover
+// fraction stays with that hand.
+static axis_scale_set_t sniper[2] = {AXIS_SCALE_SET_INIT, AXIS_SCALE_SET_INIT};
 
 // A pad's two-finger scroll (the chip's pixels in h and v) as wheel counts.
 static sval_pad_scroll_t pad_scroll_state[2];
@@ -134,9 +137,6 @@ static void pad_scroll_scale(report_mouse_t *left, report_mouse_t *right) {
         r->v = v;
     }
 }
-axis_scale_t sniper_y = {1, 1, 0};
-axis_scale_t sniper_h = {1, 1, 0};
-axis_scale_t sniper_v = {1, 1, 0};
 
 uint16_t scroll_timer = 0;
 int16_t scroll_accumulator_h = 0;
@@ -211,10 +211,8 @@ static uint16_t sniper_div_now = 1, boost_mult_now = 1; // the factors in force
 
 void update_sniper_divisor(void) {
     uint8_t div = axis_factor(sniper_hold_2 + sniper_toggle_2, sniper_hold_3 + sniper_toggle_3, sniper_hold_5 + sniper_toggle_5);
-    set_div_axis(&sniper_x, div);
-    set_div_axis(&sniper_y, div);
-    set_div_axis(&sniper_h, div);
-    set_div_axis(&sniper_v, div);
+    set_div_axes(&sniper[0], div);
+    set_div_axes(&sniper[1], div);
     sniper_div_now = div;
 }
 
@@ -241,8 +239,9 @@ static void sval_ptp_automouse(void) {
     int32_t movement = ((left > right ? left : right) * SVAL_PTP_AUTOMOUSE_DPI) / SVAL_PTP_COUNTS_PER_INCH;
     if (movement <= 0 || automouse_layer_blocked()) return;
     uint16_t decay_ms = global_saved_values.automouse_decay * 10;
-    if (decay_ms > 0 && timer_elapsed(automouse_accumulator_timer) > decay_ms) automouse_accumulator = 0;
-    automouse_accumulator_timer = timer_read();
+    uint32_t now      = timer_read32();
+    if (sval_automouse_decayed(now, automouse_accumulator_timer, decay_ms)) automouse_accumulator = 0;
+    automouse_accumulator_timer = now;
     automouse_accumulator += movement;
     if (global_saved_values.automouse_threshold == 0 || automouse_accumulator >= global_saved_values.automouse_threshold) mouse_mode(true);
 }
@@ -379,17 +378,17 @@ static void pad_drive(report_mouse_t *left, report_mouse_t *right) {
 
 #endif
 
-// One hand's x and y become its scroll h and v. mm_h and mm_v get the counts
-// over the hand's DPI, x 100000 (the unit the axis lock thresholds are in).
+// One hand's x and y become its scroll, added to the h and v the report
+// already has (a pad's two-finger scroll, from pad_scroll_scale). mm_h and
+// mm_v get the counts over the hand's DPI, x 100000 (the unit the axis lock
+// thresholds are in).
 static void hand_scroll_convert(uint8_t hand, report_mouse_t *r, int32_t *mm_h, int32_t *mm_v) {
     const uint8_t  kind = sval_hand_scroll_kind(hand);
     const uint16_t dpi  = (uint16_t)(hand ? get_right_dpi() : get_left_dpi());
     const uint16_t dx   = sval_scroll_motion_dpi(kind, dpi, false);
     const uint16_t dy   = sval_scroll_motion_dpi(kind, dpi, true);
     int16_t        h, v;
-    *mm_h = ((int32_t)r->x * 100000) / dx;
-    *mm_v = ((int32_t)-r->y * 100000) / dy;
-    sval_ball_scroll(&ball_scroll_state[hand], r->x, -r->y, dx, dy, sval_scroll_speed(hand), is_mac, &h, &v);
+    sval_hand_scroll(&ball_scroll_state[hand], r->x, -(int32_t)r->y, r->h, r->v, dx, dy, sval_scroll_speed(hand), is_mac, &h, &v, mm_h, mm_v);
     r->h = h;
     r->v = v;
     r->x = 0;
@@ -408,15 +407,15 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     pad_scroll_scale(&reportMouse1, &reportMouse2);
 
     if (any_sniper_active()) {
-        reportMouse1.x = add_to_axis(&sniper_x, reportMouse1.x);
-        reportMouse1.y = add_to_axis(&sniper_y, reportMouse1.y);
-        reportMouse1.h = add_to_axis(&sniper_h, reportMouse1.h);
-        reportMouse1.v = add_to_axis(&sniper_v, reportMouse1.v);
+        reportMouse1.x = add_to_axis(&sniper[0].x, reportMouse1.x);
+        reportMouse1.y = add_to_axis(&sniper[0].y, reportMouse1.y);
+        reportMouse1.h = add_to_axis(&sniper[0].h, reportMouse1.h);
+        reportMouse1.v = add_to_axis(&sniper[0].v, reportMouse1.v);
 
-        reportMouse2.x = add_to_axis(&sniper_x, reportMouse2.x);
-        reportMouse2.y = add_to_axis(&sniper_y, reportMouse2.y);
-        reportMouse2.h = add_to_axis(&sniper_h, reportMouse2.h);
-        reportMouse2.v = add_to_axis(&sniper_v, reportMouse2.v);
+        reportMouse2.x = add_to_axis(&sniper[1].x, reportMouse2.x);
+        reportMouse2.y = add_to_axis(&sniper[1].y, reportMouse2.y);
+        reportMouse2.h = add_to_axis(&sniper[1].h, reportMouse2.h);
+        reportMouse2.v = add_to_axis(&sniper[1].v, reportMouse2.v);
     }
 
     // Pointer accel: mirror of sniper, multiplier instead of divisor.
@@ -464,10 +463,11 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     // On a layer where Auto Mouse is off, motion neither turns the layer on nor counts toward it.
     if ((left_movement > 0 || right_movement > 0) && !automouse_layer_blocked()) {
         uint16_t decay_ms = global_saved_values.automouse_decay * 10;
-        if (decay_ms > 0 && timer_elapsed(automouse_accumulator_timer) > decay_ms) {
+        uint32_t now = timer_read32();
+        if (sval_automouse_decayed(now, automouse_accumulator_timer, decay_ms)) {
             automouse_accumulator = 0;
         }
-        automouse_accumulator_timer = timer_read();
+        automouse_accumulator_timer = now;
         automouse_accumulator += normalized_movement;
 
         if (global_saved_values.automouse_threshold == 0 ||

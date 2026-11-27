@@ -171,6 +171,34 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('OK', result.stdout)
 
+    def _run_c(self, name, sources, includes=()):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / name
+            cmd = ['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror']
+            for inc in (*includes, ROOT / 'keyboards/svalboard'):
+                cmd += ['-I', str(inc)]
+            subprocess.run(cmd + [str(src) for src in sources] + ['-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(f'{name} OK', result.stdout)
+
+    def test_axis_scale(self):
+        # axis_scale.c: Boost saturates instead of wrapping; each hand keeps its own Sniper remainders.
+        self._run_c('axis_scale', [HERE / 'axis_scale_test.c', ROOT / 'keyboards/svalboard/axis_scale.c'])
+
+    def test_automouse_decay(self):
+        # automouse_decay.h: an idle of any length forgets a partial Auto Mouse count.
+        self._run_c('automouse_decay', [HERE / 'automouse_decay_test.c'])
+
+    def test_hand_scroll(self):
+        # scroll_speed.c: Scroll Mode keeps a pad's two-finger scroll, the mm units do not overflow,
+        # and the Scroll speed migration waits for a hand no half reports.
+        self._run_c('hand_scroll', [HERE / 'hand_scroll_test.c', ROOT / 'keyboards/svalboard/scroll_speed.c'])
+
+    def test_scroll_test_motion(self):
+        # scroll_test.c (dev builds): any int32 rate keeps its direction and its total.
+        self._run_c('scroll_test', [HERE / 'scroll_test_test.c', ROOT / 'keyboards/svalboard/scroll_test.c'], [HERE / 'scroll_test_stubs'])
+
     def test_trackball_health_check(self):
         # trackball.c: the once-a-second check is read-only, catches a reset or stuck sensor,
         # leaves a half that never had a sensor to the search, and gives up on a gone one.
