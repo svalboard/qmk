@@ -1379,6 +1379,49 @@ static void test_session_timeouts(void) {
     CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
 }
 
+// A host that went away leaves a latched ERROR. It holds the board
+// (updater_active: the native touchpad paused, the other half's pad, pacing,
+// idle dimming, the link light) only while its red light shows; then the board
+// works as usual, and the error stays for STATUS and ABORT.
+static void test_session_error_lets_go(void) {
+    fresh(0x3000);
+    CHECK(to_confirm_wait(CLIENT_A)); // the chord is never made
+    CHECK(updater_active());
+    wait_ms(SVAL_UPDATE_CONFIRM_WINDOW_MS + 100);
+    CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    CHECK(updater_active());
+    wait_ms(SVAL_UPDATE_RED_MS - 1000);
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    CHECK(updater_active());
+    wait_ms(2000);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    CHECK(!updater_active());
+    CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
+    CHECK_EQ(send(CLIENT_B, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
+    CHECK_EQ(rsp[1], UPDATE_STATE_ERROR);
+    CHECK(rsp[12] != UPDATE_OK);
+    // still no new session before ABORT, which anyone may send
+    uint8_t a[22] = {0, 20};
+    memcpy(a + 2, blob, 20);
+    CHECK_EQ(send(CLIENT_B, UPDATE_OP_MANIFEST, a, sizeof(a)), UPDATE_BUSY);
+    CHECK_EQ(send_nonce(CLIENT_C, UPDATE_OP_ABORT, 0), UPDATE_OK);
+    CHECK_EQ(updater_state(), UPDATE_STATE_IDLE);
+    CHECK(!updater_active());
+
+    // The host gone in the middle of the image: the same.
+    fresh(0x3000);
+    CHECK(to_receiving(CLIENT_A));
+    CHECK_EQ(send_chunk(CLIENT_A, 0, 18, img), UPDATE_OK);
+    CHECK(updater_active());
+    wait_ms(SVAL_UPDATE_SESSION_TIMEOUT_MS + 100);
+    CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
+    CHECK(updater_active());
+    wait_ms(SVAL_UPDATE_RED_MS + 1000);
+    CHECK(!updater_active());
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
+}
+
 static update_status_t refusal_after_begin(void) {
     if (!to_confirm_wait(CLIENT_A)) return (update_status_t)rsp[0];
     chord();
@@ -2005,6 +2048,7 @@ static void test_session(void) {
     test_session_max_pieces();
     test_session_block_erase();
     test_session_timeouts();
+    test_session_error_lets_go();
     test_session_refusals();
     test_session_mismatch_accepted();
     test_session_presence();
