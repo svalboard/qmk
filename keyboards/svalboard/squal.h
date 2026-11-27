@@ -23,6 +23,8 @@
 
 // The trackball driver started on this half.
 void sval_squal_set_capable(bool is_pmw3389);
+// The trackball driver stopped (a failed start or health check): format 0 until it starts again.
+void sval_squal_set_down(void);
 // A host polled 0x39 within SVAL_HOST_ACTIVE_MS: the burst reads the extra bytes.
 bool sval_squal_wanted(void);
 // One burst read (trackball.c).

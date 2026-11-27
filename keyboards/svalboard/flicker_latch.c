@@ -5,6 +5,7 @@
 #include "transactions.h"
 #include "transport.h"
 #include "split_util.h"
+#include "atomic_util.h"
 #include "flicker_latch.h"
 #include <string.h>
 #ifdef SVAL_UPDATER
@@ -19,38 +20,48 @@ static matrix_row_t prev[HALF_ROWS], raw_now[HALF_ROWS], pressed_since[HALF_ROWS
 static uint8_t      changes[HALF_ROWS][MATRIX_COLS];
 static bool         seen_frame;
 
+// On the half without USB the reads come in the split link's slave thread,
+// which can preempt the scan in the main loop at any point: each update and
+// each copy-and-clear runs with the kernel locked, so a read never lands
+// between the scan's load and store of the same latch.
 void sval_flicker_frame(const matrix_row_t *raw, uint8_t rows) {
     if (rows > HALF_ROWS) rows = HALF_ROWS;
-    for (uint8_t r = 0; r < rows; r++) {
-        matrix_row_t now = raw[r];
-        matrix_row_t was = seen_frame ? prev[r] : now;
-        matrix_row_t diff = now ^ was;
-        pressed_since[r] |= now & ~was;
-        released_since[r] |= ~now & was;
-        for (uint8_t c = 0; diff && c < MATRIX_COLS; c++) {
-            if ((diff >> c) & 1) {
-                if (changes[r][c] != UINT8_MAX) changes[r][c]++;
+    ATOMIC_BLOCK_FORCEON {
+        for (uint8_t r = 0; r < rows; r++) {
+            matrix_row_t now = raw[r];
+            matrix_row_t was = seen_frame ? prev[r] : now;
+            matrix_row_t diff = now ^ was;
+            pressed_since[r] |= now & ~was;
+            released_since[r] |= ~now & was;
+            for (uint8_t c = 0; diff && c < MATRIX_COLS; c++) {
+                if ((diff >> c) & 1) {
+                    if (changes[r][c] != UINT8_MAX) changes[r][c]++;
+                }
             }
+            prev[r] = raw_now[r] = now;
         }
-        prev[r] = raw_now[r] = now;
+        seen_frame = true;
     }
-    seen_frame = true;
 }
 
 // This half's raw rows and latches into raw/pressed/released (HALF_ROWS each), then clear.
 static void take_latch(uint8_t *raw, uint8_t *pressed, uint8_t *released) {
-    for (uint8_t r = 0; r < HALF_ROWS; r++) {
-        raw[r]      = raw_now[r];
-        pressed[r]  = pressed_since[r];
-        released[r] = released_since[r];
+    ATOMIC_BLOCK_FORCEON {
+        for (uint8_t r = 0; r < HALF_ROWS; r++) {
+            raw[r]      = raw_now[r];
+            pressed[r]  = pressed_since[r];
+            released[r] = released_since[r];
+        }
+        memset(pressed_since, 0, sizeof(pressed_since));
+        memset(released_since, 0, sizeof(released_since));
     }
-    memset(pressed_since, 0, sizeof(pressed_since));
-    memset(released_since, 0, sizeof(released_since));
 }
 
 static void take_counts(uint8_t *out) {
-    memcpy(out, changes, sizeof(changes));
-    memset(changes, 0, sizeof(changes));
+    ATOMIC_BLOCK_FORCEON {
+        memcpy(out, changes, sizeof(changes));
+        memset(changes, 0, sizeof(changes));
+    }
 }
 
 bool sval_flicker_split_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint8_t *out) {

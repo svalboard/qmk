@@ -119,13 +119,16 @@ uint16_t pmw33xx_get_cpi(uint8_t s) {
 void pmw33xx_set_cpi_all_sensors(uint16_t cpi) {
     if (chip.state == HEALTHY && !chip.drop_cpi) chip.cpi = cpi;
 }
-pmw33xx_report_t pmw33xx_read_burst(uint8_t s) {
+uint8_t          pmw33xx_burst_extra[6];
+bool             pmw33xx_burst_has_extra;
+bool             sval_squal_wanted(void);
+pmw33xx_report_t pmw33xx_read_burst(uint8_t s) { // as the driver: the quality bytes while a host polls Sval 0x39
     (void)s;
-    pmw33xx_report_t r = {0};
+    pmw33xx_report_t r      = {0};
+    pmw33xx_burst_has_extra = sval_squal_wanted();
+    if (pmw33xx_burst_has_extra) memset(pmw33xx_burst_extra, 40, sizeof(pmw33xx_burst_extra));
     return r;
 }
-uint8_t pmw33xx_burst_extra[6];
-bool    pmw33xx_burst_has_extra;
 uint8_t sval_pmw33xx_classify(uint8_t p, uint8_t i) {
     if (p == 0x47 && i == 0xB8) return SVAL_SENSOR_PMW3389;
     if (p == 0x42 && i == 0xBD) return SVAL_SENSOR_PMW3360;
@@ -134,13 +137,16 @@ uint8_t sval_pmw33xx_classify(uint8_t p, uint8_t i) {
 
 #include "../../keyboards/svalboard/trackball/trackball.c"
 
-// squal.c: the quality stream (Sval 0x39), not under test here.
-void sval_squal_set_capable(bool is_pmw3389) {
-    (void)is_pmw3389;
-}
-void sval_squal_record(const sval_squal_read_t *q) {
-    (void)q;
-}
+// squal.c: the quality stream (Sval 0x39). Its ring is only touched under the lock: on the
+// half without USB the split transport's callback reads it and can preempt the main loop.
+int sim_lock_depth, sim_unlocked_ring;
+#define SIM_RING_ACCESS() (sim_lock_depth == 1 ? (void)0 : (void)sim_unlocked_ring++)
+#define sval_squal_ring_push(g, s) (SIM_RING_ACCESS(), (sval_squal_ring_push)(g, s))
+#define sval_squal_ring_clear(g) (SIM_RING_ACCESS(), (sval_squal_ring_clear)(g))
+#define sval_squal_pack_samples(o, g, c, f) (SIM_RING_ACCESS(), (sval_squal_pack_samples)(o, g, c, f))
+#define sval_squal_pack_stats(o, g, w, r, f) (SIM_RING_ACCESS(), (sval_squal_pack_stats)(o, g, w, r, f))
+#define SVAL_HOST_ACTIVE_MS 1500
+#include "../../keyboards/svalboard/squal.c"
 
 static int fails;
 #define CHECK(c)                                        \
@@ -397,6 +403,46 @@ static void search_and_probe_do_not_share_a_window(void) {
 }
 #endif
 
+// Sval 0x39 STATS for this half, as a host polls it: returns the flags byte; *rate: reads per second.
+static uint8_t squal_stats(uint16_t *rate) {
+    uint8_t d[32] = {SVAL_SQUAL_OP_STATS, 0, 0, 0};
+    sval_squal_command(d, sizeof(d));
+    *rate = (uint16_t)(d[22] | (d[23] << 8));
+    return d[1];
+}
+// The host polls every 100 ms for ms milliseconds of 1 ms main loop passes.
+static void run_polled(uint32_t ms) {
+    uint16_t rate;
+    for (uint32_t t = 0; t < ms; t += 100) {
+        squal_stats(&rate);
+        run(100);
+    }
+}
+
+static void squal_reports_a_sensor_that_went_down(void) {
+    uint16_t rate;
+    fresh(SVAL_IDLE_POINTER_REST, 800);
+    sval_squal_set_down(); // nothing left from an earlier test
+    CHECK(pointing_device_driver_init());
+    run_polled(1000);
+    CHECK(squal_stats(&rate) & SVAL_SQUAL_F_CAPABLE);
+    CHECK(rate > 900 && rate <= 1000); // one read a main loop pass
+    CHECK(ring.count > 0);
+    // The sensor goes and the health check finds it: the host sees no sensor, not the last rate.
+    chip.state = GONE;
+    run_polled(10000);
+    CHECK(!sensor_init_ok);
+    CHECK(squal_stats(&rate) == 0 && rate == 0);
+    // It comes back (the slow probe starts it): a new ring and rate.
+    chip.state = HEALTHY;
+    run_polled(60000);
+    CHECK(sensor_init_ok);
+    CHECK(squal_stats(&rate) & SVAL_SQUAL_F_CAPABLE);
+    CHECK(rate > 900 && rate <= 1000);
+    CHECK(sim_unlocked_ring == 0); // every ring access was under the lock
+    CHECK(sim_lock_depth == 0);
+}
+
 static void failed_cpi_write_causes_no_restart_loop(void) {
     // A read that glitches right after the write must not become the health check's reference.
     fresh(SVAL_IDLE_POINTER_REST, 800);
@@ -426,6 +472,7 @@ int main(void) {
     sensor_that_appears_late_on_a_half_that_had_one();
     failed_cpi_write_causes_no_restart_loop();
     probe_starts_are_capped();
+    squal_reports_a_sensor_that_went_down();
 #ifdef SIM_NONAUTO
     search_retry_resets_ids_that_are_not_a_pair();
     search_and_probe_do_not_share_a_window();

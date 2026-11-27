@@ -28,6 +28,7 @@
 #include "transactions.h"
 #include "transport.h"
 #include "transaction_id_define.h"
+#include "split_rpc_id.h"
 #include "split_util.h"
 #include "synchronization_util.h"
 
@@ -1077,9 +1078,10 @@ void slave_rpc_exec_callback(uint8_t initiator2target_buffer_size, const void *i
         return;
     }
 
+    // Svalboard: the ID as an unsigned byte, and only an RPC's (split_rpc_id.h).
     int8_t transaction_id = split_shmem->rpc_info.payload.transaction_id;
-    if (transaction_id < NUM_TOTAL_TRANSACTIONS) {
-        split_transaction_desc_t *trans = &split_transaction_table[transaction_id];
+    if (split_rpc_exec_id_ok(transaction_id)) {
+        split_transaction_desc_t *trans = &split_transaction_table[(uint8_t)transaction_id];
         if (trans->slave_callback) {
             trans->slave_callback(split_shmem->rpc_info.payload.m2s_length, split_shmem->rpc_m2s_buffer, split_shmem->rpc_info.payload.s2m_length, split_shmem->rpc_s2m_buffer);
         }

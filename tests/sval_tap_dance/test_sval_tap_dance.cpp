@@ -48,18 +48,24 @@ extern "C" uint16_t get_tapping_term(uint16_t keycode, keyrecord_t *record) {
     return TAPPING_TERM;
 }
 
-// As sval.c: basic keycodes are registered, the rest run as actions.
-static void keycode_event(uint16_t keycode, bool pressed) {
+// As sval.c: basic keycodes are registered, the rest go through action_exec()
+// as a key event at a position of their own (sval.c's magic position, whose
+// keycode it overrides), so they pass through process_record_quantum() and
+// preprocess_tap_dance() as there. Here that position is OUT on layer 0, and a
+// test that sends a keycode above QK_MODS_MAX puts that keycode there.
+static const keypos_t OUT = {.col = 9, .row = 3};
+static void           keycode_event(uint16_t keycode, bool pressed) {
     if (keycode <= QK_MODS_MAX) {
         pressed ? register_code16(keycode) : unregister_code16(keycode);
         return;
     }
-    keyrecord_t record   = {};
-    record.event.key     = {.col = 0xFF, .row = 0xFF};
-    record.event.type    = KEY_EVENT;
-    record.event.pressed = pressed;
-    record.event.time    = timer_read() | 1;
-    process_action(&record, action_for_keycode(keycode));
+    EXPECT_EQ(keymap_key_to_keycode(0, OUT), keycode);
+    keyevent_t event = {};
+    event.key        = OUT;
+    event.type       = KEY_EVENT;
+    event.pressed    = pressed;
+    event.time       = timer_read() | 1;
+    action_exec(event);
 }
 extern "C" void sval_keycode_down(uint16_t keycode) {
     keycode_event(keycode, true);
@@ -88,7 +94,7 @@ TEST_F(SvalTapDance, DoubleTapFinishesOnSecondRelease) {
     auto       td  = KeymapKey(0, 0, 0, TD(0));
     auto       a   = KeymapKey(0, 1, 0, KC_A);
     auto       esc = KeymapKey(13, 1, 0, KC_ESC);
-    set_keymap({td, a, esc});
+    set_keymap({td, a, esc, KeymapKey(0, OUT.col, OUT.row, TG(13)), KeymapKey(13, OUT.col, OUT.row, KC_TRNS)});
     dance(KC_NO, KC_NO, TG(13), TG(13));
 
     EXPECT_NO_REPORT(driver);
@@ -201,4 +207,132 @@ TEST_F(SvalTapDance, TripleTapPathIsUnchanged) {
     EXPECT_NO_REPORT(driver);
     idle_for(400);
     VERIFY_AND_CLEAR(driver);
+}
+
+// Outputs above QK_MODS_MAX run through action_exec(), and so through
+// preprocess_tap_dance() while the dance is still active. Each must still be
+// released after it is pressed: MO(1) on Tap leaves layer 1 off.
+
+// Tap decided at the term.
+TEST_F(SvalTapDance, TapMomentaryLayerReleasedAtTerm) {
+    TestDriver driver;
+    auto       td = KeymapKey(0, 0, 0, TD(0));
+    set_keymap({td, KeymapKey(0, OUT.col, OUT.row, MO(1))});
+    dance(MO(1), KC_NO, KC_NO, KC_NO);
+
+    EXPECT_NO_REPORT(driver);
+    tap_key(td, 30);
+    idle_for(400);
+    EXPECT_FALSE(layer_state_is(1));
+    VERIFY_AND_CLEAR(driver);
+}
+
+// Tap decided on the release (a dance with only Tap and Hold).
+TEST_F(SvalTapDance, TapMomentaryLayerReleasedOnRelease) {
+    TestDriver driver;
+    auto       td = KeymapKey(0, 0, 0, TD(0));
+    set_keymap({td, KeymapKey(0, OUT.col, OUT.row, MO(1))});
+    dance(MO(1), KC_C, KC_NO, KC_NO);
+
+    EXPECT_NO_REPORT(driver);
+    tap_key(td, 30);
+    EXPECT_FALSE(layer_state_is(1));
+    idle_for(400);
+    EXPECT_FALSE(layer_state_is(1));
+    VERIFY_AND_CLEAR(driver);
+}
+
+// Double-tap decided on the second release.
+TEST_F(SvalTapDance, DoubleTapMomentaryLayerReleased) {
+    TestDriver driver;
+    auto       td = KeymapKey(0, 0, 0, TD(0));
+    set_keymap({td, KeymapKey(0, OUT.col, OUT.row, MO(2))});
+    dance(KC_B, KC_NO, MO(2), KC_NO);
+
+    EXPECT_NO_REPORT(driver);
+    tap_key(td, 30);
+    idle_for(40);
+    tap_key(td, 30);
+    EXPECT_FALSE(layer_state_is(2));
+    idle_for(400);
+    EXPECT_FALSE(layer_state_is(2));
+    VERIFY_AND_CLEAR(driver);
+}
+
+// Tap decided by another key: that key resolves with the layer off again.
+TEST_F(SvalTapDance, TapMomentaryLayerReleasedBeforeInterruptingKey) {
+    TestDriver driver;
+    auto       td = KeymapKey(0, 0, 0, TD(0));
+    auto       a  = KeymapKey(0, 1, 0, KC_A);
+    auto       x  = KeymapKey(1, 1, 0, KC_X);
+    set_keymap({td, a, x, KeymapKey(0, OUT.col, OUT.row, MO(1))});
+    dance(MO(1), KC_NO, KC_NO, KC_NO);
+
+    EXPECT_NO_REPORT(driver);
+    tap_key(td, 30);
+    idle_for(20);
+    VERIFY_AND_CLEAR(driver);
+    {
+        InSequence order;
+        EXPECT_REPORT(driver, (KC_A));
+        EXPECT_EMPTY_REPORT(driver);
+    }
+    tap_key(a);
+    EXPECT_FALSE(layer_state_is(1));
+    VERIFY_AND_CLEAR(driver);
+}
+
+// A host rewrites a dance while its Hold is held: letting go releases the key
+// the dance pressed, not the one stored now.
+TEST_F(SvalTapDance, HeldDanceReleasesWhatItPressedAfterARewrite) {
+    TestDriver driver;
+    auto       td = KeymapKey(0, 0, 0, TD(0));
+    set_keymap({td});
+    dance(KC_B, KC_LSFT, KC_NO, KC_NO);
+
+    EXPECT_NO_REPORT(driver);
+    td.press();
+    idle_for(370);
+    VERIFY_AND_CLEAR(driver);
+    EXPECT_REPORT(driver, (KC_LSFT));
+    idle_for(10);
+    VERIFY_AND_CLEAR(driver);
+
+    EXPECT_NO_REPORT(driver);
+    dances[0].on_hold = KC_LCTL;
+    sval_reload_tap_dance(); // as Sval 0x02 (sval.c) does after storing it
+    VERIFY_AND_CLEAR(driver);
+
+    EXPECT_EMPTY_REPORT(driver);
+    td.release();
+    run_one_scan_loop();
+    VERIFY_AND_CLEAR(driver);
+    EXPECT_EQ(get_mods(), 0);
+}
+
+// The same when the host disables the dance while it is held.
+TEST_F(SvalTapDance, HeldDanceReleasesWhatItPressedAfterItIsDisabled) {
+    TestDriver driver;
+    auto       td = KeymapKey(0, 0, 0, TD(0));
+    set_keymap({td});
+    dance(KC_B, KC_LSFT, KC_NO, KC_NO);
+
+    EXPECT_NO_REPORT(driver);
+    td.press();
+    idle_for(370);
+    VERIFY_AND_CLEAR(driver);
+    EXPECT_REPORT(driver, (KC_LSFT));
+    idle_for(10);
+    VERIFY_AND_CLEAR(driver);
+
+    EXPECT_NO_REPORT(driver);
+    dances[0].custom_tapping_term &= 0x7FFF; // enabled bit off
+    sval_reload_tap_dance();
+    VERIFY_AND_CLEAR(driver);
+
+    EXPECT_EMPTY_REPORT(driver);
+    td.release();
+    run_one_scan_loop();
+    VERIFY_AND_CLEAR(driver);
+    EXPECT_EQ(get_mods(), 0);
 }

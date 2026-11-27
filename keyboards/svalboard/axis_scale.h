@@ -24,13 +24,29 @@ limitations under the License.
 # define AXIS_TYPE int16_t
 #endif
 
+// add_to_axis works in 32 bits, so AXIS_TYPE is at most 16 bits.
+_Static_assert(sizeof(AXIS_TYPE) <= 2, "AXIS_TYPE must be 8 or 16 bits");
+#define AXIS_TYPE_MAX ((int32_t)((1L << (sizeof(AXIS_TYPE) * 8 - 1)) - 1))
+#define AXIS_TYPE_MIN (-AXIS_TYPE_MAX - 1)
+
 typedef struct {
     uint8_t   mult;
     uint8_t   div;
     AXIS_TYPE remainder;
 } axis_scale_t;
 
+// The value scaled by mult / div, with the part of a count left over carried
+// to the next call; saturated at AXIS_TYPE's limits.
 AXIS_TYPE add_to_axis(axis_scale_t *, AXIS_TYPE);
+
+// One pointer's x, y, h and v. Each hand keeps its own, so one hand's leftover
+// fraction never moves the other hand.
+typedef struct {
+    axis_scale_t x, y, h, v;
+} axis_scale_set_t;
+#define AXIS_SCALE_SET_INIT {{1, 1, 0}, {1, 1, 0}, {1, 1, 0}, {1, 1, 0}}
+
+void set_div_axes(axis_scale_set_t *, uint8_t);
 void clear_remainder_axis(axis_scale_t *);
 
 void mult_mult_axis(axis_scale_t *, uint8_t);

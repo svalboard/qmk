@@ -68,6 +68,17 @@ typedef struct {
 static scanlab_sweep_t sweep;
 static scanlab_probe_t probe;
 
+// On the half without USB a probe request comes in the split link's slave
+// thread, which can preempt a scan in the main loop between selecting a row
+// and reading it. The probe drives the rows, so it waits here for
+// housekeeping, between scans. SCANLAB_NO_PROBE: none waiting.
+#define SCANLAB_NO_PROBE 0xFF
+static volatile uint8_t probe_queued = SCANLAB_NO_PROBE;
+
+// How long the half with USB waits for the other half's probe. The probe
+// takes about 4 ms; a deep-idle nap can hold off housekeeping a little longer.
+#define SCANLAB_REMOTE_PROBE_WAIT_MS 100
+
 // Host-initiated reboot into the bootloader: two stages so a stray packet can
 // never do it. ARM hands out a token good for SCANLAB_REBOOT_WINDOW_MS; GO
 // with that token acknowledges, then the reboot happens from housekeeping
@@ -84,6 +95,15 @@ bool scanlab_reboot_armed(void) {
 }
 
 void scanlab_housekeeping(void) {
+    uint8_t row;
+    ATOMIC_BLOCK_FORCEON {
+        row          = probe_queued;
+        probe_queued = SCANLAB_NO_PROBE;
+    }
+#ifdef SVAL_UPDATER
+    if (updater_active()) row = SCANLAB_NO_PROBE; // no rows driven by hand during an update
+#endif
+    if (row != SCANLAB_NO_PROBE) scanlab_probe_row(row);
 #if SVAL_HOST_BOOTLOADER
     if (reboot_pending && (int32_t)(timer_read32() - reboot_due_ms) >= 0) {
         reboot_pending = false;
@@ -101,6 +121,7 @@ static inline uint16_t get16(const uint8_t *p) { return p[0] | (p[1] << 8); }
 void scanlab_init(void) {
     memset(&sweep, 0, sizeof(sweep));
     memset(&probe, 0, sizeof(probe));
+    probe_queued = SCANLAB_NO_PROBE;
 }
 
 bool scanlab_active(void) {
@@ -255,7 +276,14 @@ void scanlab_handle(const uint8_t *req, uint8_t *rsp) {
             if (updater_active()) return;  // nor drive rows by hand (rsp all zero: no probe)
 #endif
             sweep.state = SCANLAB_IDLE;  // never probe mid-sweep
-            scanlab_probe_row(req[1]);
+            if (!is_keyboard_master() && req[1] < SCANLAB_ROWS) {
+                // From the split link (probe_queued): run between scans.
+                probe.valid  = 0;
+                probe.row    = req[1];
+                probe_queued = req[1];
+            } else {
+                scanlab_probe_row(req[1]);
+            }
             rsp[0] = probe.valid;
             rsp[1] = probe.row;
             return;
@@ -398,6 +426,22 @@ void scanlab_handle(const uint8_t *req, uint8_t *rsp) {
 // ------------------------------------------------------------ VIA (master) ---
 
 #if VIA_ENABLE
+// The other half runs a probe between its scans (probe_queued). Wait until its
+// STATUS shows the result, so the host's next read finds it as it does on this
+// half. rsp: the PROBE reply, [valid][row], updated from STATUS bytes 15-16.
+static void remote_probe_wait(uint8_t row, uint8_t *rsp) {
+    if (row >= SCANLAB_ROWS) return;
+    uint8_t  req[SCANLAB_REQ_LEN] = {SCANLAB_OP_STATUS};
+    uint8_t  st[SCANLAB_RSP_LEN];
+    uint32_t start = timer_read32();
+    while (!(rsp[0] == 1 && rsp[1] == row) && timer_elapsed32(start) < SCANLAB_REMOTE_PROBE_WAIT_MS) {
+        wait_ms(1);
+        if (!transaction_rpc_exec(KEYBOARD_SYNC_B, sizeof(req), req, sizeof(st), st)) return;
+        rsp[0] = st[15];
+        rsp[1] = st[16];
+    }
+}
+
 // data = [command_id][channel][value_id][value_data...]; response is written over value_data.
 void scanlab_via_command(uint8_t *data, uint8_t length) {
     uint8_t  cmd  = data[0];
@@ -434,6 +478,8 @@ void scanlab_via_command(uint8_t *data, uint8_t length) {
         if (!transaction_rpc_exec(KEYBOARD_SYNC_B, sizeof(req), req, sizeof(rsp), rsp)) {
             memset(rsp, 0, sizeof(rsp));
             rsp[0] = 0xFF;  // other half did not answer
+        } else if (req[0] == SCANLAB_OP_PROBE) {
+            remote_probe_wait(req[1], rsp);
         }
     }
 

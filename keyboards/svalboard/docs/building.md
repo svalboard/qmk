@@ -132,8 +132,8 @@ python3 -I keyboards/svalboard/tools/check_ram_funcs.py \
   chord on the half with USB: hold Index South and Middle South for one
   second (right half `M` and `,`, left half `V` and `C` on the default
   keymap). Keybard installs both halves.
-- **BOOTSEL:** hold BOOTSEL while plugging a half in (or tap reset twice, 150
-  to 500 ms apart) and copy `pair.uf2` onto `RPI-RP2`. That half installs and
+- **BOOTSEL:** hold BOOTSEL while plugging a half in (or press reset twice,
+  two quick presses) and copy `pair.uf2` onto `RPI-RP2`. That half installs and
   restarts, then installs the other half over the split cable if that half
   runs an updater build. Copy the file onto the second half too if it does not
   (it is harmless if it does).

@@ -129,6 +129,139 @@ int main(void) {
 """
         )
 
+    def test_macro_playback_stops_on_zero_and_bounds_nesting(self):
+        core = 'modules/svalboard/core/'
+        source = (ROOT / core / 'sval.c').read_text()
+        send = function(core + 'sval.c', 'void dynamic_keymap_macro_send')
+        # Everything from the override comment through the function, so any
+        # helpers or limits the playback defines next to it come along.
+        playback = source[source.index('// Override dynamic_keymap_macro_send'):source.index(send)] + send
+        run_c(
+            PRELUDE + r'''
+#define SS_QMK_PREFIX 1
+#define SS_TAP_CODE 1
+#define SS_DOWN_CODE 2
+#define SS_UP_CODE 3
+#define SS_DELAY_CODE 4
+#define VIAL_MACRO_EXT_TAP 5
+#define VIAL_MACRO_EXT_DOWN 6
+#define VIAL_MACRO_EXT_UP 7
+#define QK_MACRO 0x7700
+static uint8_t buf[64];
+static char out[256];
+static size_t out_len;
+static unsigned depth, max_depth;
+uint16_t dynamic_keymap_macro_get_count(void) { return 4; }
+uint32_t dynamic_keymap_macro_get_buffer_size(void) { return sizeof(buf); }
+void dynamic_keymap_macro_get_buffer(uint32_t o, uint16_t n, uint8_t *b) { assert(o + n <= sizeof(buf)); memcpy(b, buf + o, n); }
+static void record(const char *s) { size_t n = strlen(s); assert(out_len + n < sizeof(out)); memcpy(out + out_len, s, n); out_len += n; out[out_len] = 0; }
+void send_string(const char *s) { record(s); }
+void send_string_with_delay(const char *s, uint8_t d) { record(s); }
+uint16_t get_tap_code_delay(void) { return 0; }
+void wait_ms(int ms) {}
+void dynamic_keymap_macro_send(uint8_t id);
+// A tap of a macro keycode plays that macro, as process_record_via does.
+void sval_keycode_tap(uint16_t kc) {
+ record("T");
+ if (kc >= QK_MACRO && kc < QK_MACRO + 4) {
+  if (++depth > max_depth) max_depth = depth;
+  assert(depth < 20 && "macro playback recursed without limit");
+  dynamic_keymap_macro_send(kc - QK_MACRO);
+  depth--;
+ }
+}
+void sval_keycode_down(uint16_t kc) { record("D"); }
+void sval_keycode_up(uint16_t kc) { record("U"); }
+''' + function(core + 'sval.c', 'static uint16_t decode_keycode') + '\n' + playback + r'''
+static void play(const uint8_t *b, size_t n, uint8_t id) {
+ memset(buf, 0, sizeof(buf)); memcpy(buf, b, n);
+ out_len = 0; out[0] = 0; max_depth = 0;
+ dynamic_keymap_macro_send(id);
+}
+int main(void) {
+ // M0 taps M1 (01 05 01 77), M1 types "a": one nested macro still plays.
+ const uint8_t nested[] = {1, 5, 0x01, 0x77, 0, 'a', 0};
+ play(nested, sizeof(nested), 0); assert(strcmp(out, "Ta") == 0 && max_depth == 1);
+ // M0 taps itself (0xFF77 is M0 with the high-byte escape): it plays once
+ // more inside itself and stops there.
+ const uint8_t self[] = {1, 5, 0x77, 0xFF, 0};
+ play(self, sizeof(self), 0); assert(strcmp(out, "TT") == 0);
+ play(self, sizeof(self), 0); assert(strcmp(out, "TT") == 0); // depth restored
+ // A cycle M0 -> M1 -> M0 stops the same way.
+ const uint8_t cycle[] = {1, 5, 0x01, 0x77, 0, 1, 5, 0x77, 0xFF, 0};
+ play(cycle, sizeof(cycle), 0); assert(strcmp(out, "TT") == 0);
+ // A zero byte inside an action ends the macro, as the start-of-macro search
+ // counts it: nothing after it is typed.
+ const uint8_t ext_low[] = {1, 5, 0x00, 0x52, 0, 'b', 0};
+ play(ext_low, sizeof(ext_low), 0); assert(out_len == 0);
+ const uint8_t ext_high[] = {1, 5, 0x04, 0x00, 'y', 0};
+ play(ext_high, sizeof(ext_high), 0); assert(out_len == 0);
+ const uint8_t tap0[] = {1, 1, 0x00, 'x', 0};
+ play(tap0, sizeof(tap0), 0); assert(out_len == 0);
+ // A whole tap action still plays, and text after it too.
+ const uint8_t tap[] = {1, 1, 0x04, 'z', 0};
+ play(tap, sizeof(tap), 0); assert(strcmp(out, "\x01\x01\x04z") == 0);
+ return 0;
+}
+'''
+        )
+
+    def test_sval_reset_command_lasts_past_the_next_boot(self):
+        # Sval RESET (0x0C) must leave the block marked valid, so the layout
+        # written after it is not reset again on the next boot, and it resets
+        # the QMK settings and reloads the labels as a first boot does.
+        core = 'modules/svalboard/core/'
+        source = (ROOT / core / 'sval.c').read_text()
+        start = source.index('        case sval_cmd_reset:')
+        end = source.index('        case sval_cmd_definition_size:', start)
+        handler = 'bool handle(uint8_t *data, uint8_t length) { switch(data[1]) {\n' + source[start:end] + '\n} return true; }'
+        run_c(
+            PRELUDE + """
+#define SVAL_EEPROM_SIZE 128
+#define SVAL_MAGIC_OFFSET 100
+#define SVAL_TAP_DANCE_ENTRIES 4
+#define SVAL_TAP_DANCE_DEFAULT_TERM 200
+#define sval_cmd_reset 0x0C
+#define sval_cmd_definition_size 0x0D
+typedef struct { uint16_t custom_tapping_term; } sval_tap_dance_entry_t;
+static uint8_t mem[SVAL_EEPROM_SIZE];
+static int keymap_resets, settings_resets, label_reloads;
+static uint16_t keymap_value = 42;
+void sval_write_eeprom(uint16_t a, const void *v, uint16_t n) { assert(a + n <= SVAL_EEPROM_SIZE); memcpy(mem + a, v, n); }
+int sval_set_tap_dance(uint8_t i, const sval_tap_dance_entry_t *td) { return 0; }
+void dynamic_keymap_reset(void) { keymap_resets++; keymap_value = 0; }
+void dynamic_keymap_macro_reset(void) {}
+void sval_reload_tap_dance(void) {}
+void sval_reload_combo(void) {}
+void sval_reload_key_override(void) {}
+void sval_reload_alt_repeat_key(void) {}
+void sval_reload_leader(void) {}
+void sval_reload_labels(void) { label_reloads++; }
+void client_wrapper_init(void) {}
+void sval_qmk_settings_reset(void) { settings_resets++; }
+void sval_qmk_settings_init(void) {}
+static bool sval_eeprom_is_valid(void) { return mem[SVAL_MAGIC_OFFSET] == 0xA5; }
+static void sval_eeprom_set_valid(void) { mem[SVAL_MAGIC_OFFSET] = 0xA5; }
+""" + function(core + 'sval.c', 'void sval_reset') + '\n' + function(core + 'sval.c', 'static void sval_reset_storage') + '\n' + function(core + 'sval.c', 'void sval_init') + '\n' + handler + """
+int main(void) {
+ uint8_t p[32] = {0xDF, 0x0C};
+ sval_init(); // first boot: blank storage
+ assert(keymap_resets == 1 && settings_resets == 1 && sval_eeprom_is_valid());
+ keymap_value = 7;
+ int labels = label_reloads;
+ assert(handle(p, sizeof(p)));
+ assert(keymap_resets == 2 && keymap_value == 0);
+ assert(settings_resets == 2);       // QMK settings reset with the rest
+ assert(label_reloads == labels + 1); // RAM labels match the cleared storage
+ assert(sval_eeprom_is_valid());
+ keymap_value = 9; // the layout loaded after the reset
+ sval_init();      // next boot
+ assert(keymap_resets == 2 && settings_resets == 2 && keymap_value == 9);
+ return 0;
+}
+"""
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
