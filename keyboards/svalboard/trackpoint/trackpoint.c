@@ -119,8 +119,36 @@ void pointing_device_init_kb(void) {
     pointing_device_init_user();
 }
 
+// Drops every byte waiting in the PS/2 receive queue. While the stick streams,
+// motion bytes and command ACKs share that queue, and ps2_host_send() takes the
+// next byte in it as its ACK, so stale bytes must go before a command is sent.
+// The short wait lets a byte already on the wire land first (one takes ~1.1 ms).
+static void tp_drain_rx(void) {
+    wait_ms(2);
+    while (pbuf_has_data()) {
+        ps2_host_recv();
+    }
+}
+
 void recalibrate_pointer(void) {
+    // Stop the stream and empty the queue, so each command reads its own ACK,
+    // and the packets that follow start on a packet boundary.
+    tp_drain_rx();
+    ps2_mouse_disable_data_reporting();
+    tp_drain_rx();
+
+    // Recalibrate (Sprintek E2 51). The device answers each byte with an ACK
+    // and sends nothing else.
     PS2_MOUSE_SEND(0xE2, "pts: 0xE2");
     PS2_MOUSE_SEND(0x51, "pts: 0x51");
-    PS2_MOUSE_RECEIVE("trackpoint - recalibrate");
+    tp_drain_rx();
+
+    // Turn the stream back on. The stick may still be recalibrating and miss
+    // the first request, so try again until it ACKs.
+    for (uint8_t tries = 0; tries < 3; tries++) {
+        if (ps2_host_send(PS2_MOUSE_CMD_ENABLE_DATA_REPORTING) == PS2_ACK) {
+            break;
+        }
+        tp_drain_rx();
+    }
 }

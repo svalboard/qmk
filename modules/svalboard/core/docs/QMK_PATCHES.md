@@ -133,6 +133,12 @@ See [settings storage](../../../../keyboards/svalboard/docs/settings-storage.md)
 | `platforms/chibios/drivers/serial_protocol.c` | 102 | With `SERIAL_PIO_RX_DMA`, per-transaction deadlines: short for QMK's per-scan transactions, long for RPCs whose slave callbacks take time, and `serial_transport_short_rpc()` for quick RPCs. Dev-only `SVAL_TOUCH_DEV` counters | |
 | `quantum/split_common/split_util.c`, `split_connection.h` (new) | 45, 38 | Opt-in `SPLIT_MIN_DISCONNECT_MS`: the link counts as disconnected once failures have lasted this long, in place of `SPLIT_MAX_CONNECTION_ERRORS` of them, so short receive deadlines never disconnect early. Host test: `tests/sval_split` | |
 
+### PS/2 (TrackPoint)
+
+| File | Lines | Change | Check on merge |
+|---|---|---|---|
+| `platforms/chibios/drivers/vendor/RP/RP2040/ps2_vendor.c` | 96 | The receive interrupt always reads the PIO FIFO, dropping the frame when the queue is full; before, a full queue left the level-triggered interrupt firing forever and the half hung. A dropped frame, an RX FIFO stall (interrupts off during a flash erase while the device clocks) or a frame with a bad start, parity or stop bit marks the receiver for a resync: the next `pbuf_has_data()` waits for an idle gap on the clock line, restarts the state machine and empties the queue, so the bit framing and the packet grouping recover without a reboot. Host test: `tests/sval_ps2` | Upstream PR candidate (the interrupt storm is an upstream bug) |
+
 ### USB
 
 | File | Lines | Change | Check on merge |

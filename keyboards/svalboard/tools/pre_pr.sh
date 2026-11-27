@@ -12,7 +12,7 @@
 # 3. The settings area budget (tools/settings_budget.py): fails on overflow,
 #    warns at half full.
 # 4. Fast host tests: util/updater_test/run.sh, tests/sval_storage,
-#    util/test_native_ptp.sh, and make test:sval_tap_dance,
+#    util/test_native_ptp.sh, tests/sval_ps2, and make test:sval_tap_dance,
 #    test:sval_alt_repeat and test:sval_tap_dance_limit (in the qmk_cli image).
 #
 # Needs docker (for the qmk_cli image), cc and python3. Exits nonzero if any
@@ -113,6 +113,11 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp "${mounts[@]}" -w "$root
     bash -c 'git config --global --add safe.directory "*"; make test:sval_tap_dance test:sval_alt_repeat test:sval_tap_dance_limit' > "$log" 2>&1
 ec=$?; [ $ec -eq 0 ] && grep -a PASSED "$log" | tail -3 || tail -30 "$log"
 result "tap dance and Alt Repeat host tests" $ec
+
+step "PS/2 TrackPoint host tests (tests/sval_ps2)"
+python3 -m unittest discover -s tests/sval_ps2 -p 'test_*.py' > "$log" 2>&1
+ec=$?; [ $ec -eq 0 ] && tail -1 "$log" || tail -30 "$log"
+result "PS/2 TrackPoint host tests" $ec
 
 step "Native touchpad host tests (util/test_native_ptp.sh)"
 bash util/test_native_ptp.sh > "$log" 2>&1
