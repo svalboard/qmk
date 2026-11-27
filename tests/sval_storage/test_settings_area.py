@@ -252,6 +252,24 @@ class SettingsArea(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('settings area:', result.stdout)
 
+    def test_reserved_ids(self):
+        # 0, 0xFFFE, 0xFFFF and 0xF000-0xF0FF (kept for downstream builds) fail; hex ids are read.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('settings_budget', KB / 'tools/settings_budget.py')
+        budget = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(budget)
+        lines = ['X(A, 0xF000, 4)', 'X(B, 0xf0ff, 4)', 'X(C, 61439, 4)', 'X(D, 0xF100, 4)', 'X(E, 0, 2)']
+        ids = budget.records(''.join(f'    {line} \\\n' for line in lines))
+        self.assertEqual([(n, i) for n, i, _ in ids], [('A', 0xF000), ('B', 0xF0FF), ('C', 0xEFFF), ('D', 0xF100), ('E', 0)])
+        problems = budget.id_problems(ids)
+        self.assertEqual(len(problems), 3, problems)
+        self.assertTrue(problems[0].startswith('A: id 0xF000 is in 0xF000-0xF0FF'))
+        self.assertTrue(problems[1].startswith('B: id 0xF0FF'))
+        self.assertIn('E: id 0 is reserved', problems[2])
+        self.assertEqual(budget.id_problems([('X', 7, 1), ('Y', 7, 1)]), ['id 7 used by both X and Y'])
+        # This tree's own records use none of them.
+        self.assertEqual(budget.id_problems(budget.records((KB / 'settings_ids.h').read_text())), [])
+
 
 if __name__ == '__main__':
     unittest.main()

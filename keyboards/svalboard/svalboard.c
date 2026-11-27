@@ -28,6 +28,7 @@
 #    include "scroll_test.h"
 #endif
 #include "build_reset.h"
+#include "app_rules_kb.h"
 #include "link_light.h"
 #include "usb_wake.h"
 #include "nvm_via.h"
@@ -575,6 +576,7 @@ void read_eeprom_kb(void) {
         }
         pad_gestures_load();
     }
+    sval_app_rules_load(); // after a fresh area is formatted: no rules
     sval_active_layer = 0;
 }
 
@@ -735,6 +737,23 @@ uint8_t sval_get_feature_flags4_kb(void) {
     flags |= sval_flag4_debug_console; // 0x3E (debug_console.c)
 #endif
     return flags;
+}
+
+// GET_INFO byte 22 (the fifth feature byte): app rules (0x40, 0x41; app_rules_kb.c).
+uint8_t sval_get_feature_flags5_kb(void) {
+    return sval_flag5_app_rules;
+}
+
+void sval_app_foreground_kb(uint8_t *data, uint8_t length) {
+    sval_app_foreground_command(data, length);
+}
+
+void sval_app_rules_kb(uint8_t *data, uint8_t length) {
+    sval_app_rules_command(data, length);
+}
+
+uint8_t sval_layer_lookup_kb(keypos_t key) {
+    return sval_app_rules_lookup(key);
 }
 
 void sval_pointing_sensor_kb(uint8_t *data, uint8_t length) {
@@ -1317,6 +1336,7 @@ void housekeeping_task_kb(void) {
 #endif
     sval_pointer_probe_task();
     sval_scroll_speed_task();
+    sval_app_rules_task();
 #ifdef SVAL_EITHER_HAND
     sval_side_task();
 #endif

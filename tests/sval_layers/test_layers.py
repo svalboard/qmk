@@ -58,6 +58,7 @@ static uint8_t sval_storage_flags_kb(void) { return 0; }
 static void sval_storage_reset_clear_kb(void) {}
 static uint8_t sval_get_feature_flags3_kb(void) { return 0; }
 static uint8_t sval_get_feature_flags4_kb(void) { return 0; }
+static uint8_t sval_get_feature_flags5_kb(void) { return 0; }
 #define SVAL_STORAGE_RESET_OFFSET 0
 #define SVAL_STORAGE_RESET_SIZE 1
 static void sval_write_eeprom(uint16_t offset, const void *data, uint16_t size) { assert(offset == 0 && size == 1); storage_reset = *(const uint8_t *)data; }

@@ -570,6 +570,7 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
             data[19] = sval_get_feature_flags2();
             if (length > 20) data[20] = sval_get_feature_flags3_kb();
             if (length > 21) data[21] = sval_get_feature_flags4_kb();
+            if (length > 22) data[22] = sval_get_feature_flags5_kb();
             break;
         }
 
@@ -911,6 +912,20 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
             // Request:  [0xDF] [0x39] [op] [hand] [arg lo] [arg hi]
             // Response: [0xDF] [0x39] [reply...] (keyboards/svalboard/docs/protocol.md, "Pointing sensor")
             if (length > 5) sval_pointing_sensor_kb(&data[2], length - 2);
+            break;
+        }
+
+        case sval_cmd_app_foreground: {
+            // Request:  [0xDF] [0x40] [op] ...
+            // Response: [0xDF] [0x40] [op] [status] ... (keyboards/svalboard/docs/protocol.md, "App rules")
+            if (length > 3) sval_app_foreground_kb(&data[2], length - 2);
+            break;
+        }
+
+        case sval_cmd_app_rules: {
+            // Request:  [0xDF] [0x41] [op] ...
+            // Response: [0xDF] [0x41] [op] [status] ... (keyboards/svalboard/docs/protocol.md, "App rules")
+            if (length > 3) sval_app_rules_kb(&data[2], length - 2);
             break;
         }
 
@@ -1262,6 +1277,18 @@ __attribute__((weak)) uint8_t sval_get_feature_flags4_kb(void) {
 }
 
 // Without the keyboard's handler: status 0xFF after the echoed op.
+__attribute__((weak)) uint8_t sval_get_feature_flags5_kb(void) {
+    return 0;
+}
+
+__attribute__((weak)) void sval_app_foreground_kb(uint8_t *data, uint8_t length) {
+    data[1] = 0xFF;
+}
+
+__attribute__((weak)) void sval_app_rules_kb(uint8_t *data, uint8_t length) {
+    data[1] = 0xFF;
+}
+
 __attribute__((weak)) void sval_debug_console_kb(uint8_t *data, uint8_t length) {
     data[1] = 0xFF;
 }
