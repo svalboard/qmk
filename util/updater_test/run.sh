@@ -55,6 +55,22 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 "$out/test_pad_touch"
 "$out/test_pad_gestures"
 
+# The touchpad tap setting write (kb/azoteq/azoteq.c, mouse path): a write
+# that fails twice stays pending and is tried again after a growing wait, up
+# to about 25 s; a new change goes out at once.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -I"$root/tests/sval_azoteq_gestures/stub" -I"$kb" -I"$kb/azoteq" \
+    "$root/tests/sval_azoteq_gestures/test_azoteq_gestures.c" "$kb/pad_gestures.c" -o "$out/test_azoteq_gestures"
+"$out/test_azoteq_gestures"
+
+# The touch page (kb/azoteq/touch_stream.c): the first finger is the first
+# slot with a touch strength, so the page follows the finger left in slot 1
+# when the finger in slot 0 lifts.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -I"$root/tests/sval_touch_stream/stub" -I"$kb" -I"$kb/azoteq" \
+    "$root/tests/sval_touch_stream/test_touch_stream.c" "$kb/pad_touch.c" "$kb/pad_gestures.c" -o "$out/test_touch_stream"
+"$out/test_touch_stream"
+
 # The key-event line on the debug console (kb/key_log.c): nothing while debug
 # is off, the KL: line while it is on; DEBUG_CONSOLE (Sval 0x3E,
 # kb/debug_console.c) with and without the console in the build.
