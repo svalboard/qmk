@@ -25,6 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pointing_motion.h"
 #include "velocity_scroll.h"
 #include "pad_scroll.h"
+#include "axis_lock.h"
 #include "scroll_speed.h"
 #ifdef SVAL_SCROLL_TEST
 #    include "scroll_test.h"
@@ -202,91 +203,8 @@ static bool hand_scrolling(uint8_t hand) {
 }
 
 
-#define AXIS_LOCK_BREAKAWAY_THRESHOLD 18750
-#define AXIS_LOCK_ENGAGE_THRESHOLD 6250
-#define AXIS_LOCK_TIMEOUT_MS 500
-
-#define AXIS_DOMINANCE_NUMERATOR 3
-#define AXIS_DOMINANCE_DENOMINATOR 2
-
-
-static enum scroll_mode {
-    SV_AXIS_FREE,
-    SV_AXIS_LOCKED_V,
-    SV_AXIS_LOCKED_H
-} axis_scroll_mode = SV_AXIS_FREE;
-static int32_t axis_lock_accum_h = 0;
-static int32_t axis_lock_accum_v = 0;
-static uint16_t axis_lock_timer = 0;
-
-
-void update_axis_scroll_mode(int32_t h, int32_t v) {
-    if (h != 0 || v != 0) {
-        axis_lock_timer = timer_read();
-    } else {
-        if (timer_elapsed(axis_lock_timer) > AXIS_LOCK_TIMEOUT_MS) {
-            if (axis_scroll_mode != SV_AXIS_FREE) {
-                axis_scroll_mode = SV_AXIS_FREE;
-                axis_lock_accum_h = 0;
-                axis_lock_accum_v = 0;
-		scroll_accumulator_h = 0;
-                scroll_accumulator_v = 0;
-		m_scroll_accumulator_h = 0;
-		m_scroll_accumulator_v = 0;
-            }
-        }
-        return;
-    }
-
-    switch (axis_scroll_mode) {
-        case SV_AXIS_FREE:
-            axis_lock_accum_h += h;
-            axis_lock_accum_v += v;
-
-            if (abs(axis_lock_accum_v) * AXIS_DOMINANCE_NUMERATOR >= abs(axis_lock_accum_h) * AXIS_DOMINANCE_DENOMINATOR) {
-	        axis_scroll_mode = SV_AXIS_LOCKED_V;
-                axis_lock_accum_h = 0;
-            } else if (abs(axis_lock_accum_h) >= AXIS_LOCK_ENGAGE_THRESHOLD) {
-                axis_scroll_mode = SV_AXIS_LOCKED_H;
-                axis_lock_accum_v = 0;
-            }
-            break;
-
-        case SV_AXIS_LOCKED_V:
-            if ((int32_t)abs(v) * AXIS_DOMINANCE_NUMERATOR >= (int32_t)abs(h) * AXIS_DOMINANCE_DENOMINATOR) {
-                axis_lock_accum_h = 0;
-            }
-
-	    axis_lock_accum_h += h;
-
-            if (abs(axis_lock_accum_h) >= AXIS_LOCK_BREAKAWAY_THRESHOLD) {
-	        axis_scroll_mode     = SV_AXIS_LOCKED_H;
-                axis_lock_accum_v    = 0;
-                scroll_accumulator_h = 0;
-                scroll_accumulator_v = 0;
-		m_scroll_accumulator_h = 0;
-		m_scroll_accumulator_v = 0;
-            }
-        break;
-
-        case SV_AXIS_LOCKED_H:
-            if ((int32_t)abs(h) * AXIS_DOMINANCE_NUMERATOR >= (int32_t)abs(v) * AXIS_DOMINANCE_DENOMINATOR) {
-                axis_lock_accum_v = 0;
-            }
-
-            axis_lock_accum_v += v;
-
-            if (abs(axis_lock_accum_v) >= AXIS_LOCK_BREAKAWAY_THRESHOLD) {
-                axis_scroll_mode     = SV_AXIS_LOCKED_V;
-                axis_lock_accum_h    = 0;
-                scroll_accumulator_h = 0;
-                scroll_accumulator_v = 0;
-		m_scroll_accumulator_h = 0;
-		m_scroll_accumulator_v = 0;
-            }
-            break;
-    }
-}
+// Axis Scroll Lock for the trackball hands' scroll (axis_lock.c).
+static sval_axis_lock_t axis_lock_state;
 
 static uint16_t sniper_div_now = 1, boost_mult_now = 1; // the factors in force
 
@@ -584,8 +502,12 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
 
     if (scroll_timer_running && timer_elapsed(scroll_timer) >= SCROLL_FREQUENCY_MS) {
         if (global_saved_values.axis_scroll_lock && !is_mac) {
-	    update_axis_scroll_mode(m_scroll_accumulator_h, m_scroll_accumulator_v);
-            if (axis_scroll_mode == SV_AXIS_LOCKED_V) {
+            if (sval_axis_lock_step(&axis_lock_state, timer_read32(), m_scroll_accumulator_h, m_scroll_accumulator_v)) {
+                // The lock moved to the other axis: what is held was the old one's.
+                scroll_accumulator_h = 0;
+                scroll_accumulator_v = 0;
+            }
+            if (axis_lock_state.mode == SVAL_AXIS_LOCKED_V) {
                 reportMouse1.v = scroll_accumulator_v;
                 reportMouse1.h = 0;
             } else {
@@ -623,7 +545,7 @@ void sval_pointing_modes(sval_pointing_modes_t *m) {
     if (axis_lock) m->global_bits |= SVAL_MOTION_AXIS_LOCK;
     if (global_saved_values.natural_scroll) m->global_bits |= SVAL_MOTION_NATURAL_SCROLL;
     if (scroll_hold || scroll_toggle) m->global_bits |= SVAL_MOTION_SCROLL_KEY;
-    m->axis_state      = axis_lock ? (uint8_t)axis_scroll_mode : 0; // FREE 0, LOCKED_V 1, LOCKED_H 2
+    m->axis_state      = axis_lock ? sval_axis_lock_mode(&axis_lock_state, timer_read32()) : 0; // FREE 0, LOCKED_V 1, LOCKED_H 2
     m->left_scroll     = hand_scrolling(0);
     m->right_scroll    = hand_scrolling(1);
     // The factors in force, so a host shows the real one (0x2D bytes 53-55).
