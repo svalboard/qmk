@@ -227,6 +227,9 @@ def main():
     cfg = (ROOT / "keyboards/svalboard/config.h").read_text()
     fw_fmt = re.search(r"^#define SVAL_UPDATE_STORAGE_FORMAT (\d+)", cfg, re.M)
     check(fw_fmt is not None and int(fw_fmt.group(1)) == mu.STORAGE_FORMAT, f"make_update.STORAGE_FORMAT {mu.STORAGE_FORMAT} == SVAL_UPDATE_STORAGE_FORMAT {fw_fmt and fw_fmt.group(1)}")
+    # So is the security epoch: a release manifest below it is refused by every board on it.
+    fw_epoch = re.search(r"^#\s*define SVAL_UPDATE_SECURITY_EPOCH (\d+)", cfg, re.M)
+    check(fw_epoch is not None and int(fw_epoch.group(1)) == getattr(mu, "SECURITY_EPOCH", None), f"make_update.SECURITY_EPOCH {getattr(mu, 'SECURITY_EPOCH', None)} == SVAL_UPDATE_SECURITY_EPOCH {fw_epoch and fw_epoch.group(1)}")
     check(mu.crc32_mpeg2(b"123456789") == 0x0376E6E7, "CRC-32/MPEG-2 check value")
     check(mu.crc32_mpeg2(BOOT2[:252]) == 0xD58F0B07, "real page 0 CRC d58f0b07")
     check(mu.boot2_valid(BOOT2), "real page 0 valid")
@@ -428,6 +431,42 @@ def main():
     refuse_rel("a protocol-2 build (32-byte reports)", "protocol", release_img(proto=2))
     refuse_rel("the wrong tag", "expected 'v9'", None, *rel_common, "--expect-version", "v9")
     refuse_rel("the wrong number", "expected 4", None, *rel_common, "--expect-fw-version", "4")
+
+    # A dev build under a manifest without DIAGNOSTIC (another packer): a release
+    # board refuses it at END (update_image_build_check), so verify does too.
+    for bit in (mu.BI_NO_CHORD, mu.BI_DEV_KEEP):
+        dimg = release_img(flags=bit)
+        forged = tmp / "dev_nodiag.svup"
+        forged.write_bytes(mu.build_manifest(dimg, hand=1, pointing_id=5, keymap_id=1, flags=0, epoch=0, storage_format=mu.STORAGE_FORMAT, fw_version=3, version="vM3-test") + dimg)
+        rc, text = run("verify", forged, "--build", "release")
+        check(rc == 2 and "BAD_IMAGE: a dev build" in text, f"verify --build release refuses a dev build ({bit:#x}) without DIAGNOSTIC: {text.strip()}")
+        rc, text = run("verify", forged, "--build", "plain")
+        check(rc == 0, f"verify --build plain takes a dev build ({bit:#x}): {text.strip()}")
+        dimg = release_img(flags=bit, hand=2)
+        (tmp / "dev_pair.uf2").write_bytes(mu.pair_uf2_bytes(mu.build_manifest(dimg, hand=2, pointing_id=mu.POINTING["auto"], keymap_id=1, flags=0, epoch=0, storage_format=mu.STORAGE_FORMAT, fw_version=3, version="vM3-test"), dimg))
+        rc, text = run("verify-pair", tmp / "dev_pair.uf2", "--build", "release")
+        check(rc == 2 and "BAD_IMAGE: a dev build" in text, f"verify-pair --build release refuses a dev build ({bit:#x}) without DIAGNOSTIC: {text.strip()}")
+        rc, text = run("verify-pair", tmp / "dev_pair.uf2", "--build", "plain")
+        check(rc == 0, f"verify-pair --build plain takes a dev build ({bit:#x}): {text.strip()}")
+
+    # The security epoch: make writes the tool's (the firmware's) by default, and the
+    # release checks refuse a manifest below it. Raised here in-process to 3.
+    saved = getattr(mu, "SECURITY_EPOCH", None)
+    try:
+        mu.SECURITY_EPOCH = 3
+        src = tmp / "epoch.uf2"
+        src.write_bytes(uf2(release_img()))
+        target = tmp / "epoch.svup"
+        rc = mu.main([str(src), "-o", str(target), *rel_common])
+        e = mu.parse_manifest(target.read_bytes()[:mu.MANIFEST_BYTES])["security_epoch"] if rc == 0 else None
+        check(rc == 0 and e == 3, f"make --release writes the release's security epoch by default: rc {rc}, epoch {e}")
+        low = mu.build_manifest(release_img(), hand=1, pointing_id=5, keymap_id=1, flags=mu.FLAG_RELEASE, epoch=0, storage_format=mu.STORAGE_FORMAT, fw_version=3, version="vM3-test")
+        problems = mu.release_image_problems(low, release_img())
+        check(any("security epoch 0" in p for p in problems), f"the release checks refuse epoch 0 below the release's 3: {problems}")
+        rc = mu.main([str(src), "-o", str(tmp / "epoch_low.svup"), *rel_common, "--epoch", "2"])
+        check(rc == 2 and not (tmp / "epoch_low.svup").exists(), f"make --release refuses --epoch 2 below the release's 3: rc {rc}")
+    finally:
+        mu.SECURITY_EPOCH = saved
     refuse_rel("a blank-keymap image labeled sval", "keymap_id 1, the image was built with 2", release_img(keymap_id=2))
     refuse_rel("an image built from another keymap", "not a release keymap build", release_img(keymap_id=0), "--kb", "svalboard/right", "--keymap-id", "1", "--release")
     refuse_rel("a host-test record", "not a release keymap build", release_img(hand=0xFF, pointing_id=0xFF))

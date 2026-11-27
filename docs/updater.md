@@ -940,10 +940,13 @@ python3 -I $MU verify OUT.svup --build plain
   not a refusal (D33): the tool asks `[y/N]` before writing, `--yes` skips
   the question, and no answer (no terminal) writes nothing.
 - `--diagnostic` sets DIAGNOSTIC (Scan Lab, keytest or host-bootloader
-  images). `--epoch` and `--storage-format` set the floors' fields.
+  images). `--epoch` and `--storage-format` set the floors' fields; they
+  default to the firmware's (`SECURITY_EPOCH` and `STORAGE_FORMAT` in the
+  tool mirror `config.h`, and the host tests check that they agree).
 - `--release` sets RELEASE and refuses anything that is not a clean release
   update: a manifest with flags other than exactly RELEASE, a keymap other
-  than `sval` or `blank`, another updater protocol or an older storage format;
+  than `sval` or `blank`, another updater protocol, an older storage format or
+  a lower security epoch;
   an image without a build-info record, or whose record is not a release
   build, has test hooks, keytest, the host bootloader or a reserved bit set,
   reports another version than the manifest, or names another keymap (another
@@ -954,7 +957,9 @@ python3 -I $MU verify OUT.svup --build plain
   for rejection tests. Never with `--release`.
 - `verify FILE.svup --build release|plain` checks a `.svup` offline as that
   kind of build would before erasing anything: the manifest rules, the hash
-  and the structure. A release build also refuses DIAGNOSTIC.
+  and the structure. A release build also refuses DIAGNOSTIC, and an image
+  whose build-info record is a dev build (no-chord or keep-settings) whatever
+  the manifest's flags, as the board does at END.
 
 `util/updater_test/run.sh` with `SVAL_RELEASE_SVUPS="a.svup:ok b.svup:refused"`
 runs `.svup` files through the C code of a release build
