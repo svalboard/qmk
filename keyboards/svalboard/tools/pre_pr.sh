@@ -13,7 +13,8 @@
 #    warns at half full.
 # 4. Fast host tests: util/updater_test/run.sh, tests/sval_storage,
 #    util/test_native_ptp.sh, and make test:sval_tap_dance,
-#    test:sval_alt_repeat and test:sval_tap_dance_limit (in the qmk_cli image).
+#    test:sval_alt_repeat, test:sval_tap_dance_limit, test:sval_combo,
+#    test:sval_key_override and test:sval_chordal_hold (in the qmk_cli image).
 #
 # Needs docker (for the qmk_cli image), cc and python3. Exits nonzero if any
 # step fails. Releases run the same checks, and more, in release.yml.
@@ -108,11 +109,11 @@ python3 -m unittest discover -s tests/sval_storage > "$log" 2>&1
 ec=$?; [ $ec -eq 0 ] && tail -1 "$log" || tail -30 "$log"
 result "storage tests" $ec
 
-step "Tap dance and Alt Repeat host tests (make test:..., qmk_cli image)"
+step "Tap dance, Alt Repeat, combo, key override and Chordal Hold host tests (make test:..., qmk_cli image)"
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp "${mounts[@]}" -w "$root" "$IMAGE" \
-    bash -c 'git config --global --add safe.directory "*"; make test:sval_tap_dance test:sval_alt_repeat test:sval_tap_dance_limit' > "$log" 2>&1
+    bash -c 'git config --global --add safe.directory "*"; make test:sval_tap_dance test:sval_alt_repeat test:sval_tap_dance_limit test:sval_combo test:sval_key_override test:sval_chordal_hold' > "$log" 2>&1
 ec=$?; [ $ec -eq 0 ] && grep -a PASSED "$log" | tail -3 || tail -30 "$log"
-result "tap dance and Alt Repeat host tests" $ec
+result "tap dance, Alt Repeat, combo, key override and Chordal Hold host tests" $ec
 
 step "Native touchpad host tests (util/test_native_ptp.sh)"
 bash util/test_native_ptp.sh > "$log" 2>&1
