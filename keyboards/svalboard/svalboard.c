@@ -48,6 +48,7 @@
 #ifdef SVAL_UPDATER
 #    include "updater/updater.h"
 #    include "updater/update_split.h"
+#    include "session_watchdog.h"
 #    include "split_pause.h"
 #    include "split_common/transport.h"
 _Static_assert(sizeof(((presence_rsp_t *)0)->update) == UPDATE_PRESENCE_BYTES, "presence reply: update_presence_t");
@@ -539,6 +540,9 @@ void sval_storage_reset_clear_kb(void) {
 // Runs after the EEPROM driver is up and before anything validates or resets
 // stored settings.
 void keyboard_pre_init_kb(void) {
+#ifdef SVAL_UPDATER
+    session_watchdog_off(); // no hardware watchdog outside an update session
+#endif
     identity_init();
     sval_thumb_hand_probe(); // before ws2812/rgblight and split init use GP19
 #ifdef SVAL_EITHER_HAND
@@ -999,9 +1003,23 @@ void sval_link_stopping(void) {
 
 bool shutdown_kb(bool jump_to_bootloader) {
     if (!shutdown_user(jump_to_bootloader)) return false;
+#ifdef SVAL_UPDATER
+    // The boot ROM's USB bootloader never feeds the session watchdog.
+    if (jump_to_bootloader) session_watchdog_off();
+#endif
     sval_link_stopping();
     return true;
 }
+
+#ifdef SVAL_UPDATER
+// While USB is suspended the main loop runs no updater pass (chibios.c's
+// suspend loop): no session watchdog. The first pass after the wake turns it
+// on again if the session is still active.
+void suspend_power_down_kb(void) {
+    session_watchdog_off();
+    suspend_power_down_user();
+}
+#endif
 
 static bool is_connected = false;
 bool        sval_other_half_connected(void) {

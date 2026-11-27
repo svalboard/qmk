@@ -937,7 +937,11 @@ static update_status_t op_settings_reset(const uint8_t *req, uint8_t *rsp, bool 
     return UPDATE_OK;
 }
 
+// The board feeds its session watchdog here (updater_port.h); nothing without one.
+__attribute__((weak)) void updater_port_alive(void) {}
+
 void updater_via_command(uint8_t *data, uint8_t length) {
+    updater_port_alive(); // a host request: the half is answering USB
     uint8_t  cmd = data[0], op = data[2];
     uint8_t *value = &data[3];
     if (cmd != id_custom_set_value && cmd != id_custom_get_value) return; // id_custom_save: nothing here
@@ -1422,6 +1426,7 @@ static update_led_mode_t led_mode(void) {
 }
 
 void updater_task(void) {
+    updater_port_alive(); // a main-loop pass
     now_ms                 = updater_port_now_ms();
     uint32_t       pass_t0 = now_ms;
     update_state_t pass_st = s.state;
