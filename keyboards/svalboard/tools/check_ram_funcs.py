@@ -170,7 +170,9 @@ def literal_at(insns_by_addr, addr):
 
 
 BRANCH = re.compile(r"^(b|bl)(eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)?(\.n|\.w)?$")
-NO_WRITE = re.compile(r"^(str\w*|cmp|cmn|tst|push|stm\w*|nop|cps\w+|dsb|isb|dmb|svc|bkpt|udf|wfi|wfe|sev|yield|b\w*|\.word|\.short|\.byte)$")
+# Branches only: bic/bics write their first operand. stm writes its base
+# register when it has write-back (stmia rN!, ...), handled in regs_written.
+NO_WRITE = re.compile(r"^(str\w*|cmp|cmn|tst|push|stm\w*|nop|cps\w+|dsb|isb|dmb|svc|bkpt|udf|wfi|wfe|sev|yield|(?!bic)b\w*|\.word|\.short|\.byte)$")
 REG = re.compile(r"\b(r\d+|ip|lr|sp|pc|fp|sl|sb)\b")
 ALIAS = {"ip": "r12", "fp": "r11", "sl": "r10", "sb": "r9"}
 
@@ -185,6 +187,8 @@ def branch_target(ops):
 
 
 def regs_written(mnem, ops):
+    if mnem.startswith("stm") and "!" in ops:
+        return {norm(REG.search(ops).group(1))}  # write-back: the base register
     if NO_WRITE.match(mnem):
         return set()
     if mnem.startswith("pop") or mnem.startswith("ldm"):

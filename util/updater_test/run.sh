@@ -16,6 +16,7 @@ python3 -I "$tests/test_make_update.py" "$out/cross" "$@"
 python3 -I "$tests/test_release_version.py" "$out/release_version"
 python3 -I "$tests/test_release_artifacts.py" "$out/release_artifacts"
 python3 -I "$tests/test_either_hand.py"
+python3 -I "$tests/test_check_ram_funcs.py"
 
 # Debounce (kb/debounce_sval.c): optical keys off (same scan) and on
 # (sym_defer_g), the thumb Double Down debounced in both, mode changes, split sync.
