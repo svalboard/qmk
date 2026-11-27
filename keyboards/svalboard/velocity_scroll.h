@@ -156,8 +156,18 @@ bool sval_vs_touching(const sval_vs_t *s);
 // finger's from its anchor while one is in use, else the relative pointers'.
 void sval_vs_offset(const sval_vs_t *s, float *x_mm, float *y_mm);
 
-// Advance dt_ms and return the wheel units to send now. units_per_notch: 120
-// for the high-resolution wheel, 1 without it (both divided for macOS as the
-// rest of the scroll path is). h > 0 scrolls right, v > 0 scrolls up (away),
+// Wheel units per notch. Windows and Linux apply the wheel's resolution
+// multiplier (120 counts a notch, 3 lines on Windows), or count a notch per
+// unit without one. macOS ignores the multiplier and scrolls a line per count,
+// so a notch there is 3 counts: the lines Windows scrolls for the same speed,
+// as Scroll Mode's 40 counts per line (SVAL_BALL_SCROLL_MAC_DIV in
+// scroll_speed.h). It was 120 / 12 (MAC_DIVISOR), 10 lines a notch, through
+// x4.6.7: about 3.3x.
+#define SVAL_VS_MAC_UNITS_PER_NOTCH 3
+// hires: the multiplier (0 without the high-resolution wheel).
+float sval_vs_units_per_notch(uint16_t hires, bool mac);
+
+// Advance dt_ms and return the wheel units to send now, units_per_notch from
+// sval_vs_units_per_notch. h > 0 scrolls right, v > 0 scrolls up (away),
 // before natural scroll, which the caller applies with the rest of the report.
 void sval_vs_step(sval_vs_t *s, const sval_vs_curve_t *ball, const sval_vs_curve_t *pad, bool axis_lock, float dt_ms, float units_per_notch, int16_t *h, int16_t *v);

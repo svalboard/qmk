@@ -27,6 +27,8 @@ static int32_t  rnd(int32_t lo, int32_t hi) {
 
 // The scroll the firmware had before this (keymap_support.c add_to_axis with
 // mult 1 and div 1, or 12 on a Mac): counts over the divisor, remainder carried.
+// The Mac divider is now SVAL_BALL_SCROLL_MAC_DIV: the migration keeps the
+// Windows stream exactly, and a Mac's is that stream over the new divider.
 static int16_t old_ball(int32_t counts, int div, int16_t *rem) {
     int32_t r   = *rem + counts;
     int16_t out = (int16_t)(r / div);
@@ -72,7 +74,7 @@ int main(void) {
                     th += h;
                     tv += v;
                 }
-                long want = 800L * 3 * pcts[p] / 100 / (mac ? 12 : 1);
+                long want = 800L * 3 * pcts[p] / 100 / (mac ? SVAL_BALL_SCROLL_MAC_DIV : 1);
                 CHECK(th == want);
                 CHECK(tv == -want);
             }
@@ -98,7 +100,23 @@ int main(void) {
             sval_ball_scroll(&s, 1, 0, 1600, 1600, 100, true, &h, &v);
             t += h;
         }
-        CHECK(t == 9600L / 2 / 12);
+        CHECK(t == 9600L / 2 / SVAL_BALL_SCROLL_MAC_DIV);
+    }
+    // A Mac scrolls the lines Windows does for the same motion: Windows makes 3
+    // lines of every 120 counts, a Mac one line per count after the divider.
+    CHECK(SVAL_BALL_SCROLL_MAC_DIV * 3 == 120);
+    // 0.2x on a Mac, at 800 DPI: one line per 200 counts (6.3 mm of ball), one
+    // count at a time, and never more than one line in a report.
+    {
+        sval_ball_scroll_t s   = {0};
+        long               t   = 0;
+        int                big = 0;
+        for (int i = 0; i < 2000; i++) {
+            sval_ball_scroll(&s, 0, 1, 800, 800, 20, true, &h, &v);
+            t += v;
+            if (v > 1) big++;
+        }
+        CHECK(t == 10 && big == 0);
     }
     // Slow scroll is not lost: 0.2x at 800 DPI, one count a time, and the other sign.
     {
@@ -206,7 +224,7 @@ int main(void) {
             for (int k = 0; k < 4000; k++) {
                 int32_t x = rnd(-60, 60), y = rnd(-60, 60);
                 sval_ball_scroll(&s, x, y, choices[i], choices[i], pct, mac, &h, &v);
-                int16_t ox = old_ball(x, mac ? 12 : 1, &rx), oy = old_ball(y, mac ? 12 : 1, &ry);
+                int16_t ox = old_ball(x, mac ? SVAL_BALL_SCROLL_MAC_DIV : 1, &rx), oy = old_ball(y, mac ? SVAL_BALL_SCROLL_MAC_DIV : 1, &ry);
                 if (h != ox || v != oy) bad++;
             }
             CHECK(bad == 0);

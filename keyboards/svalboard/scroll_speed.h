@@ -28,10 +28,16 @@
 #define SVAL_SCROLL_SPEED_MAX 1000
 #define SVAL_SCROLL_SPEED_DEFAULT 100
 
-// The DPI at which a trackball's scroll was 1 hi-res count per sensor count,
-// and the divisor a Mac applies on top (keymaps/keymap_support.c, MAC_DIVISOR).
+// The DPI at which a trackball's scroll was 1 hi-res count per sensor count.
 #define SVAL_BALL_SCROLL_BASE_DPI 800
-#define SVAL_BALL_SCROLL_MAC_DIV 12
+// Counts per line on a Mac. macOS ignores the wheel's resolution multiplier
+// and scrolls a line for every count, where Windows scrolls 3 lines per 120.
+// 40 gives a Mac the lines Windows gives for the same motion and Scroll speed
+// (3 lines per 3.8 mm of ball at 1.0x). It was 12 (Vial's MAC_DIVISOR): 10
+// lines per 3.8 mm at 1.0x, and still 2 at 0.2x, the slowest setting. The old
+// rate is about 3.3x now. Velocity Scroll has the same parity
+// (SVAL_VS_MAC_UNITS_PER_NOTCH, velocity_scroll.h).
+#define SVAL_BALL_SCROLL_MAC_DIV 40
 
 // The resolution at which the pad's pointer stops gaining (2048 x 1792 pixels
 // over 43 x 40 mm, azo_num in azoteq.c): about 1210 DPI across, 1138 up and

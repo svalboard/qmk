@@ -228,7 +228,29 @@ static void test_keys(void) {
     CHECK(sval_vs_apply(&s, &h) == 1 && s.rel_x == 0.0f && s.rel_y == 0.0f);
 }
 
+// Units per notch: Windows applies the multiplier (120 counts, 3 lines a
+// notch); a Mac scrolls a line per count, so a notch is 3 counts there, the
+// same lines. The same speed sends the same lines on both.
+static void test_mac_parity(void) {
+    CHECK(sval_vs_units_per_notch(120, false) == 120.0f);
+    CHECK(sval_vs_units_per_notch(0, false) == 1.0f);
+    CHECK(sval_vs_units_per_notch(120, true) == 3.0f);
+    CHECK(sval_vs_units_per_notch(0, true) == 3.0f);
+    sval_vs_t w, m;
+    sval_vs_start(&w);
+    sval_vs_start(&m);
+    sval_vs_add_relative(&w, 0.0f, 11.0f, -1.0f); // 10 notches/s down
+    sval_vs_add_relative(&m, 0.0f, 11.0f, -1.0f);
+    long h, vw, vm;
+    run(&w, false, 1000, 8, sval_vs_units_per_notch(120, false), &h, &vw);
+    run(&m, false, 1000, 8, sval_vs_units_per_notch(120, true), &h, &vm);
+    CHECK(NEAR(vw, -1200, 2));                 // 10 notches, 30 lines on Windows
+    CHECK(NEAR(vm, -30, 1));                   // 30 counts, 30 lines on a Mac
+    CHECK(NEAR(vw / 120.0f * 3.0f, vm, 1.0f)); // the same lines (it was 100: 3.3x)
+}
+
 int main(void) {
+    test_mac_parity();
     test_keys();
     test_curve();
     test_report_state();
