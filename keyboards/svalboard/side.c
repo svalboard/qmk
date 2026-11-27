@@ -188,6 +188,10 @@ uint8_t sval_side_pair(uint8_t mine, bool other_connected, bool other_reported, 
 #    include "link_light.h"
 #    include "hardware/regs/addressmap.h"
 #    include "hardware/structs/sio.h"
+#    ifdef SVAL_UPDATER
+#        include "split_pause.h"
+#        include "updater/updater.h"
+#    endif
 
 #    ifndef SVAL_EITHER_HAND
 #        error "side.c is for the either-hand builds (SVAL_EITHER_HAND)"
@@ -213,6 +217,19 @@ static uint32_t restart_at;
 // flash write keeps interrupts off for about 50 ms).
 static bool    rpc_pending;
 static uint8_t rpc_side, rpc_source, rpc_flags;
+
+// An update runs (this half's session, the other half's over the link, a
+// relay), or the split link is paused for one. A side write then would cross
+// the paused link, or write flash with interrupts off and restart a half in
+// the middle of its session: it is refused (BUSY), and a write or restart
+// already taken waits until the update is over.
+static bool update_busy(void) {
+#    ifdef SVAL_UPDATER
+    return updater_active() || sval_split_paused();
+#    else
+    return false;
+#    endif
+}
 
 static const sval_side_record_t *record_at(uint32_t offset) {
     return (const sval_side_record_t *)(XIP_NOCACHE_NOALLOC_BASE + offset);
@@ -341,12 +358,12 @@ void sval_side_task(void) {
         if (last_mask != 0xFF && (last_mask & ~mask)) clear_keyboard();
         last_mask = mask;
     }
-    if (rpc_pending) {
+    if (rpc_pending && !update_busy()) {
         rpc_pending = false;
         host_write(rpc_side, rpc_source, rpc_flags);
     }
     link_search_task();
-    if (restart_at && timer_expired32(timer_read32(), restart_at)) {
+    if (restart_at && !update_busy() && timer_expired32(timer_read32(), restart_at)) {
         restart_at = 0;
         soft_reset_keyboard();
     }
@@ -482,6 +499,7 @@ bool sval_side_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint8_t *
     if (in_len < 5 || in[0] != SVAL_SIDE_RPC_OP || out_len < 2) return false;
     uint8_t st = sval_side_host_check(sval_side_from_strap(sval_thumb_hand()), SVAL_SIDE_OF_BUILD, in[2], in[3]);
     if (st == SVAL_SIDE_OK && !identity_available()) st = SVAL_SIDE_UNAVAILABLE;
+    if (st == SVAL_SIDE_OK && update_busy()) st = SVAL_SIDE_BUSY;
     if (st == SVAL_SIDE_OK) {
         rpc_side    = in[2];
         rpc_source  = in[3];
@@ -529,6 +547,8 @@ void sval_side_command(uint8_t *d, uint8_t length) {
     uint8_t       st;
     if (op == SIDE_OP_SET && s == SVAL_SIDE_UNKNOWN) {
         st = SVAL_SIDE_INVALID; // clearing is its own op
+    } else if ((target == 0 || target == 1) && update_busy()) {
+        st = SVAL_SIDE_BUSY;
     } else if (target == 0) {
         st = host_write(s, src, flags);
     } else if (target == 1) {

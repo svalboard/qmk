@@ -66,6 +66,17 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -DSVAL_SIDE_HOST_TEST -DBUILD_RESET_HOST_TEST -I"$kb" "$tests/test_side.c" "$kb/side.c" "$kb/build_reset.c" -o "$out/test_side"
 "$out/test_side"
 "$out/test_build_reset"
+# Side writes during a firmware update (kb/side.c, its firmware part, against
+# the mocks in tests/sval_side/stub): refused for both halves, and a write or
+# restart the other half took waits for the end of its session. side.c is
+# copied out first, so that its includes find the stubs, not kb/'s headers.
+mkdir -p "$out/side_rt"
+cp "$kb/side.c" "$out/side_rt/side.c"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -DSVAL_EITHER_HAND -DSERIAL_USART_PINS_RUNTIME -DSERIAL_USART_FULL_DUPLEX -DSVAL_UPDATER \
+    -I"$root/tests/sval_side/stub" -I"$kb" \
+    "$root/tests/sval_side/test_side_update.c" "$out/side_rt/side.c" -o "$out/test_side_update"
+"$out/test_side_update"
 
 # Raw HID framing (tmk_core/protocol/chibios/usb_packet.h) against ChibiOS's
 # real input buffers queue: a short packet never misframes the next report.
@@ -85,6 +96,13 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined
 # a time on top of the error count, so short receive deadlines never disconnect early.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -I"$root/quantum/split_common"     "$root/tests/sval_split/test_connection.c" -o "$out/test_split_connection"
 "$out/test_split_connection"
+# The other half's EXECUTE_RPC (quantum/split_common/split_rpc_id.h): every
+# transaction id byte from the wire, only the RPC ids index the table.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -DSPLIT_TRANSACTION_IDS_KB="KEYBOARD_SYNC_A, KEYBOARD_SYNC_B, KEYBOARD_UPDATE" \
+    -I"$root/quantum" -I"$root/quantum/split_common" \
+    "$root/tests/sval_split/test_rpc_id.c" -o "$out/test_rpc_id"
+"$out/test_rpc_id"
 # The link light's rules (keyboards/svalboard/link_light.c): armed by a pairing,
 # shown on a loss, cleared when it comes back, dark in USB suspend.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -DSVAL_LINK_HOST_TEST -I"$root/tests/sval_link" -I"$root/keyboards/svalboard"     "$root/tests/sval_link/test_link_light.c" -o "$out/test_link_light"
