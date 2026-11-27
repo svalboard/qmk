@@ -62,6 +62,7 @@ bool sval_typing_pause_pre_process(keyrecord_t *record) {
     (void)record;
     return true;
 }
+void     sval_rgb_idle_input(void) {}
 uint16_t eeprom_read_word(const uint16_t *addr) {
     (void)addr;
     return 0xFFFF;

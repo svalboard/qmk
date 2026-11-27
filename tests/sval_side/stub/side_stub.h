@@ -48,5 +48,6 @@ uint8_t  sval_thumb_hand(void);
 uint8_t  sval_thumb_hand_raw(void);
 bool     sval_other_half_connected(void);
 bool     sval_typing_pause_pre_process(keyrecord_t *record);
+void     sval_rgb_idle_input(void);
 bool     sval_split_paused(void);
 bool     updater_active(void);
