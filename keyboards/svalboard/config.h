@@ -86,6 +86,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // Downgrade floors (D19): an image whose manifest is below either is refused.
 // Raise SVAL_UPDATE_SECURITY_EPOCH in a release that fixes a security problem,
 // and SVAL_UPDATE_STORAGE_FORMAT when stored settings change incompatibly.
+// Raise SECURITY_EPOCH and STORAGE_FORMAT in tools/make_update.py with them:
+// the release manifests carry the tool's values (tests/sval_updater checks).
 #ifndef SVAL_UPDATE_SECURITY_EPOCH
 #    define SVAL_UPDATE_SECURITY_EPOCH 0
 #endif
