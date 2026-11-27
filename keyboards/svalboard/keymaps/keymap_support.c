@@ -689,6 +689,11 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
     // A mod-tap with KC_TRANSPARENT as its tap taps the key under it (trns_mod_tap.c).
     int8_t trns_layer = sval_trns_mod_tap_layer(keycode, record);
     if (trns_layer >= 0) {
+        // Like any key off the mouse layer (below), the tap ends mouse mode;
+        // first, so the layer it turns off below stays off for the press.
+        if (mouse_mode_enabled && (layer_state & (1 << MH_AUTO_BUTTONS_LAYER)) && trns_layer != MH_AUTO_BUTTONS_LAYER) {
+            mouse_mode(false);
+        }
         sval_trns_mod_tap_begin((uint8_t)trns_layer);
         return true;
     }

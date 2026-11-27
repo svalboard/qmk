@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // A mod-tap whose tap is KC_TRNS, MT(mod, KC_TRNS) (keymaps/keymap_support.c):
 // its hold is the modifier and its tap is the key under it. On the tap's press
-// a layer is turned off, so QMK resolves the press from the layers below; the
-// next release turns it back on.
+// the layer the key resolves on is turned off, so QMK resolves the press from
+// the layers below; the next release turns it back on.
 #pragma once
 #include "quantum.h"
 
