@@ -277,6 +277,76 @@ static void test_relay_commit_answer_lost(void) {
     CHECK(!update_split_mismatch());
 }
 
+// The other half resets while the relay holds VERIFIED, with the link
+// resumed until the host's COMMIT (a cable reseat, a power glitch). The
+// keepalive finds it IDLE and the relay starts over from INFO: with the link
+// paused again first, so its manifest check, erase and pages never run with
+// QMK's split traffic live (D15). Then COMMIT as usual.
+static void test_relay_restart_from_verified(void) {
+    relay_fresh(0x6000);
+    slave_irq_sim    = true;
+    pause_violations = stream_unpaused = erase_unpaused = 0;
+    after_op                                            = erase_watch;
+    CHECK(update_relay_start(blob, img_len, body_crc()));
+    CHECK_EQ(relay_until(RELAY_VERIFIED, 60000), RELAY_VERIFIED);
+    CHECK(!link_paused);
+    slave_reboot(); // its session is gone; its slot still holds the image
+    CHECK_EQ(relay_until(RELAY_START, 10000), RELAY_START);
+    CHECK(link_paused);
+    CHECK_EQ(relay_until(RELAY_VERIFIED, 120000), RELAY_VERIFIED);
+    CHECK_EQ(ri.error, UPDATE_OK);
+    CHECK_EQ(ri.restarts, 1);
+    CHECK(!link_paused);
+    CHECK_EQ(pause_violations, 0);
+    CHECK_EQ(stream_unpaused, 0);
+    CHECK_EQ(erase_unpaused, 0);
+    CHECK(slot_is_img(img_len));
+    after_op            = NULL;
+    slave_commit_resets = true;
+    CHECK(update_relay_commit());
+    CHECK_EQ(relay_until(RELAY_DONE, 20000), RELAY_DONE);
+    CHECK(!ri.unconfirmed);
+    CHECK_EQ(slave_commit_runs, 1);
+    CHECK_EQ(slave_id.fw_version, 2002);
+    CHECK(!link_paused);
+}
+
+// The other half resets after its last keepalive and before COMMIT: its
+// session is gone and it still runs its old image. COMMIT then finds it IDLE
+// with no error, as a half that took COMMIT and rebooted would answer (the
+// lost answer above): its INFO tells which. On its old fw_version the relay
+// FAILS, so a pair session never installs this half's image alone. With the
+// image's fw_version the same as the old one it cannot tell: DONE, unconfirmed
+// (the host checks presence).
+static void test_relay_reset_before_commit(void) {
+    for (int same = 0; same < 2; same++) {
+        relay_fresh(0x2000);
+        if (same) blob_manifest()->fw_version = slave_id.fw_version;
+        CHECK(update_relay_start(blob, img_len, body_crc()));
+        CHECK_EQ(relay_until(RELAY_VERIFIED, 60000), RELAY_VERIFIED);
+        slave_commit_resets = true;
+        slave_reboot();
+        CHECK(update_relay_commit());
+        for (int i = 0; i < 20000; i++) {
+            pass();
+            relay_get();
+            if (ri.phase == RELAY_DONE || ri.phase == RELAY_FAILED) break;
+        }
+        if (!same) {
+            CHECK_EQ(ri.phase, RELAY_FAILED);
+            CHECK_EQ(ri.error, UPDATE_UNAVAILABLE);
+        } else {
+            CHECK_EQ(ri.phase, RELAY_DONE);
+            CHECK(ri.unconfirmed);
+        }
+        CHECK_EQ(slave_commit_runs, 0);
+        CHECK_EQ(slave_reboots, 1);
+        CHECK_EQ(slave_id.fw_version, 2001);
+        CHECK(!link_paused);
+        CHECK(only_slot_changed());
+    }
+}
+
 static void test_relay_review(void) {
     test_relay_timeout_race();
     test_relay_rpc_lengths();
@@ -284,4 +354,6 @@ static void test_relay_review(void) {
     test_relay_busy_slave();
     test_relay_probe_committing();
     test_relay_commit_answer_lost();
+    test_relay_restart_from_verified();
+    test_relay_reset_before_commit();
 }
