@@ -124,17 +124,22 @@ bool sval_storage_write_failed(void) {
 #endif
 }
 
+// Reset all Sval data and the QMK settings to defaults, then mark the block
+// valid. sval_reset() zeroes the magic with the rest of the block, so without
+// the last step the next boot would reset everything written after this.
+static void sval_reset_storage(void) {
+    sval_reset();
+    sval_qmk_settings_reset();
+    sval_eeprom_set_valid();
+}
+
 void sval_init(void) {
     // Initialize client wrapper for multi-client support
     client_wrapper_init();
 
     // Check if EEPROM data is valid (matches current firmware version)
     if (!sval_eeprom_is_valid()) {
-        // Reset all sval data to defaults
-        sval_reset();
-        sval_qmk_settings_reset();
-        // Mark as valid
-        sval_eeprom_set_valid();
+        sval_reset_storage();
     }
 #ifdef SVAL_COMBO_LABELS
     // First boot with combo names: start the region empty (keeps everything else).
@@ -705,7 +710,10 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
         case sval_cmd_reset: {
             // Request: [0xDF] [0x0C]
             // Response: [0xDF] [0x0C]
-            sval_reset();
+            // The same reset as a first boot, so it lasts past the next one, and
+            // the labels in RAM match the cleared storage.
+            sval_reset_storage();
+            sval_reload_labels();
             break;
         }
 

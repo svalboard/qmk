@@ -206,6 +206,62 @@ int main(void) {
 '''
         )
 
+    def test_sval_reset_command_lasts_past_the_next_boot(self):
+        # Sval RESET (0x0C) must leave the block marked valid, so the layout
+        # written after it is not reset again on the next boot, and it resets
+        # the QMK settings and reloads the labels as a first boot does.
+        core = 'modules/svalboard/core/'
+        source = (ROOT / core / 'sval.c').read_text()
+        start = source.index('        case sval_cmd_reset:')
+        end = source.index('        case sval_cmd_definition_size:', start)
+        handler = 'bool handle(uint8_t *data, uint8_t length) { switch(data[1]) {\n' + source[start:end] + '\n} return true; }'
+        run_c(
+            PRELUDE + """
+#define SVAL_EEPROM_SIZE 128
+#define SVAL_MAGIC_OFFSET 100
+#define SVAL_TAP_DANCE_ENTRIES 4
+#define SVAL_TAP_DANCE_DEFAULT_TERM 200
+#define sval_cmd_reset 0x0C
+#define sval_cmd_definition_size 0x0D
+typedef struct { uint16_t custom_tapping_term; } sval_tap_dance_entry_t;
+static uint8_t mem[SVAL_EEPROM_SIZE];
+static int keymap_resets, settings_resets, label_reloads;
+static uint16_t keymap_value = 42;
+void sval_write_eeprom(uint16_t a, const void *v, uint16_t n) { assert(a + n <= SVAL_EEPROM_SIZE); memcpy(mem + a, v, n); }
+int sval_set_tap_dance(uint8_t i, const sval_tap_dance_entry_t *td) { return 0; }
+void dynamic_keymap_reset(void) { keymap_resets++; keymap_value = 0; }
+void dynamic_keymap_macro_reset(void) {}
+void sval_reload_tap_dance(void) {}
+void sval_reload_combo(void) {}
+void sval_reload_key_override(void) {}
+void sval_reload_alt_repeat_key(void) {}
+void sval_reload_leader(void) {}
+void sval_reload_labels(void) { label_reloads++; }
+void client_wrapper_init(void) {}
+void sval_qmk_settings_reset(void) { settings_resets++; }
+void sval_qmk_settings_init(void) {}
+static bool sval_eeprom_is_valid(void) { return mem[SVAL_MAGIC_OFFSET] == 0xA5; }
+static void sval_eeprom_set_valid(void) { mem[SVAL_MAGIC_OFFSET] = 0xA5; }
+""" + function(core + 'sval.c', 'void sval_reset') + '\n' + function(core + 'sval.c', 'static void sval_reset_storage') + '\n' + function(core + 'sval.c', 'void sval_init') + '\n' + handler + """
+int main(void) {
+ uint8_t p[32] = {0xDF, 0x0C};
+ sval_init(); // first boot: blank storage
+ assert(keymap_resets == 1 && settings_resets == 1 && sval_eeprom_is_valid());
+ keymap_value = 7;
+ int labels = label_reloads;
+ assert(handle(p, sizeof(p)));
+ assert(keymap_resets == 2 && keymap_value == 0);
+ assert(settings_resets == 2);       // QMK settings reset with the rest
+ assert(label_reloads == labels + 1); // RAM labels match the cleared storage
+ assert(sval_eeprom_is_valid());
+ keymap_value = 9; // the layout loaded after the reset
+ sval_init();      // next boot
+ assert(keymap_resets == 2 && settings_resets == 2 && keymap_value == 9);
+ return 0;
+}
+"""
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
