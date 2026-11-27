@@ -155,6 +155,8 @@ ifeq ($(strip $(SVAL_UPDATER)), yes)
   # The boot relay of a pair UF2 (docs/pair-uf2.md).
   SRC += updater/update_pair.c
   SRC += updater/vendor/sha512.c
+  # The hardware watchdog while the updater is active (session_watchdog.h).
+  SRC += session_watchdog.c
   EXTRAINCDIRS += keyboards/svalboard/updater/vendor
   # The commit's RAM code must not branch into flash (R2): no jump tables, no
   # loops turned into memcpy/memset calls. -fstack-usage writes

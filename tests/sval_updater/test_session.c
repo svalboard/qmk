@@ -16,6 +16,7 @@
 #include "update_led.h"
 #include "update_commit.h"
 #include "update_split.h"
+#include "update_split_wire.h"
 
 void updater_host_reset(void);
 void update_split_host_slave_reset(void);
@@ -57,6 +58,15 @@ static uint8_t port_split_presence; // update_presence_status_t
 static bool    presence_sim;        // presence from the simulated pings (update_split.c) instead
 uint8_t        updater_port_split_presence(void) {
     return presence_sim ? update_split_presence() : port_split_presence;
+}
+// The session watchdog's feed (updater_port_alive): calls on each half.
+static uint32_t alive_master, alive_slave;
+void            updater_port_alive(void) {
+    if (sim_slave) {
+        alive_slave++;
+    } else {
+        alive_master++;
+    }
 }
 #define HOST_STACK_SIZE 0xAE0
 #define HOST_STACK_FREE 0x2A4
@@ -2036,8 +2046,45 @@ static void test_session_block_erase(void) {
     CHECK_EQ(updater_state(), UPDATE_STATE_IDLE);
 }
 
+// The session watchdog (updater_port_alive, kb/session_watchdog.c) is fed by
+// every updater_task() pass, every host request, whether or not it is
+// accepted, and every well-formed request from the other half; a frame that
+// fails its check feeds nothing.
+static void test_session_alive_hook(void) {
+    fresh(0x3000);
+    alive_master = alive_slave = 0;
+    updater_task();
+    CHECK_EQ(alive_master, 1);
+    updater_task();
+    CHECK_EQ(alive_master, 2);
+    CHECK_EQ(send(0, UPDATE_OP_INFO, NULL, 0), UPDATE_OK);
+    CHECK_EQ(alive_master, 3);
+    CHECK_EQ(send(0, UPDATE_OP_STATUS, NULL, 0), UPDATE_INVALID); // refused (no wrapper): still a request
+    CHECK_EQ(alive_master, 4);
+    CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
+    CHECK_EQ(alive_master, 5);
+    CHECK_EQ(alive_slave, 0);
+
+    // The half without USB: a relay request (STATUS) feeds it, a retry of the
+    // same request (answered from the cache) too, a damaged frame does not.
+    uint8_t req[USPLIT_MSG_MAX], out[USPLIT_MSG_MAX];
+    uint8_t len = usplit_req_build(req, USPLIT_OP_STATUS, 0x31, NULL, 0);
+    CHECK(len > 0);
+    slave_rpc(req, len, out, USPLIT_MSG_MAX);
+    CHECK_EQ(alive_slave, 1);
+    slave_rpc(req, len, out, USPLIT_MSG_MAX);
+    CHECK_EQ(alive_slave, 2);
+    req[len - 1] ^= 0x5A; // the CRC no longer matches
+    slave_rpc(req, len, out, USPLIT_MSG_MAX);
+    CHECK_EQ(alive_slave, 2);
+    slave_rpc(req, 1, out, USPLIT_MSG_MAX); // too short to name an op
+    CHECK_EQ(alive_slave, 2);
+    CHECK_EQ(alive_master, 5);
+}
+
 static void test_session(void) {
     int before_failures = failures;
+    test_session_alive_hook();
     test_session_info_and_wrapper();
     test_session_happy_path();
     test_session_gesture();

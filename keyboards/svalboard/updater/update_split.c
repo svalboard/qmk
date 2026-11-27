@@ -358,6 +358,7 @@ void update_split_slave_rpc(const uint8_t *in, uint8_t in_len, uint8_t *out, uin
     if (st == UPDATE_OK) {
         sl.rx_ms  = update_split_port_now_ms(); // traffic: the session's timeout restarts
         sl.polled = true;                       // and the next sector may be erased (ERASING)
+        updater_port_alive();                   // relay traffic: the session watchdog's feed on this half
     }
     if (st == UPDATE_OK && sl.cached && r.seq == sl.seq && r.crc == sl.crc) {
         // A retry of the last request (its answer was lost): the same answer,
