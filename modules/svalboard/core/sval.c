@@ -1324,7 +1324,7 @@ uint16_t keymap_key_to_keycode(uint8_t layer, keypos_t key) {
 }
 
 // Override dynamic_keymap_macro_send to support extended keycodes and binary delay
-void dynamic_keymap_macro_send(uint8_t id) {
+static void sval_macro_play(uint8_t id) {
     if (id >= dynamic_keymap_macro_get_count()) {
         return;
     }
@@ -1369,29 +1369,30 @@ void dynamic_keymap_macro_send(uint8_t id) {
             if (data[1] == SS_TAP_CODE || data[1] == SS_DOWN_CODE || data[1] == SS_UP_CODE) {
                 if (offset >= macro_size) break;
                 dynamic_keymap_macro_get_buffer(offset++, 1, (uint8_t *)&data[2]);
-                if (data[2] != 0) send_string(data);
+                // A zero byte ends the macro (the start-of-macro search counts it),
+                // even inside an action.
+                if (data[2] == 0) break;
+                send_string(data);
             } else if (data[1] == VIAL_MACRO_EXT_TAP || data[1] == VIAL_MACRO_EXT_DOWN || data[1] == VIAL_MACRO_EXT_UP) {
                 if (offset >= macro_size) break;
                 dynamic_keymap_macro_get_buffer(offset++, 1, (uint8_t *)&data[2]);
-                if (data[2] != 0) {
-                    if (offset >= macro_size) break;
-                    dynamic_keymap_macro_get_buffer(offset++, 1, (uint8_t *)&data[3]);
-                    if (data[3] != 0) {
-                        uint16_t kc;
-                        memcpy(&kc, &data[2], sizeof(kc));
-                        kc = decode_keycode(kc);
-                        switch (data[1]) {
-                            case VIAL_MACRO_EXT_TAP:
-                                sval_keycode_tap(kc);
-                                break;
-                            case VIAL_MACRO_EXT_DOWN:
-                                sval_keycode_down(kc);
-                                break;
-                            case VIAL_MACRO_EXT_UP:
-                                sval_keycode_up(kc);
-                                break;
-                        }
-                    }
+                if (data[2] == 0) break;
+                if (offset >= macro_size) break;
+                dynamic_keymap_macro_get_buffer(offset++, 1, (uint8_t *)&data[3]);
+                if (data[3] == 0) break;
+                uint16_t kc;
+                memcpy(&kc, &data[2], sizeof(kc));
+                kc = decode_keycode(kc);
+                switch (data[1]) {
+                    case VIAL_MACRO_EXT_TAP:
+                        sval_keycode_tap(kc);
+                        break;
+                    case VIAL_MACRO_EXT_DOWN:
+                        sval_keycode_down(kc);
+                        break;
+                    case VIAL_MACRO_EXT_UP:
+                        sval_keycode_up(kc);
+                        break;
                 }
             } else if (data[1] == SS_DELAY_CODE) {
                 uint8_t d0, d1;
@@ -1407,4 +1408,17 @@ void dynamic_keymap_macro_send(uint8_t id) {
             send_string_with_delay(data, get_tap_code_delay());
         }
     }
+}
+
+// A macro can tap a macro key: its own, or one whose macro leads back to it. Each
+// nested playback runs on the stack, so a macro may play one other macro inside
+// it and no deeper; a deeper macro key is ignored.
+#define SVAL_MACRO_MAX_DEPTH 2
+
+void dynamic_keymap_macro_send(uint8_t id) {
+    static uint8_t depth = 0;
+    if (depth >= SVAL_MACRO_MAX_DEPTH) return;
+    depth++;
+    sval_macro_play(id);
+    depth--;
 }
