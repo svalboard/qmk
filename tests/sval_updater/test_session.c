@@ -61,7 +61,7 @@ uint8_t        updater_port_split_presence(void) {
 }
 // The session watchdog's feed (updater_port_alive): calls on each half.
 static uint32_t alive_master, alive_slave;
-void             updater_port_alive(void) {
+void            updater_port_alive(void) {
     if (sim_slave) {
         alive_slave++;
     } else {
