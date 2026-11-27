@@ -100,6 +100,11 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined
 # Flicker latch (Sval 0x3D, keyboards/svalboard/flicker_latch.c): one-scan
 # bounces latch and count on the raw rows, reads clear them, both halves answer.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -I"$root/tests/sval_flicker_latch/stub" -I"$kb"     "$root/tests/sval_flicker_latch/test_flicker_latch.c" -o "$out/test_flicker_latch"
+# Scan Lab's settle probe (keyboards/svalboard/scanlab.c) across the split link:
+# the half without USB runs it from housekeeping, never in the link's thread.
+# Built from a copy in its own directory, so its "svalboard.h" is the mock.
+mkdir -p "$out/scanlab" && cp "$kb/scanlab.c" "$out/scanlab/scanlab.c"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -DVIA_ENABLE=1 -I"$out/scanlab" -I"$root/tests/sval_scanlab/stub" -I"$kb"     "$root/tests/sval_scanlab/test_scanlab.c" -o "$out/test_scanlab"
 # The client ID lease (modules/svalboard/core/client_wrapper.c) across the
 # 32-bit timer wrap: the typing pause is tied to one ID.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -I"$root/tests/sval_client_id/stub" -I"$root/modules/svalboard/core"     "$root/tests/sval_client_id/test_client_id.c" -o "$out/test_client_id"
@@ -119,6 +124,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -DSVAL_LINK_HOST_TEST -I"$root/tests/sval_link" -I"$root/keyboards/svalboard"     "$root/tests/sval_link/test_link_light.c" -o "$out/test_link_light"
 "$out/test_link_light"
 "$out/test_flicker_latch"
+"$out/test_scanlab"
 "$out/test_typing_pause"
 "$out/test_client_id"
 "$out/test_packet"

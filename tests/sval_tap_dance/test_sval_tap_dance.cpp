@@ -281,3 +281,58 @@ TEST_F(SvalTapDance, TapMomentaryLayerReleasedBeforeInterruptingKey) {
     EXPECT_FALSE(layer_state_is(1));
     VERIFY_AND_CLEAR(driver);
 }
+
+// A host rewrites a dance while its Hold is held: letting go releases the key
+// the dance pressed, not the one stored now.
+TEST_F(SvalTapDance, HeldDanceReleasesWhatItPressedAfterARewrite) {
+    TestDriver driver;
+    auto       td = KeymapKey(0, 0, 0, TD(0));
+    set_keymap({td});
+    dance(KC_B, KC_LSFT, KC_NO, KC_NO);
+
+    EXPECT_NO_REPORT(driver);
+    td.press();
+    idle_for(370);
+    VERIFY_AND_CLEAR(driver);
+    EXPECT_REPORT(driver, (KC_LSFT));
+    idle_for(10);
+    VERIFY_AND_CLEAR(driver);
+
+    EXPECT_NO_REPORT(driver);
+    dances[0].on_hold = KC_LCTL;
+    sval_reload_tap_dance(); // as Sval 0x02 (sval.c) does after storing it
+    VERIFY_AND_CLEAR(driver);
+
+    EXPECT_EMPTY_REPORT(driver);
+    td.release();
+    run_one_scan_loop();
+    VERIFY_AND_CLEAR(driver);
+    EXPECT_EQ(get_mods(), 0);
+}
+
+// The same when the host disables the dance while it is held.
+TEST_F(SvalTapDance, HeldDanceReleasesWhatItPressedAfterItIsDisabled) {
+    TestDriver driver;
+    auto       td = KeymapKey(0, 0, 0, TD(0));
+    set_keymap({td});
+    dance(KC_B, KC_LSFT, KC_NO, KC_NO);
+
+    EXPECT_NO_REPORT(driver);
+    td.press();
+    idle_for(370);
+    VERIFY_AND_CLEAR(driver);
+    EXPECT_REPORT(driver, (KC_LSFT));
+    idle_for(10);
+    VERIFY_AND_CLEAR(driver);
+
+    EXPECT_NO_REPORT(driver);
+    dances[0].custom_tapping_term &= 0x7FFF; // enabled bit off
+    sval_reload_tap_dance();
+    VERIFY_AND_CLEAR(driver);
+
+    EXPECT_EMPTY_REPORT(driver);
+    td.release();
+    run_one_scan_loop();
+    VERIFY_AND_CLEAR(driver);
+    EXPECT_EQ(get_mods(), 0);
+}
