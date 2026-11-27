@@ -231,9 +231,12 @@ void sval_typing_pause_command(uint8_t *data, uint8_t length) {
 }
 
 #ifndef SVAL_EITHER_HAND
+void sval_rgb_idle_input(void); // rgb_idle.c
+
 // The either-hand builds call this from side.c's pre_process_record_kb.
 bool pre_process_record_kb(uint16_t keycode, keyrecord_t *record) {
     if (!sval_typing_pause_pre_process(record)) return false;
+    if (IS_KEYEVENT(record->event) && record->event.pressed) sval_rgb_idle_input(); // undim before the keycode runs
     return pre_process_record_user(keycode, record);
 }
 #endif

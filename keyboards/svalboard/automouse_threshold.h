@@ -17,6 +17,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "automouse_decay.h"
 
 #define SVAL_AUTOMOUSE_REF_DPI 800
 #define SVAL_AUTOMOUSE_FP_SCALE 16
@@ -43,9 +44,10 @@ static inline uint16_t sval_automouse_decay_ms(uint8_t stored) {
 
 // Adds units of motion at now_ms. The accumulator starts over when more than
 // the Activation Decay passed since the last motion. Returns true when the
-// layer should turn on: threshold 0 turns it on at any motion.
-static inline bool sval_automouse_accumulate(int32_t *accumulator, uint16_t *last_ms, uint16_t now_ms, uint8_t decay_stored, int32_t units, uint16_t threshold) {
-    if ((uint16_t)(now_ms - *last_ms) > sval_automouse_decay_ms(decay_stored)) *accumulator = 0;
+// layer should turn on: threshold 0 turns it on at any motion. Times are
+// timer_read32() (automouse_decay.h: a 16-bit time wrapped every 65.5 s).
+static inline bool sval_automouse_accumulate(int32_t *accumulator, uint32_t *last_ms, uint32_t now_ms, uint8_t decay_stored, int32_t units, uint16_t threshold) {
+    if (sval_automouse_decayed(now_ms, *last_ms, sval_automouse_decay_ms(decay_stored))) *accumulator = 0;
     *last_ms = now_ms;
     *accumulator += units;
     return threshold == 0 || *accumulator >= (int32_t)threshold * SVAL_AUTOMOUSE_FP_SCALE;

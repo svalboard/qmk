@@ -23,13 +23,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdint.h>
 #include "svalboard.h"
 
+// The LEDs show the color of the layer that is in effect: the highest of the
+// active layers and the default layer (a default set with PDF() or Sval 0x2B).
 layer_state_t default_layer_state_set_user(layer_state_t state) {
-  sval_set_active_layer(0, false);
+  sval_set_active_layer(get_highest_layer(layer_state | state), false);
   return state;
 }
 
 layer_state_t layer_state_set_user(layer_state_t state) {
-  sval_set_active_layer(get_highest_layer(state), false);
+  sval_set_active_layer(get_highest_layer(state | default_layer_state), false);
   return state;
 }
 

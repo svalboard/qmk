@@ -28,14 +28,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hardware/pll.h"
 #include "hardware/pio.h"
 #include "hardware/structs/clocks.h"
+#include "power_policy.h"
 
 #define SVAL_CLK_FULL_HZ 125000000u
 #define SVAL_CLK_USB_HZ   48000000u
 #define SVAL_CLK_XOSC_HZ  12000000u
 
-static bool     clock_low = false;
-static uint32_t low_hz    = SVAL_CLK_USB_HZ;
-static uint32_t pio_div_saved[2][4];
+static bool               clock_low = false;
+static uint32_t           low_hz    = SVAL_CLK_USB_HZ;
+static sval_pio_reclock_t pio_reclock_state;
+static bool               led_written;
+static uint32_t           led_write_ms;
 
 uint8_t sval_deep_clock_mhz(void) {
     switch (global_saved_values.scan_deep_clock_idx) {
@@ -45,25 +48,39 @@ uint8_t sval_deep_clock_mhz(void) {
     }
 }
 
-// Scale the divider of every enabled state machine so (clk_sys / div) stays
-// constant across a clock change; restore the exact saved values on the way back.
-static void pio_reclock(uint32_t from_hz, uint32_t to_hz, bool restore) {
-    PIO pios[2] = {pio0, pio1};
+// The 8 state machines' dividers and which are running (power_policy.h).
+static uint8_t pio_read(uint32_t clkdiv[SVAL_PIO_SMS]) {
+    PIO     pios[2] = {pio0, pio1};
+    uint8_t enabled = 0;
     for (int p = 0; p < 2; p++) {
         for (int sm = 0; sm < 4; sm++) {
-            if (!(pios[p]->ctrl & (1u << (PIO_CTRL_SM_ENABLE_LSB + sm)))) continue;
-            if (restore) {
-                pios[p]->sm[sm].clkdiv = pio_div_saved[p][sm];
-                continue;
-            }
-            uint32_t d = pios[p]->sm[sm].clkdiv;
-            pio_div_saved[p][sm] = d;
-            uint64_t fixed  = d >> 8; // 16.8 fixed-point divider
-            uint64_t scaled = (fixed * to_hz + from_hz / 2) / from_hz;
-            if (scaled < 0x100) scaled = 0x100; // never below 1.0
-            pios[p]->sm[sm].clkdiv = (uint32_t)(scaled << 8);
+            clkdiv[p * 4 + sm] = pios[p]->sm[sm].clkdiv;
+            if (pios[p]->ctrl & (1u << (PIO_CTRL_SM_ENABLE_LSB + sm))) enabled |= (uint8_t)(1u << (p * 4 + sm));
         }
     }
+    return enabled;
+}
+
+static void pio_write(const uint32_t clkdiv[SVAL_PIO_SMS], uint8_t enabled) {
+    PIO pios[2] = {pio0, pio1};
+    for (int i = 0; i < SVAL_PIO_SMS; i++) {
+        if (enabled & (1u << i)) pios[i / 4]->sm[i % 4].clkdiv = clkdiv[i];
+    }
+}
+
+// Scale the divider of every enabled state machine so (clk_sys / div) stays
+// constant across a clock change; restore the exact saved values on the way back.
+// A state machine started while the clock was low (a pointer driver the search
+// started) has nothing saved and is scaled up instead.
+static void pio_reclock(uint32_t from_hz, uint32_t to_hz, bool restore) {
+    uint32_t clkdiv[SVAL_PIO_SMS];
+    uint8_t  enabled = pio_read(clkdiv);
+    if (restore) {
+        sval_pio_reclock_up(&pio_reclock_state, clkdiv, enabled, from_hz, to_hz);
+    } else {
+        sval_pio_reclock_down(&pio_reclock_state, clkdiv, enabled, from_hz, to_hz);
+    }
+    pio_write(clkdiv, enabled);
 }
 
 bool    sval_clock_is_low(void) { return clock_low; }
@@ -72,6 +89,11 @@ uint8_t sval_clock_mhz(void) { return (clock_low ? low_hz : SVAL_CLK_FULL_HZ) / 
 void sval_clock_low(void) {
     if (clock_low) return;
     uint32_t hz = (uint32_t)sval_deep_clock_mhz() * 1000000u;
+    // A clock too low for a state machine's rate (the WS2812 one at 12 MHz) waits
+    // until the last LED write is out at the full clock.
+    uint32_t clkdiv[SVAL_PIO_SMS];
+    uint8_t  enabled = pio_read(clkdiv);
+    if (!sval_clock_low_allowed(sval_pio_would_clamp(clkdiv, enabled, SVAL_CLK_FULL_HZ, hz), led_written, timer_elapsed32(led_write_ms))) return;
     // 48 and 24 MHz come from the USB PLL (the pico-sdk's set_sys_clock_48mhz sequence,
     // with the clk_sys divider for 24); 12 MHz is the crystal directly. The USB PLL stays
     // up in every case because USB needs it.
@@ -95,6 +117,18 @@ void sval_clock_full(void) {
     clock_configure(clk_peri, 0, CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS, SVAL_CLK_FULL_HZ, SVAL_CLK_FULL_HZ);
     pio_reclock(low_hz, SVAL_CLK_FULL_HZ, true);
     clock_low = false;
+}
+
+// Every WS2812 write goes through here (LDFLAGS --wrap=ws2812_flush, rules.mk):
+// rgblight's, the split sync's on the other half, and the updater's. When the
+// low clock had to clamp a divider, the LED timing would be off, so the clock
+// goes back to full first; it goes low again once the frame is out.
+void __real_ws2812_flush(void) __attribute__((weak));
+void __wrap_ws2812_flush(void) {
+    if (sval_led_write_needs_full(clock_low, pio_reclock_state.clamped_mask)) sval_clock_full();
+    led_written  = true;
+    led_write_ms = timer_read32();
+    if (__real_ws2812_flush) __real_ws2812_flush();
 }
 
 uint32_t sval_deep_nap_us(void) {

@@ -4,7 +4,8 @@ Run: python3 -m unittest discover -s tests/sval_storage -v
 
 The production file is compiled against a RAM store. It covers a blank and a
 foreign area, reading and writing records, the two slots, a power cut at every
-byte of a save (each setting then reads as its old or its new value), unknown
+byte of a save (each setting then reads as its old or its new value), and of
+a save that grows a record past its entry's capacity, unknown
 and retired ids, records stored shorter or longer than this build's, a full
 area, a damaged list, and the sequence number wrapping. It also checks the
 capacity budget in settings_ids.h (tools/settings_budget.py).
@@ -132,6 +133,44 @@ static void test_power_cut(void) {
         assert(get(SVAL_SET_PAD_MODE, v, 2) == 2 && v[0] == 5);
         if (finished) break;
     }
+    // A cut while a record grows past its entry's capacity (a firmware update
+    // raised it): a new entry is added and the old one retired. It still reads
+    // as its old or its new value, never as missing.
+    for (long at = 0;; at++) {
+        memset(mem, 0, SIZE);
+        uint8_t small[2] = {3, 4}, big[30], other[16] = {7}, v[30];
+        for (int i = 0; i < 30; i++) big[i] = (uint8_t)(100 + i);
+        settings_area_put(SVAL_SET_PAD_PALM, small, 2);
+        settings_area_put(SVAL_SET_SCAN, other, 16);
+        budget = at;
+        int finished = 0;
+        if (!setjmp(cut)) {
+            assert(settings_area_put(SVAL_SET_PAD_PALM, big, 30));
+            finished = 1;
+        }
+        budget = -1;
+        int n = get(SVAL_SET_PAD_PALM, v, 30);
+        assert((n == 2 && v[0] == 3 && v[1] == 4) || (n == 30 && !memcmp(v, big, 30)));
+        if (finished) assert(n == 30);
+        assert(get(SVAL_SET_SCAN, v, 16) == 16 && !memcmp(v, other, 16));
+        uint8_t again[30] = {4, 4, 4};
+        assert(settings_area_put(SVAL_SET_PAD_PALM, again, 30));
+        assert(get(SVAL_SET_PAD_PALM, v, 30) == 30 && !memcmp(v, again, 30));
+        if (finished) break;
+    }
+}
+
+// A record that must grow when the area has no room for its new entry: the
+// save fails and the old value stays.
+static void test_grow_without_room(void) {
+    memset(mem, 0, SIZE);
+    uint8_t small[2] = {3, 4}, blob[200] = {1}, big[300] = {9}, v[8];
+    assert(settings_area_put(SVAL_SET_PAD_PALM, small, 2));
+    for (uint16_t id = 1000; settings_area_put(id, blob, 200); id++) {}
+    assert(!settings_area_put(SVAL_SET_PAD_PALM, big, 300));
+    assert(get(SVAL_SET_PAD_PALM, v, 8) == 2 && v[0] == 3 && v[1] == 4);
+    assert(settings_area_put(SVAL_SET_PAD_PALM, small + 1, 1)); // still fits the old entry
+    assert(get(SVAL_SET_PAD_PALM, v, 8) == 1 && v[0] == 4);
 }
 
 static void test_lengths_and_ids(void) {
@@ -191,6 +230,7 @@ int main(void) {
     test_blank_and_format();
     test_put_get_and_slots();
     test_power_cut();
+    test_grow_without_room();
     test_lengths_and_ids();
     test_full_and_damaged();
     puts("settings area: ok");
@@ -211,6 +251,24 @@ class SettingsArea(unittest.TestCase):
         result = subprocess.run([sys.executable, str(KB / 'tools/settings_budget.py')], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('settings area:', result.stdout)
+
+    def test_reserved_ids(self):
+        # 0, 0xFFFE, 0xFFFF and 0xF000-0xF0FF (kept for downstream builds) fail; hex ids are read.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('settings_budget', KB / 'tools/settings_budget.py')
+        budget = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(budget)
+        lines = ['X(A, 0xF000, 4)', 'X(B, 0xf0ff, 4)', 'X(C, 61439, 4)', 'X(D, 0xF100, 4)', 'X(E, 0, 2)']
+        ids = budget.records(''.join(f'    {line} \\\n' for line in lines))
+        self.assertEqual([(n, i) for n, i, _ in ids], [('A', 0xF000), ('B', 0xF0FF), ('C', 0xEFFF), ('D', 0xF100), ('E', 0)])
+        problems = budget.id_problems(ids)
+        self.assertEqual(len(problems), 3, problems)
+        self.assertTrue(problems[0].startswith('A: id 0xF000 is in 0xF000-0xF0FF'))
+        self.assertTrue(problems[1].startswith('B: id 0xF0FF'))
+        self.assertIn('E: id 0 is reserved', problems[2])
+        self.assertEqual(budget.id_problems([('X', 7, 1), ('Y', 7, 1)]), ['id 7 used by both X and Y'])
+        # This tree's own records use none of them.
+        self.assertEqual(budget.id_problems(budget.records((KB / 'settings_ids.h').read_text())), [])
 
 
 if __name__ == '__main__':

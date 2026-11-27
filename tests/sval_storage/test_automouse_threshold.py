@@ -46,12 +46,12 @@ static bool old_pad(uint16_t now, uint16_t decay, int32_t counts, uint16_t thres
 
 /* The paths now, gated as keymap_support.c gates them. decay is the stored setting. */
 static int32_t acc;
-static uint16_t last;
-static bool new_mouse(uint16_t now, uint8_t decay, int32_t counts, uint16_t dpi, uint16_t threshold) {
+static uint32_t last;
+static bool new_mouse(uint32_t now, uint8_t decay, int32_t counts, uint16_t dpi, uint16_t threshold) {
     if (counts <= 0) return false;
     return sval_automouse_accumulate(&acc, &last, now, decay, sval_automouse_units(counts, dpi), threshold);
 }
-static bool new_pad(uint16_t now, uint8_t decay, int32_t counts, uint16_t threshold) {
+static bool new_pad(uint32_t now, uint8_t decay, int32_t counts, uint16_t threshold) {
     if (counts <= 0) return false;
     return sval_automouse_accumulate(&acc, &last, now, decay, sval_automouse_units(counts, PAD_CPI), threshold);
 }
@@ -61,10 +61,10 @@ static void reset(void) {
 }
 
 /* Mouse reports until the layer turns on (n when it never does). */
-static int mouse_steps(const int32_t *c, const uint16_t *t, int n, uint8_t decay, uint16_t dpi, uint16_t threshold, bool old) {
+static int mouse_steps(const int32_t *c, const uint32_t *t, int n, uint8_t decay, uint16_t dpi, uint16_t threshold, bool old) {
     reset();
     for (int i = 0; i < n; i++)
-        if (old ? old_mouse(t[i], decay * 10, c[i], dpi, threshold) : new_mouse(t[i], decay, c[i], dpi, threshold)) return i;
+        if (old ? old_mouse((uint16_t)t[i], decay * 10, c[i], dpi, threshold) : new_mouse(t[i], decay, c[i], dpi, threshold)) return i;
     return n;
 }
 /* Equal pad reports of `counts`, 1 ms apart, until the layer turns on (0: never in 1000). */
@@ -78,16 +78,17 @@ static int pad_reports(int32_t counts, uint16_t threshold, bool old) {
 int main(void) {
     /* The mouse path is the reference: it triggers on exactly the same
        report as before, over random motion, thresholds, DPIs, decays and
-       pauses, the timer wrapping too (decay 1 to 255: 0 now reads as 7). */
+       pauses, the 16-bit time wrapping too (decay 1 to 255: 0 now reads as 7).
+       The old path saw the low 16 bits of the same 32-bit times. */
     srand(1);
     static const uint16_t dpis[] = {400, 800, 1000, 1200, 1600, 2400, 3200, 6400};
     for (int trial = 0; trial < 20000; trial++) {
         int32_t c[64];
-        uint16_t t[64];
-        uint16_t now = (uint16_t)rand();
+        uint32_t t[64];
+        uint32_t now = (uint32_t)rand();
         for (int i = 0; i < 64; i++) {
             c[i] = rand() % 6 == 0 ? 0 : rand() % (trial % 3 == 0 ? 60 : 8);
-            now = (uint16_t)(now + rand() % 120);
+            now = now + (uint32_t)(rand() % 120);
             t[i] = now;
         }
         uint16_t threshold = rand() % 4 == 0 ? 0 : 1 + rand() % 200;
@@ -183,15 +184,22 @@ int main(void) {
     assert(!new_pad(0, 1, 16, 15) && new_mouse(10, 1, 5, 800, 15));
     reset();
     assert(!new_pad(0, 1, 16, 15) && !new_mouse(11, 1, 5, 800, 15));
-    /* Measured across the timer's wrap. */
+    /* Measured across the 32-bit timer's wrap. */
     reset();
-    last = 65500;
+    last = 0xFFFFFFC0u;
     acc  = 160;
-    assert(new_mouse(64, 10, 5, 800, 15)); /* 100 ms across the wrap: kept */
+    assert(new_mouse(36, 10, 5, 800, 15)); /* 100 ms across the wrap: kept */
     reset();
-    last = 65500;
+    last = 0xFFFFFFC0u;
     acc  = 160;
-    assert(!new_mouse(65, 10, 5, 800, 15) && acc == 80); /* 101 ms: starts over */
+    assert(!new_mouse(37, 10, 5, 800, 15) && acc == 80); /* 101 ms: starts over */
+    /* An idle of about a multiple of 65.536 s is still an idle (F28): the
+       16-bit time saw 30 ms and kept the partial count. */
+    reset();
+    assert(!old_mouse(1000, 100, 10, 800, 15) && old_mouse((uint16_t)(1000 + 65536 + 30), 100, 5, 800, 15));
+    reset();
+    assert(!new_mouse(1000, 10, 10, 800, 15));
+    assert(!new_mouse(1000 + 65536u + 30, 10, 5, 800, 15) && acc == 80);
     puts("OK");
     return 0;
 }

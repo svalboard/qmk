@@ -124,17 +124,22 @@ bool sval_storage_write_failed(void) {
 #endif
 }
 
+// Reset all Sval data and the QMK settings to defaults, then mark the block
+// valid. sval_reset() zeroes the magic with the rest of the block, so without
+// the last step the next boot would reset everything written after this.
+static void sval_reset_storage(void) {
+    sval_reset();
+    sval_qmk_settings_reset();
+    sval_eeprom_set_valid();
+}
+
 void sval_init(void) {
     // Initialize client wrapper for multi-client support
     client_wrapper_init();
 
     // Check if EEPROM data is valid (matches current firmware version)
     if (!sval_eeprom_is_valid()) {
-        // Reset all sval data to defaults
-        sval_reset();
-        sval_qmk_settings_reset();
-        // Mark as valid
-        sval_eeprom_set_valid();
+        sval_reset_storage();
     }
 #ifdef SVAL_COMBO_LABELS
     // First boot with combo names: start the region empty (keeps everything else).
@@ -565,6 +570,7 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
             data[19] = sval_get_feature_flags2();
             if (length > 20) data[20] = sval_get_feature_flags3_kb();
             if (length > 21) data[21] = sval_get_feature_flags4_kb();
+            if (length > 22) data[22] = sval_get_feature_flags5_kb();
             break;
         }
 
@@ -705,7 +711,10 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
         case sval_cmd_reset: {
             // Request: [0xDF] [0x0C]
             // Response: [0xDF] [0x0C]
-            sval_reset();
+            // The same reset as a first boot, so it lasts past the next one, and
+            // the labels in RAM match the cleared storage.
+            sval_reset_storage();
+            sval_reload_labels();
             break;
         }
 
@@ -903,6 +912,20 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
             // Request:  [0xDF] [0x39] [op] [hand] [arg lo] [arg hi]
             // Response: [0xDF] [0x39] [reply...] (keyboards/svalboard/docs/protocol.md, "Pointing sensor")
             if (length > 5) sval_pointing_sensor_kb(&data[2], length - 2);
+            break;
+        }
+
+        case sval_cmd_app_foreground: {
+            // Request:  [0xDF] [0x40] [op] ...
+            // Response: [0xDF] [0x40] [op] [status] ... (keyboards/svalboard/docs/protocol.md, "App rules")
+            if (length > 3) sval_app_foreground_kb(&data[2], length - 2);
+            break;
+        }
+
+        case sval_cmd_app_rules: {
+            // Request:  [0xDF] [0x41] [op] ...
+            // Response: [0xDF] [0x41] [op] [status] ... (keyboards/svalboard/docs/protocol.md, "App rules")
+            if (length > 3) sval_app_rules_kb(&data[2], length - 2);
             break;
         }
 
@@ -1254,6 +1277,18 @@ __attribute__((weak)) uint8_t sval_get_feature_flags4_kb(void) {
 }
 
 // Without the keyboard's handler: status 0xFF after the echoed op.
+__attribute__((weak)) uint8_t sval_get_feature_flags5_kb(void) {
+    return 0;
+}
+
+__attribute__((weak)) void sval_app_foreground_kb(uint8_t *data, uint8_t length) {
+    data[1] = 0xFF;
+}
+
+__attribute__((weak)) void sval_app_rules_kb(uint8_t *data, uint8_t length) {
+    data[1] = 0xFF;
+}
+
 __attribute__((weak)) void sval_debug_console_kb(uint8_t *data, uint8_t length) {
     data[1] = 0xFF;
 }
@@ -1324,7 +1359,7 @@ uint16_t keymap_key_to_keycode(uint8_t layer, keypos_t key) {
 }
 
 // Override dynamic_keymap_macro_send to support extended keycodes and binary delay
-void dynamic_keymap_macro_send(uint8_t id) {
+static void sval_macro_play(uint8_t id) {
     if (id >= dynamic_keymap_macro_get_count()) {
         return;
     }
@@ -1369,29 +1404,30 @@ void dynamic_keymap_macro_send(uint8_t id) {
             if (data[1] == SS_TAP_CODE || data[1] == SS_DOWN_CODE || data[1] == SS_UP_CODE) {
                 if (offset >= macro_size) break;
                 dynamic_keymap_macro_get_buffer(offset++, 1, (uint8_t *)&data[2]);
-                if (data[2] != 0) send_string(data);
+                // A zero byte ends the macro (the start-of-macro search counts it),
+                // even inside an action.
+                if (data[2] == 0) break;
+                send_string(data);
             } else if (data[1] == VIAL_MACRO_EXT_TAP || data[1] == VIAL_MACRO_EXT_DOWN || data[1] == VIAL_MACRO_EXT_UP) {
                 if (offset >= macro_size) break;
                 dynamic_keymap_macro_get_buffer(offset++, 1, (uint8_t *)&data[2]);
-                if (data[2] != 0) {
-                    if (offset >= macro_size) break;
-                    dynamic_keymap_macro_get_buffer(offset++, 1, (uint8_t *)&data[3]);
-                    if (data[3] != 0) {
-                        uint16_t kc;
-                        memcpy(&kc, &data[2], sizeof(kc));
-                        kc = decode_keycode(kc);
-                        switch (data[1]) {
-                            case VIAL_MACRO_EXT_TAP:
-                                sval_keycode_tap(kc);
-                                break;
-                            case VIAL_MACRO_EXT_DOWN:
-                                sval_keycode_down(kc);
-                                break;
-                            case VIAL_MACRO_EXT_UP:
-                                sval_keycode_up(kc);
-                                break;
-                        }
-                    }
+                if (data[2] == 0) break;
+                if (offset >= macro_size) break;
+                dynamic_keymap_macro_get_buffer(offset++, 1, (uint8_t *)&data[3]);
+                if (data[3] == 0) break;
+                uint16_t kc;
+                memcpy(&kc, &data[2], sizeof(kc));
+                kc = decode_keycode(kc);
+                switch (data[1]) {
+                    case VIAL_MACRO_EXT_TAP:
+                        sval_keycode_tap(kc);
+                        break;
+                    case VIAL_MACRO_EXT_DOWN:
+                        sval_keycode_down(kc);
+                        break;
+                    case VIAL_MACRO_EXT_UP:
+                        sval_keycode_up(kc);
+                        break;
                 }
             } else if (data[1] == SS_DELAY_CODE) {
                 uint8_t d0, d1;
@@ -1407,4 +1443,17 @@ void dynamic_keymap_macro_send(uint8_t id) {
             send_string_with_delay(data, get_tap_code_delay());
         }
     }
+}
+
+// A macro can tap a macro key: its own, or one whose macro leads back to it. Each
+// nested playback runs on the stack, so a macro may play one other macro inside
+// it and no deeper; a deeper macro key is ignored.
+#define SVAL_MACRO_MAX_DEPTH 2
+
+void dynamic_keymap_macro_send(uint8_t id) {
+    static uint8_t depth = 0;
+    if (depth >= SVAL_MACRO_MAX_DEPTH) return;
+    depth++;
+    sval_macro_play(id);
+    depth--;
 }
