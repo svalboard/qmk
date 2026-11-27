@@ -337,6 +337,7 @@ bool sval_side_input_blocked(void) {
 bool pre_process_record_kb(uint16_t keycode, keyrecord_t *record) {
     if (IS_KEYEVENT(record->event) && !sval_side_row_allowed(record->event.key.row)) return false;
     if (!sval_typing_pause_pre_process(record)) return false; // a key held when a typing pause ended
+    if (IS_KEYEVENT(record->event) && record->event.pressed) sval_rgb_idle_input(); // undim before the keycode runs
     return pre_process_record_user(keycode, record);
 }
 

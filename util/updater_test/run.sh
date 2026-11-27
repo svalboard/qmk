@@ -30,6 +30,17 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 "$out/test_timing"
 "$out/test_debounce"
 
+# Idle power (kb/power_policy.h): the scan period while a key is held, the PIO
+# dividers across a deep-idle clock switch, LED writes at a clock too low for
+# the WS2812 timing.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$kb" "$root/tests/sval_power_idle/test_power_policy.c" -o "$out/test_power_policy"
+"$out/test_power_policy"
+
+# RGB at rest (kb/rgb_idle.c): the idle dimming kept out of the saved lighting
+# (keys, VIA), and RGBLIGHT_SLEEP while the host sleeps.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$root/tests/sval_rgb_idle/stub" -I"$kb" "$root/tests/sval_rgb_idle/test_rgb_idle.c" -o "$out/test_rgb_idle"
+"$out/test_rgb_idle"
+
 # Touchpad tap setting (kb/pad_gestures.c): defaults are today's behavior, each
 # switch, the hold time table, the stored record, the chip's gesture register
 # bytes, split sync with older halves.
