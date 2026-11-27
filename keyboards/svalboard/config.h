@@ -306,8 +306,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #endif
 
 #define SERIAL_DEBUG
-#define RP2040_BOOTLOADER_DOUBLE_TAP_RESET
-#define RP2040_BOOTLOADER_DOUBLE_TAP_RESET_TIMEOUT 500 // Timeout window in ms in which the double tap can occur.
+// Double-tap RESET into the bootloader is double_tap_reset.c, which arms
+// earlier than QMK's RP2040_BOOTLOADER_DOUBLE_TAP_RESET; leave that one off.
+#undef RP2040_BOOTLOADER_DOUBLE_TAP_RESET
+#undef RP2040_BOOTLOADER_DOUBLE_TAP_RESET_TIMEOUT
 
 // Macro count (Sval entry counts are now in each keymap's sval.json)
 // 256 macros: QMK's macro keycodes (0x7700-0x777F) reach macro 127; the Sval

@@ -51,6 +51,11 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 "$out/test_key_log_console"
 "$out/test_key_log"
 
+# Double-tap RESET (kb/double_tap_reset.h): only RUN-pin resets count, a
+# software reboot never enters the bootloader, two quick taps do.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$kb" "$root/tests/sval_double_tap/test_double_tap.c" -o "$out/test_double_tap"
+"$out/test_double_tap"
+
 # Settings reset on the first boot of a different firmware build (kb/build_reset.c).
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
     -DBUILD_RESET_HOST_TEST -I"$kb" "$tests/test_build_reset.c" "$kb/build_reset.c" -o "$out/test_build_reset"

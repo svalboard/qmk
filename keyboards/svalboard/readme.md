@@ -46,7 +46,7 @@ qmk flash --keyboard svalboard --keymap default -bl uf2-split-right
 See the [build environment setup](https://docs.qmk.fm/#/getting_started_build_tools) and the [make instructions](https://docs.qmk.fm/#/getting_started_make_guide) for more information. Brand new to QMK? Start with our [Complete Newbs Guide](https://docs.qmk.fm/#/newbs).
 
 ## Bootloader
-To enter bootloader mode, simply double tap reset in 500ms or less.  The device will come up as a mass storage device titled RPI-RP2.  Drag the desired UF2 file to the drive and it will immediately reboot and enumerate as Svalboard.
+To enter bootloader mode, press reset twice: two quick presses, up to about half a second apart. A single press only restarts the board.  The device will come up as a mass storage device titled RPI-RP2.  Drag the desired UF2 file to the drive and it will immediately reboot and enumerate as Svalboard.
 
 ## Debug console
 The firmware has QMK's debug console, and any program on the computer can read it, so key events print there only while debug is on. Debug is off at every power-up. Keybard's Settings turn it on until the board is unplugged ("Debug console", Sval `0x3E`, [protocol notes](docs/protocol.md), "Debug console"). There is no key or key chord for it: Command is off, and Keybard doesn't offer `DB_TOGG`. While debug is on, each key event prints a `KL:` line. Only one line prints whether or not debug is on: each touchpad's identity, once at boot, which carries no key events.
