@@ -9,17 +9,20 @@ static bool favors(int32_t a, int32_t b) {
     return iabs(a) * SVAL_AXIS_DOMINANCE_NUMERATOR >= iabs(b) * SVAL_AXIS_DOMINANCE_DENOMINATOR;
 }
 
+uint8_t sval_axis_lock_mode(const sval_axis_lock_t *s, uint32_t now_ms) {
+    return now_ms - s->last_ms > SVAL_AXIS_LOCK_REST_MS ? SVAL_AXIS_FREE : s->mode;
+}
+
 bool sval_axis_lock_step(sval_axis_lock_t *s, uint32_t now_ms, int32_t h, int32_t v) {
-    if (h != 0 || v != 0) {
-        s->last_ms = (uint16_t)now_ms;
-    } else {
-        if ((uint16_t)((uint16_t)now_ms - s->last_ms) > SVAL_AXIS_LOCK_REST_MS) {
-            s->mode  = SVAL_AXIS_FREE;
-            s->acc_h = 0;
-            s->acc_v = 0;
-        }
-        return false;
+    // The rest is measured at the next motion: the caller only calls with
+    // motion (as pad_scroll.c does it for a pad).
+    if (h == 0 && v == 0) return false;
+    if (now_ms - s->last_ms > SVAL_AXIS_LOCK_REST_MS) {
+        s->mode  = SVAL_AXIS_FREE;
+        s->acc_h = 0;
+        s->acc_v = 0;
     }
+    s->last_ms = now_ms;
 
     switch (s->mode) {
         case SVAL_AXIS_FREE:

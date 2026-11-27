@@ -545,7 +545,7 @@ void sval_pointing_modes(sval_pointing_modes_t *m) {
     if (axis_lock) m->global_bits |= SVAL_MOTION_AXIS_LOCK;
     if (global_saved_values.natural_scroll) m->global_bits |= SVAL_MOTION_NATURAL_SCROLL;
     if (scroll_hold || scroll_toggle) m->global_bits |= SVAL_MOTION_SCROLL_KEY;
-    m->axis_state      = axis_lock ? axis_lock_state.mode : 0; // FREE 0, LOCKED_V 1, LOCKED_H 2
+    m->axis_state      = axis_lock ? sval_axis_lock_mode(&axis_lock_state, timer_read32()) : 0; // FREE 0, LOCKED_V 1, LOCKED_H 2
     m->left_scroll     = hand_scrolling(0);
     m->right_scroll    = hand_scrolling(1);
     // The factors in force, so a host shows the real one (0x2D bytes 53-55).

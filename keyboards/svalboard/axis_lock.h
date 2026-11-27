@@ -8,7 +8,8 @@
 // to horizontal once the horizontal motion adds up to SVAL_AXIS_LOCK_ENGAGE
 // (about 1.6 mm). A locked axis moves to the other one after
 // SVAL_AXIS_LOCK_BREAKAWAY (about 4.8 mm) of motion that favors the other
-// axis; a report that favors the locked axis starts that count again.
+// axis; a report that favors the locked axis starts that count again. Motion
+// after a rest of more than SVAL_AXIS_LOCK_REST_MS starts from FREE.
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
@@ -25,9 +26,12 @@ enum { SVAL_AXIS_FREE = 0, SVAL_AXIS_LOCKED_V = 1, SVAL_AXIS_LOCKED_H = 2 }; // 
 typedef struct {
     uint8_t  mode; // SVAL_AXIS_*
     int32_t  acc_h, acc_v;
-    uint16_t last_ms; // the last motion
+    uint32_t last_ms; // the last motion
 } sval_axis_lock_t;
 
 // One report's scroll motion. True when the lock moved to the other axis: the
 // caller drops the scroll it holds, which belonged to the old axis.
 bool sval_axis_lock_step(sval_axis_lock_t *s, uint32_t now_ms, int32_t h, int32_t v);
+
+// The lock now, for POINTING_MOTION (0x2D): FREE once the motion has rested.
+uint8_t sval_axis_lock_mode(const sval_axis_lock_t *s, uint32_t now_ms);

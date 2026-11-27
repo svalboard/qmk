@@ -99,6 +99,15 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertIn('pad_scroll OK', result.stdout)
 
+    def test_axis_lock(self):
+        # axis_lock.c: a trackball's Axis Scroll Lock, and its return to free after a rest.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'axis_lock'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'axis_lock_test.c'), str(ROOT / 'keyboards/svalboard/axis_lock.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn('axis_lock OK', result.stdout)
+
     def test_wheel_pace(self):
         # wheel_pace.c: at most one detent per axis per report, totals kept, backlog bounded, a Mac untouched.
         with tempfile.TemporaryDirectory() as directory:
