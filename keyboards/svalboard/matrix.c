@@ -25,6 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "print.h"
 #include "svalboard.h"
 #include "scanlab.h"
+#include "power_policy.h"
 #ifdef SVAL_UPDATER
 #    include "updater/updater.h"
 #    include "updater/update_gesture.h"
@@ -152,7 +153,8 @@ static uint16_t cur_prewait_us = 90, cur_postwait_us = 90;
 // e.g. a 100 ms wake-up) and deep idle (scan_deep_after_s ->
 // scan_deep_period_ms, seconds-long timeouts, up to a 65 s period). The first
 // raw matrix change restores the active period on the next frame, so the only
-// latency cost is one idle-length frame on the first key after a pause.
+// latency cost is one idle-length frame on the first key after a pause. A key
+// held down keeps the active period, so its release is never late.
 _Static_assert(CH_CFG_ST_FREQUENCY == 1000000, "matrix pacing assumes a 1 MHz system timer");
 static inline uint32_t now_us(void) {
     return (uint32_t)chVTGetSystemTimeX();
@@ -174,28 +176,17 @@ static inline void ema32(uint32_t *s, uint32_t sample) {
 }
 
 uint32_t sval_scan_period_now(uint8_t *stage) {
-    uint32_t p = global_saved_values.scan_period_us;
-    uint8_t  s = 0;
-    if (p) {
-        // Quiet since the last raw matrix change here or any input anywhere (keys on the
-        // other half, ball motion), whichever is more recent.
-        uint32_t quiet_ms = timer_elapsed32(last_change_ms);
-        uint32_t input_ms = last_input_activity_elapsed();
-        if (input_ms < quiet_ms) quiet_ms = input_ms;
-        uint32_t deep_us  = (uint32_t)global_saved_values.scan_deep_period_ms * 1000u;
-        uint32_t light_us = (uint32_t)global_saved_values.scan_idle_period_ms * 1000u;
-        if (global_saved_values.scan_deep_after_s && deep_us > p &&
-            quiet_ms > (uint32_t)global_saved_values.scan_deep_after_s * 1000u) {
-            p = deep_us;
-            s = 2;
-        } else if (global_saved_values.scan_idle_after_ms && light_us > p &&
-                   quiet_ms > global_saved_values.scan_idle_after_ms) {
-            p = light_us;
-            s = 1;
-        }
+    // Quiet since the last raw matrix change here or any input anywhere (keys on the
+    // other half, ball motion), whichever is more recent. A key held down here keeps the
+    // active period (power_policy.h).
+    uint32_t quiet_ms = timer_elapsed32(last_change_ms);
+    uint32_t input_ms = last_input_activity_elapsed();
+    if (input_ms < quiet_ms) quiet_ms = input_ms;
+    bool key_down = false;
+    for (uint8_t r = 0; r < ROWS_PER_HAND; r++) {
+        if (raw_matrix[r]) key_down = true;
     }
-    if (stage) *stage = s;
-    return p;
+    return sval_idle_period(global_saved_values.scan_period_us, (uint32_t)global_saved_values.scan_idle_period_ms * 1000u, global_saved_values.scan_idle_after_ms, (uint32_t)global_saved_values.scan_deep_period_ms * 1000u, global_saved_values.scan_deep_after_s, quiet_ms, key_down, stage);
 }
 
 void sval_scan_stats(uint32_t *frame_us, uint16_t *led_us, uint8_t *stage) {
