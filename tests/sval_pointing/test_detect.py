@@ -99,6 +99,15 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertIn('pad_scroll OK', result.stdout)
 
+    def test_axis_lock(self):
+        # axis_lock.c: a trackball's Axis Scroll Lock, and its return to free after a rest.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'axis_lock'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'axis_lock_test.c'), str(ROOT / 'keyboards/svalboard/axis_lock.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn('axis_lock OK', result.stdout)
+
     def test_wheel_pace(self):
         # wheel_pace.c: at most one detent per axis per report, totals kept, backlog bounded, a Mac untouched.
         with tempfile.TemporaryDirectory() as directory:
@@ -161,6 +170,34 @@ class VelocityScrollTests(unittest.TestCase):
             result = subprocess.run([str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('OK', result.stdout)
+
+    def _run_c(self, name, sources, includes=()):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / name
+            cmd = ['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror']
+            for inc in (*includes, ROOT / 'keyboards/svalboard'):
+                cmd += ['-I', str(inc)]
+            subprocess.run(cmd + [str(src) for src in sources] + ['-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(f'{name} OK', result.stdout)
+
+    def test_axis_scale(self):
+        # axis_scale.c: Boost saturates instead of wrapping; each hand keeps its own Sniper remainders.
+        self._run_c('axis_scale', [HERE / 'axis_scale_test.c', ROOT / 'keyboards/svalboard/axis_scale.c'])
+
+    def test_automouse_decay(self):
+        # automouse_decay.h: an idle of any length forgets a partial Auto Mouse count.
+        self._run_c('automouse_decay', [HERE / 'automouse_decay_test.c'])
+
+    def test_hand_scroll(self):
+        # scroll_speed.c: Scroll Mode keeps a pad's two-finger scroll, the mm units do not overflow,
+        # and the Scroll speed migration waits for a hand no half reports.
+        self._run_c('hand_scroll', [HERE / 'hand_scroll_test.c', ROOT / 'keyboards/svalboard/scroll_speed.c'])
+
+    def test_scroll_test_motion(self):
+        # scroll_test.c (dev builds): any int32 rate keeps its direction and its total.
+        self._run_c('scroll_test', [HERE / 'scroll_test_test.c', ROOT / 'keyboards/svalboard/scroll_test.c'], [HERE / 'scroll_test_stubs'])
 
     def test_trackball_health_check(self):
         # trackball.c: the once-a-second check is read-only, catches a reset or stuck sensor,
@@ -245,6 +282,45 @@ class PointingSensorTests(unittest.TestCase):
             result = subprocess.run([str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('OK', result.stdout)
+
+
+class TrackballDriverTests(unittest.TestCase):
+    """drivers/sensors/pmw33xx_common.c and svalboard.c: the trackball's SPI from the right place."""
+    def test_burst_stays_entered_while_the_sensor_rests(self):
+        # With rest modes on, OP_MODE reads Rest1-3: not a burst fault, so no Motion_Burst write each poll.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'pmw33xx_burst'
+            subprocess.run([
+                'gcc', '-std=gnu11', '-Wall', '-Wextra', '-Wno-unused-parameter', '-Werror', '-DPOINTING_DEVICE_DRIVER_pmw3389', '-DPMW33XX_CS_PIN=1', '-I',
+                str(HERE / 'pmw33xx_stubs'), '-I',
+                str(ROOT / 'drivers/sensors'),
+                str(HERE / 'pmw33xx_burst_test.c'),
+                str(ROOT / 'drivers/sensors/pmw33xx_common.c'), '-o',
+                str(binary)
+            ],
+                           check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('OK', result.stdout)
+
+    @staticmethod
+    def _body(source, signature):
+        # From the signature to the function's closing brace at the start of a line.
+        start = source.index(signature)
+        return source[start:source.index('\n}\n', start) + 2]
+
+    def test_ping_handler_leaves_the_sensor_to_the_main_loop(self):
+        # kb_sync_listener runs in the split link's thread on the half without USB: a Config2 write
+        # from there can land inside the main loop's burst read or firmware upload. It only marks
+        # the rest mode due; housekeeping (the main loop) writes it.
+        source = (ROOT / 'keyboards/svalboard/svalboard.c').read_text(encoding='utf-8')
+        listener = self._body(source, 'void kb_sync_listener(')
+        self.assertNotIn('sval_pointer_rest_apply', listener)
+        self.assertIn('pointer_rest_due', listener)
+        housekeeping = self._body(source, 'void housekeeping_task_kb(void)')
+        due = housekeeping[housekeeping.index('if (pointer_rest_due)'):]
+        due = due[:due.index('}')]
+        self.assertIn('sval_pointer_rest_apply();', due)
 
 
 if __name__ == '__main__':

@@ -145,6 +145,18 @@ static i2c_status_t sval_iqs_write(uint16_t reg, const uint8_t *data, uint16_t l
 // pixels): the dead zone's 1.2 mm default differs from the driver's 25 pixels
 // in every build, so it is always written.
 static volatile bool azo_gestures_pending = false;
+// A write that failed is tried again: first after AZO_GESTURES_RETRY_MS, then
+// at twice the wait each time. After the wait of AZO_GESTURES_RETRY_MAX_MS
+// fails too (9 tries over about 25 s), a pad that stays unreachable is left
+// alone until the next change or start. 0: no failure since the last write.
+#ifndef AZO_GESTURES_RETRY_MS
+#    define AZO_GESTURES_RETRY_MS 100
+#endif
+#ifndef AZO_GESTURES_RETRY_MAX_MS
+#    define AZO_GESTURES_RETRY_MAX_MS 12800
+#endif
+static uint16_t azo_gestures_backoff_ms = 0;
+static uint32_t azo_gestures_retry_at   = 0;
 
 // The driver's own scroll distance, pixels (drivers/sensors/azoteq_iqs5xx.c).
 #ifndef AZOTEQ_IQS5XX_SCROLL_INITIAL_DISTANCE
@@ -214,7 +226,8 @@ bool sval_pad_gestures_supported(void) {
 }
 
 void sval_pad_gestures_changed(void) {
-    azo_gestures_pending = true;
+    azo_gestures_backoff_ms = 0; // a new setting goes out at once
+    azo_gestures_pending    = true;
 }
 
 // Inside an open communication window; ends it.
@@ -242,7 +255,10 @@ static void sval_iqs_tune(void) {
         azo_wake();
         status = sval_iqs_apply_tuning();
     }
-    if (status == I2C_STATUS_SUCCESS) azo_gestures_pending = false;
+    if (status == I2C_STATUS_SUCCESS) {
+        azo_gestures_pending    = false;
+        azo_gestures_backoff_ms = 0;
+    }
     dprintf("IQS5XX: glass tuning %s (i2c status %d)\n", status == I2C_STATUS_SUCCESS ? "applied" : "FAILED", status);
 }
 
@@ -342,6 +358,7 @@ uint8_t sval_pointer_retry_own(void) {
 // A changed tap setting, written in a window of its own.
 static void azo_gestures_task(void) {
     if (!azo_gestures_pending || azo_product == AZOTEQ_IQS5XX_UNKNOWN) return;
+    if (azo_gestures_backoff_ms && (int32_t)(timer_read32() - azo_gestures_retry_at) < 0) return;
     azo_wake();
     i2c_status_t status = azo_write_gestures();
     azoteq_iqs5xx_end_session();
@@ -350,8 +367,18 @@ static void azo_gestures_task(void) {
         status = azo_write_gestures();
         azoteq_iqs5xx_end_session();
     }
-    azo_gestures_pending = false; // a failure is not retried here; the next start writes it
-    dprintf("IQS5XX: tap setting %02X %s\n", sval_pad_gestures(), status == I2C_STATUS_SUCCESS ? "written" : "FAILED");
+    if (status == I2C_STATUS_SUCCESS) {
+        azo_gestures_pending    = false;
+        azo_gestures_backoff_ms = 0;
+    } else if (azo_gestures_backoff_ms >= AZO_GESTURES_RETRY_MAX_MS) {
+        azo_gestures_pending    = false; // given up; the next start writes it
+        azo_gestures_backoff_ms = 0;
+    } else {
+        // Still pending: tried again after the wait.
+        azo_gestures_backoff_ms = azo_gestures_backoff_ms ? 2u * azo_gestures_backoff_ms : AZO_GESTURES_RETRY_MS;
+        azo_gestures_retry_at   = timer_read32() + azo_gestures_backoff_ms;
+    }
+    dprintf("IQS5XX: tap setting %02X %s\n", sval_pad_gestures(), status == I2C_STATUS_SUCCESS ? "written" : azo_gestures_pending ? "FAILED, tried again later" : "FAILED");
 }
 
 // ------------------------------------------------------------------------

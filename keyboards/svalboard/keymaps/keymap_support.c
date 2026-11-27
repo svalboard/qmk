@@ -25,7 +25,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pointing_motion.h"
 #include "velocity_scroll.h"
 #include "pad_scroll.h"
+#include "axis_lock.h"
 #include "scroll_speed.h"
+#include "trns_mod_tap.h"
+#include "automouse_decay.h"
 #ifdef SVAL_SCROLL_TEST
 #    include "scroll_test.h"
 #endif
@@ -75,7 +78,7 @@ bool mouse_mode_enabled = false;
 // Automouse threshold accumulator (normalized to 800 DPI, fixed point: AUTOMOUSE_FP_SCALE units per count)
 #define AUTOMOUSE_FP_SCALE 16
 static int32_t automouse_accumulator = 0;
-static uint16_t automouse_accumulator_timer = 0;
+static uint32_t automouse_accumulator_timer = 0; // timer_read32(): a 16-bit time wraps every 65.5 s
 
 // A hand's motion in Scroll Mode, on a Scroll key or as Drag Scroll, as wheel
 // counts: millimeters, then the fixed base rate, then the hand's Scroll speed
@@ -101,7 +104,9 @@ bool process_detected_host_os_kb(os_variant_t os) {
     return true;
 }
 
-axis_scale_t sniper_x = {1, 1, 0};
+// Sniper's scales, one set per hand (0 left, 1 right): a hand's leftover
+// fraction stays with that hand.
+static axis_scale_set_t sniper[2] = {AXIS_SCALE_SET_INIT, AXIS_SCALE_SET_INIT};
 
 // A pad's two-finger scroll (the chip's pixels in h and v) as wheel counts.
 static sval_pad_scroll_t pad_scroll_state[2];
@@ -132,9 +137,6 @@ static void pad_scroll_scale(report_mouse_t *left, report_mouse_t *right) {
         r->v = v;
     }
 }
-axis_scale_t sniper_y = {1, 1, 0};
-axis_scale_t sniper_h = {1, 1, 0};
-axis_scale_t sniper_v = {1, 1, 0};
 
 uint16_t scroll_timer = 0;
 int16_t scroll_accumulator_h = 0;
@@ -202,100 +204,15 @@ static bool hand_scrolling(uint8_t hand) {
 }
 
 
-#define AXIS_LOCK_BREAKAWAY_THRESHOLD 18750
-#define AXIS_LOCK_ENGAGE_THRESHOLD 6250
-#define AXIS_LOCK_TIMEOUT_MS 500
-
-#define AXIS_DOMINANCE_NUMERATOR 3
-#define AXIS_DOMINANCE_DENOMINATOR 2
-
-
-static enum scroll_mode {
-    SV_AXIS_FREE,
-    SV_AXIS_LOCKED_V,
-    SV_AXIS_LOCKED_H
-} axis_scroll_mode = SV_AXIS_FREE;
-static int32_t axis_lock_accum_h = 0;
-static int32_t axis_lock_accum_v = 0;
-static uint16_t axis_lock_timer = 0;
-
-
-void update_axis_scroll_mode(int32_t h, int32_t v) {
-    if (h != 0 || v != 0) {
-        axis_lock_timer = timer_read();
-    } else {
-        if (timer_elapsed(axis_lock_timer) > AXIS_LOCK_TIMEOUT_MS) {
-            if (axis_scroll_mode != SV_AXIS_FREE) {
-                axis_scroll_mode = SV_AXIS_FREE;
-                axis_lock_accum_h = 0;
-                axis_lock_accum_v = 0;
-		scroll_accumulator_h = 0;
-                scroll_accumulator_v = 0;
-		m_scroll_accumulator_h = 0;
-		m_scroll_accumulator_v = 0;
-            }
-        }
-        return;
-    }
-
-    switch (axis_scroll_mode) {
-        case SV_AXIS_FREE:
-            axis_lock_accum_h += h;
-            axis_lock_accum_v += v;
-
-            if (abs(axis_lock_accum_v) * AXIS_DOMINANCE_NUMERATOR >= abs(axis_lock_accum_h) * AXIS_DOMINANCE_DENOMINATOR) {
-	        axis_scroll_mode = SV_AXIS_LOCKED_V;
-                axis_lock_accum_h = 0;
-            } else if (abs(axis_lock_accum_h) >= AXIS_LOCK_ENGAGE_THRESHOLD) {
-                axis_scroll_mode = SV_AXIS_LOCKED_H;
-                axis_lock_accum_v = 0;
-            }
-            break;
-
-        case SV_AXIS_LOCKED_V:
-            if ((int32_t)abs(v) * AXIS_DOMINANCE_NUMERATOR >= (int32_t)abs(h) * AXIS_DOMINANCE_DENOMINATOR) {
-                axis_lock_accum_h = 0;
-            }
-
-	    axis_lock_accum_h += h;
-
-            if (abs(axis_lock_accum_h) >= AXIS_LOCK_BREAKAWAY_THRESHOLD) {
-	        axis_scroll_mode     = SV_AXIS_LOCKED_H;
-                axis_lock_accum_v    = 0;
-                scroll_accumulator_h = 0;
-                scroll_accumulator_v = 0;
-		m_scroll_accumulator_h = 0;
-		m_scroll_accumulator_v = 0;
-            }
-        break;
-
-        case SV_AXIS_LOCKED_H:
-            if ((int32_t)abs(h) * AXIS_DOMINANCE_NUMERATOR >= (int32_t)abs(v) * AXIS_DOMINANCE_DENOMINATOR) {
-                axis_lock_accum_v = 0;
-            }
-
-            axis_lock_accum_v += v;
-
-            if (abs(axis_lock_accum_v) >= AXIS_LOCK_BREAKAWAY_THRESHOLD) {
-                axis_scroll_mode     = SV_AXIS_LOCKED_V;
-                axis_lock_accum_h    = 0;
-                scroll_accumulator_h = 0;
-                scroll_accumulator_v = 0;
-		m_scroll_accumulator_h = 0;
-		m_scroll_accumulator_v = 0;
-            }
-            break;
-    }
-}
+// Axis Scroll Lock for the trackball hands' scroll (axis_lock.c).
+static sval_axis_lock_t axis_lock_state;
 
 static uint16_t sniper_div_now = 1, boost_mult_now = 1; // the factors in force
 
 void update_sniper_divisor(void) {
     uint8_t div = axis_factor(sniper_hold_2 + sniper_toggle_2, sniper_hold_3 + sniper_toggle_3, sniper_hold_5 + sniper_toggle_5);
-    set_div_axis(&sniper_x, div);
-    set_div_axis(&sniper_y, div);
-    set_div_axis(&sniper_h, div);
-    set_div_axis(&sniper_v, div);
+    set_div_axes(&sniper[0], div);
+    set_div_axes(&sniper[1], div);
     sniper_div_now = div;
 }
 
@@ -322,8 +239,9 @@ static void sval_ptp_automouse(void) {
     int32_t movement = ((left > right ? left : right) * SVAL_PTP_AUTOMOUSE_DPI) / SVAL_PTP_COUNTS_PER_INCH;
     if (movement <= 0 || automouse_layer_blocked()) return;
     uint16_t decay_ms = global_saved_values.automouse_decay * 10;
-    if (decay_ms > 0 && timer_elapsed(automouse_accumulator_timer) > decay_ms) automouse_accumulator = 0;
-    automouse_accumulator_timer = timer_read();
+    uint32_t now      = timer_read32();
+    if (sval_automouse_decayed(now, automouse_accumulator_timer, decay_ms)) automouse_accumulator = 0;
+    automouse_accumulator_timer = now;
     automouse_accumulator += movement;
     if (global_saved_values.automouse_threshold == 0 || automouse_accumulator >= global_saved_values.automouse_threshold) mouse_mode(true);
 }
@@ -460,17 +378,17 @@ static void pad_drive(report_mouse_t *left, report_mouse_t *right) {
 
 #endif
 
-// One hand's x and y become its scroll h and v. mm_h and mm_v get the counts
-// over the hand's DPI, x 100000 (the unit the axis lock thresholds are in).
+// One hand's x and y become its scroll, added to the h and v the report
+// already has (a pad's two-finger scroll, from pad_scroll_scale). mm_h and
+// mm_v get the counts over the hand's DPI, x 100000 (the unit the axis lock
+// thresholds are in).
 static void hand_scroll_convert(uint8_t hand, report_mouse_t *r, int32_t *mm_h, int32_t *mm_v) {
     const uint8_t  kind = sval_hand_scroll_kind(hand);
     const uint16_t dpi  = (uint16_t)(hand ? get_right_dpi() : get_left_dpi());
     const uint16_t dx   = sval_scroll_motion_dpi(kind, dpi, false);
     const uint16_t dy   = sval_scroll_motion_dpi(kind, dpi, true);
     int16_t        h, v;
-    *mm_h = ((int32_t)r->x * 100000) / dx;
-    *mm_v = ((int32_t)-r->y * 100000) / dy;
-    sval_ball_scroll(&ball_scroll_state[hand], r->x, -r->y, dx, dy, sval_scroll_speed(hand), is_mac, &h, &v);
+    sval_hand_scroll(&ball_scroll_state[hand], r->x, -(int32_t)r->y, r->h, r->v, dx, dy, sval_scroll_speed(hand), is_mac, &h, &v, mm_h, mm_v);
     r->h = h;
     r->v = v;
     r->x = 0;
@@ -489,15 +407,15 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     pad_scroll_scale(&reportMouse1, &reportMouse2);
 
     if (any_sniper_active()) {
-        reportMouse1.x = add_to_axis(&sniper_x, reportMouse1.x);
-        reportMouse1.y = add_to_axis(&sniper_y, reportMouse1.y);
-        reportMouse1.h = add_to_axis(&sniper_h, reportMouse1.h);
-        reportMouse1.v = add_to_axis(&sniper_v, reportMouse1.v);
+        reportMouse1.x = add_to_axis(&sniper[0].x, reportMouse1.x);
+        reportMouse1.y = add_to_axis(&sniper[0].y, reportMouse1.y);
+        reportMouse1.h = add_to_axis(&sniper[0].h, reportMouse1.h);
+        reportMouse1.v = add_to_axis(&sniper[0].v, reportMouse1.v);
 
-        reportMouse2.x = add_to_axis(&sniper_x, reportMouse2.x);
-        reportMouse2.y = add_to_axis(&sniper_y, reportMouse2.y);
-        reportMouse2.h = add_to_axis(&sniper_h, reportMouse2.h);
-        reportMouse2.v = add_to_axis(&sniper_v, reportMouse2.v);
+        reportMouse2.x = add_to_axis(&sniper[1].x, reportMouse2.x);
+        reportMouse2.y = add_to_axis(&sniper[1].y, reportMouse2.y);
+        reportMouse2.h = add_to_axis(&sniper[1].h, reportMouse2.h);
+        reportMouse2.v = add_to_axis(&sniper[1].v, reportMouse2.v);
     }
 
     // Pointer accel: mirror of sniper, multiplier instead of divisor.
@@ -545,10 +463,11 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
     // On a layer where Auto Mouse is off, motion neither turns the layer on nor counts toward it.
     if ((left_movement > 0 || right_movement > 0) && !automouse_layer_blocked()) {
         uint16_t decay_ms = global_saved_values.automouse_decay * 10;
-        if (decay_ms > 0 && timer_elapsed(automouse_accumulator_timer) > decay_ms) {
+        uint32_t now = timer_read32();
+        if (sval_automouse_decayed(now, automouse_accumulator_timer, decay_ms)) {
             automouse_accumulator = 0;
         }
-        automouse_accumulator_timer = timer_read();
+        automouse_accumulator_timer = now;
         automouse_accumulator += normalized_movement;
 
         if (global_saved_values.automouse_threshold == 0 ||
@@ -584,8 +503,12 @@ report_mouse_t pointing_device_task_combined_user(report_mouse_t reportMouse1, r
 
     if (scroll_timer_running && timer_elapsed(scroll_timer) >= SCROLL_FREQUENCY_MS) {
         if (global_saved_values.axis_scroll_lock && !is_mac) {
-	    update_axis_scroll_mode(m_scroll_accumulator_h, m_scroll_accumulator_v);
-            if (axis_scroll_mode == SV_AXIS_LOCKED_V) {
+            if (sval_axis_lock_step(&axis_lock_state, timer_read32(), m_scroll_accumulator_h, m_scroll_accumulator_v)) {
+                // The lock moved to the other axis: what is held was the old one's.
+                scroll_accumulator_h = 0;
+                scroll_accumulator_v = 0;
+            }
+            if (axis_lock_state.mode == SVAL_AXIS_LOCKED_V) {
                 reportMouse1.v = scroll_accumulator_v;
                 reportMouse1.h = 0;
             } else {
@@ -623,7 +546,7 @@ void sval_pointing_modes(sval_pointing_modes_t *m) {
     if (axis_lock) m->global_bits |= SVAL_MOTION_AXIS_LOCK;
     if (global_saved_values.natural_scroll) m->global_bits |= SVAL_MOTION_NATURAL_SCROLL;
     if (scroll_hold || scroll_toggle) m->global_bits |= SVAL_MOTION_SCROLL_KEY;
-    m->axis_state      = axis_lock ? (uint8_t)axis_scroll_mode : 0; // FREE 0, LOCKED_V 1, LOCKED_H 2
+    m->axis_state      = axis_lock ? sval_axis_lock_mode(&axis_lock_state, timer_read32()) : 0; // FREE 0, LOCKED_V 1, LOCKED_H 2
     m->left_scroll     = hand_scrolling(0);
     m->right_scroll    = hand_scrolling(1);
     // The factors in force, so a host shows the real one (0x2D bytes 53-55).
@@ -679,34 +602,37 @@ void check_layer_67(void) {
     }
 }
 
-bool in_mod_tap = false;
-int8_t in_mod_tap_layer = -1;
 int8_t mouse_keys_pressed = 0;
+
+// A combo has no key position (QMK gives it row 0, col 0), so it is a
+// mouse-layer key when its keycode is anywhere on the mouse layer.
+static bool keycode_on_mouse_layer(uint16_t keycode) {
+    for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
+        for (uint8_t col = 0; col < MATRIX_COLS; col++) {
+            if (keymap_key_to_keycode(MH_AUTO_BUTTONS_LAYER, (keypos_t){.col = col, .row = row}) == keycode) return true;
+        }
+    }
+    return false;
+}
+
 bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
 
     // Abort additional processing if userspace code did
     if (!process_record_user(keycode, record)) { return false;}
 
-    // We are in a mod tap, with a KC_TRANSPARENT, lets make it transparent...
-    if (IS_QK_MOD_TAP(keycode) && ((keycode & 0xFF) == KC_TRANSPARENT) &&
-        record->tap.count > 0 && !in_mod_tap &&
-        in_mod_tap_layer == -1 && record->event.pressed) {
-
-        in_mod_tap_layer = get_highest_layer(layer_state);
-        layer_state = layer_state & ~(1 << in_mod_tap_layer);
-
-        in_mod_tap = true;
-
+    // A mod-tap with KC_TRANSPARENT as its tap taps the key under it (trns_mod_tap.c).
+    int8_t trns_layer = sval_trns_mod_tap_layer(keycode, record);
+    if (trns_layer >= 0) {
+        // Like any key off the mouse layer (below), the tap ends mouse mode;
+        // first, so the layer it turns off below stays off for the press.
+        if (mouse_mode_enabled && (layer_state & (1 << MH_AUTO_BUTTONS_LAYER)) && trns_layer != MH_AUTO_BUTTONS_LAYER) {
+            mouse_mode(false);
+        }
+        sval_trns_mod_tap_begin((uint8_t)trns_layer, record->event.key);
         return true;
     }
-
     // Fix things up on the release for the mod_tap case.
-    if (!record->event.pressed && in_mod_tap) {
-        in_mod_tap = false;
-        layer_state = layer_state | (1 << in_mod_tap_layer);
-        in_mod_tap_layer = -1;
-        return true;
-    }
+    if (sval_trns_mod_tap_end(record)) return true;
 
     // Each key event on the debug console, only while debug is on (key_log.h).
     sval_key_log(keycode, record);
@@ -742,17 +668,18 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
                         keycode == SV_VELOCITY_SCROLL || \
                         keycode == SV_VELOCITY_SCROLL_TOGGLE)
 
-        uint16_t layer_keycode = keymap_key_to_keycode(MH_AUTO_BUTTONS_LAYER, record->event.key);
+        bool mouse_layer_key = IS_COMBOEVENT(record->event) ? keycode_on_mouse_layer(keycode) : keymap_key_to_keycode(MH_AUTO_BUTTONS_LAYER, record->event.key) == keycode;
         if (MOUSE_PASSTHROUGH_KEYCODE) {
             // Fall through to switch statement without touching mouse mode state
-        } else if (BAD_KEYCODE_CONDITONAL ||
-	    layer_keycode != keycode) {
-            dprint("process_record - mh_auto_buttons: off\n");
+        } else if (BAD_KEYCODE_CONDITONAL || !mouse_layer_key) {
+            // Only a press ends mouse mode: the release of a key held from
+            // before the mouse layer came on leaves it on.
+            if (record->event.pressed) {
+                dprint("process_record - mh_auto_buttons: off\n");
+                mouse_mode(false);
+            }
             if (BAD_KEYCODE_CONDITONAL) {
-                mouse_mode(false);
 	        return false;
-            } else {
-                mouse_mode(false);
             }
         } else {
             if (record->event.pressed) {
@@ -967,6 +894,13 @@ void ps2_mouse_moved_user(report_mouse_t *mouse_report) {
 #endif
 
 void matrix_scan_kb(void) {
+    // A key took the mouse layer away while mouse mode was on (a TO() key on
+    // it): mouse mode ends, and the keys it counted as held are let go, or the
+    // layer would never time out again. A transparent mod-tap on the mouse
+    // layer lifts it only until the mod-tap is released.
+    if (mouse_mode_enabled && !(layer_state & ((layer_state_t)1 << MH_AUTO_BUTTONS_LAYER)) && sval_trns_mod_tap_lifted_layer() != MH_AUTO_BUTTONS_LAYER) {
+        mouse_mode(false);
+    }
     const int32_t mh_timeout = sval_automouse_timeout(global_saved_values.mh_timer_index, global_saved_values.automouse_10ms);
     if ((mh_timeout >= 0) && mouse_mode_enabled && ((int32_t)timer_elapsed(mh_auto_buttons_timer) > mh_timeout) && mouse_keys_pressed == 0 && !velocity_scroll_active()) {
         if (!tp_buttons) {

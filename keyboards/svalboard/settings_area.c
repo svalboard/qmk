@@ -148,47 +148,50 @@ static bool same(uint16_t off, const uint8_t *data, uint16_t len) {
     return true;
 }
 
+// Write a slot: mark it as being written, fill it, then give it its sequence
+// number. A cut before that last byte leaves the slot invalid.
+static void slot_write(uint16_t off, uint16_t id, uint8_t seq, const uint8_t *data, uint16_t len) {
+    const uint8_t zero = 0;
+    st->write(off, &zero, 1);
+    uint8_t head[3] = {seq, (uint8_t)len, (uint8_t)(len >> 8)};
+    st->write(off + 1, head + 1, 2);
+    st->write(off + 3, data, len);
+    uint8_t crc = crc8_step(crc8_step(0, (uint8_t)id), (uint8_t)(id >> 8));
+    for (uint8_t k = 0; k < 3; k++) crc = crc8_step(crc, head[k]);
+    for (uint16_t k = 0; k < len; k++) crc = crc8_step(crc, data[k]);
+    st->write(off + 3 + len, &crc, 1);
+    st->write(off, &seq, 1);
+}
+
 bool settings_area_put(uint16_t id, const void *buf, uint16_t len) {
     if (!st || id == 0 || id == SVAL_SETTINGS_RETIRED_ID) return false;
     if (!settings_area_valid()) settings_area_format();
     const uint8_t *data = buf;
     uint16_t       cap = 0, end;
     uint16_t       e = find(id, &cap, &end);
-    if (e && cap < len) { // too small for this firmware's value: retire it, start a new entry
-        wr16(e, SVAL_SETTINGS_RETIRED_ID);
-        e = 0;
-    }
-    if (!e) {
+    if (!e || cap < len) {
+        // No entry, or one too small for this firmware's value: add a new entry
+        // with the value already in it, and only then retire the old one. Until
+        // the new id is written the list still ends here and the old entry is
+        // the current one; after it, find() returns the new (last) entry.
         uint16_t want = settings_area_capacity(id);
         if (want < len) want = len;
         uint32_t need = (uint32_t)end + SVAL_SETTINGS_ENTRY_BYTES((uint32_t)want) + 2;
         if (need > st->size) return false;
-        // Everything but the id first: until the id is written, the list still ends here.
         wr16(end + 2, want);
+        slot_write(end + SVAL_SETTINGS_ENTRY_HEAD_BYTES, id, 1, data, len);
         const uint8_t zero = 0;
-        st->write(end + SVAL_SETTINGS_ENTRY_HEAD_BYTES, &zero, 1);
         st->write(end + SVAL_SETTINGS_ENTRY_HEAD_BYTES + SVAL_SETTINGS_SLOT_HEAD_BYTES + want, &zero, 1);
         wr16(end + SVAL_SETTINGS_ENTRY_BYTES(want), 0);
         wr16(end, id);
-        e   = end;
-        cap = want;
+        if (e) wr16(e, SVAL_SETTINGS_RETIRED_ID);
+        return true;
     }
     slot_t s[2] = {slot_read(e, id, cap, 0), slot_read(e, id, cap, 1)};
     int8_t c    = slot_current(s);
     if (c >= 0 && s[c].len == len && same(s[c].off + 3, data, len)) return true;
     uint8_t t   = c < 0 ? 0 : (uint8_t)(1 - c);
     uint8_t seq = c < 0 ? 1 : seq_next(s[c].seq);
-    // Mark the slot as being written, fill it, then give it its sequence
-    // number: a cut before that last byte leaves the slot invalid.
-    const uint8_t zero = 0;
-    st->write(s[t].off, &zero, 1);
-    uint8_t head[3] = {seq, (uint8_t)len, (uint8_t)(len >> 8)};
-    st->write(s[t].off + 1, head + 1, 2);
-    st->write(s[t].off + 3, data, len);
-    uint8_t crc = crc8_step(crc8_step(0, (uint8_t)id), (uint8_t)(id >> 8));
-    for (uint8_t k = 0; k < 3; k++) crc = crc8_step(crc, head[k]);
-    for (uint16_t k = 0; k < len; k++) crc = crc8_step(crc, data[k]);
-    st->write(s[t].off + 3 + len, &crc, 1);
-    st->write(s[t].off, &seq, 1);
+    slot_write(s[t].off, id, seq, data, len);
     return true;
 }

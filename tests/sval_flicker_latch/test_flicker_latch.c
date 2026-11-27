@@ -19,6 +19,8 @@ static int checks, failures;
 static bool    left = true, connected = true;
 static uint8_t other_reply[SVAL_FLICKER_RPC_REPLY];
 static int     rpcs;
+int            sval_test_lock_depth, sval_test_locks; // stub/atomic_util.h
+static int     rpcs_while_locked;
 bool           is_keyboard_master(void) {
     return true;
 }
@@ -33,6 +35,7 @@ bool transaction_rpc_exec(int id, uint8_t in_len, const void *in, uint8_t out_le
     (void)in_len;
     (void)in;
     rpcs++;
+    if (sval_test_lock_depth) rpcs_while_locked++;
     memcpy(out, other_reply, out_len < sizeof(other_reply) ? out_len : sizeof(other_reply));
     return true;
 }
@@ -135,6 +138,27 @@ static void test_short_and_bad(void) {
     CHECK(buf[1] == 1);
 }
 
+// On the half without USB a read comes in the split link's slave thread and
+// can preempt a scan: the scan's update and the read's copy-and-clear each run
+// under the kernel lock, and the lock is never held across a split transaction.
+static void test_scan_and_reads_hold_the_lock(void) {
+    int locks = sval_test_locks;
+    frame(0, 0);
+    CHECK(sval_test_locks == locks + 1 && sval_test_lock_depth == 0);
+    uint8_t in[2] = {SVAL_FLICKER_RPC_OP, SVAL_FLICKER_READ}, out[SVAL_FLICKER_RPC_REPLY];
+    locks         = sval_test_locks;
+    CHECK(sval_flicker_split_rpc(sizeof(in), in, sizeof(out), out));
+    CHECK(sval_test_locks == locks + 1 && sval_test_lock_depth == 0);
+    in[1] = SVAL_FLICKER_COUNTS;
+    locks = sval_test_locks;
+    CHECK(sval_flicker_split_rpc(sizeof(in), in, sizeof(out), out));
+    CHECK(sval_test_locks == locks + 1 && sval_test_lock_depth == 0);
+    rpcs_while_locked = 0;
+    read_latch();
+    read_counts(1);
+    CHECK(rpcs_while_locked == 0 && sval_test_lock_depth == 0);
+}
+
 int main(void) {
     test_one_scan_bounce();
     test_held_key_and_counts_saturate();
@@ -142,6 +166,7 @@ int main(void) {
     test_right_half_with_usb();
     test_split_rpc_side();
     test_short_and_bad();
+    test_scan_and_reads_hold_the_lock();
     printf("flicker latch: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
