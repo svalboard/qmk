@@ -134,10 +134,21 @@ void sval_touch_sample(const uint8_t *raw, bool valid) {
         }
     }
     if (!page) return;
-    const uint16_t x = (uint16_t)raw[10] << 8 | raw[11], y = (uint16_t)raw[12] << 8 | raw[13];
+    // The first finger: the first slot with a touch strength. A contact keeps
+    // its slot until it lifts, so when the finger in slot 0 lifts, a later one
+    // can be the only finger down (the fingers page reads slots the same way).
+    const uint8_t *f = raw + 10;
+    for (uint8_t i = 0; raw[5] && i < SVAL_FINGERS_MAX; i++) {
+        const uint8_t *p = raw + 10 + 7 * i;
+        if (p[4] || p[5]) {
+            f = p;
+            break;
+        }
+    }
+    const uint16_t x = (uint16_t)f[0] << 8 | f[1], y = (uint16_t)f[2] << 8 | f[3];
     sval_pad_touch_sample(&local, &cfg, valid, raw[5], raw[1], raw[2], x, y, now);
     // The first finger's strength and area come in the same read: no I2C of its own.
-    if (valid && raw[5] <= 5) sval_pad_touch_size(&local, raw[5], (uint16_t)raw[14] << 8 | raw[15], raw[16]);
+    if (valid && raw[5] <= 5) sval_pad_touch_size(&local, raw[5], (uint16_t)f[4] << 8 | f[5], f[6]);
     if (!master) {
         uint8_t blk[SVAL_TOUCH_BLOCK_BYTES], size[SVAL_TOUCH_SIZE_BYTES];
         sval_pad_touch_pack(&local, &cfg, now, blk);

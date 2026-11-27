@@ -14,6 +14,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'keyboards/svalboard/keymaps/keymap_support.c'
+TRNS_MOD_TAP = ROOT / 'keyboards/svalboard/trns_mod_tap.c'
 HEADER = ROOT / 'keyboards/svalboard/keymaps/keymap_support.h'
 
 
@@ -31,11 +32,12 @@ def function(source, name):
 def production():
     source = SOURCE.read_text()
     # The key handling: its state, then process_record_kb (the end of its body).
-    start = source.index('bool in_mod_tap = false;')
+    start = source.index('int8_t mouse_keys_pressed = 0;')
     record = function(source, 'process_record_kb')
     end = source.index(record) + len(record)
     keycodes = re.search(r'^enum my_keycodes \{.*?^\};', HEADER.read_text(), re.S | re.M).group()
-    return keycodes, source[start:end] + '\n' + function(source, 'matrix_scan_kb') + '\n' + function(source, 'mouse_mode') + '\n'
+    trns = TRNS_MOD_TAP.read_text().replace('#include "trns_mod_tap.h"', '')
+    return keycodes, trns + '\n' + source[start:end] + '\n' + function(source, 'matrix_scan_kb') + '\n' + function(source, 'mouse_mode') + '\n'
 
 
 PRELUDE = r'''
@@ -73,6 +75,12 @@ static void layer_on(uint8_t l) { layer_state |= (layer_state_t)1 << l; }
 static void layer_off(uint8_t l) { layer_state &= ~((layer_state_t)1 << l); }
 static void layer_move(uint8_t l) { layer_state = (layer_state_t)1 << l; }
 static uint16_t keymap_key_to_keycode(uint8_t layer, keypos_t key) { return keymap[layer][key.row][key.col]; }
+/* The highest layer on where the key is not KC_TRNS, as QMK's. */
+static uint8_t layer_switch_get_layer(keypos_t key) {
+    for (int l = 15; l > 0; l--)
+        if ((layer_state >> l & 1) && keymap[l][key.row][key.col] != KC_TRNS) return l;
+    return 0;
+}
 static uint16_t now;
 static uint16_t timer_read(void) { return now; }
 static uint16_t timer_elapsed(uint16_t t) { return (uint16_t)(now - t); }
