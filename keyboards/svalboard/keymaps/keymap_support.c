@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "pad_scroll.h"
 #include "axis_lock.h"
 #include "scroll_speed.h"
+#include "trns_mod_tap.h"
 #ifdef SVAL_SCROLL_TEST
 #    include "scroll_test.h"
 #endif
@@ -601,34 +602,25 @@ void check_layer_67(void) {
     }
 }
 
-bool in_mod_tap = false;
-int8_t in_mod_tap_layer = -1;
 int8_t mouse_keys_pressed = 0;
 bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
 
     // Abort additional processing if userspace code did
     if (!process_record_user(keycode, record)) { return false;}
 
-    // We are in a mod tap, with a KC_TRANSPARENT, lets make it transparent...
-    if (IS_QK_MOD_TAP(keycode) && ((keycode & 0xFF) == KC_TRANSPARENT) &&
-        record->tap.count > 0 && !in_mod_tap &&
-        in_mod_tap_layer == -1 && record->event.pressed) {
-
-        in_mod_tap_layer = get_highest_layer(layer_state);
-        layer_state = layer_state & ~(1 << in_mod_tap_layer);
-
-        in_mod_tap = true;
-
+    // A mod-tap with KC_TRANSPARENT as its tap taps the key under it (trns_mod_tap.c).
+    int8_t trns_layer = sval_trns_mod_tap_layer(keycode, record);
+    if (trns_layer >= 0) {
+        // Like any key off the mouse layer (below), the tap ends mouse mode;
+        // first, so the layer it turns off below stays off for the press.
+        if (mouse_mode_enabled && (layer_state & (1 << MH_AUTO_BUTTONS_LAYER)) && trns_layer != MH_AUTO_BUTTONS_LAYER) {
+            mouse_mode(false);
+        }
+        sval_trns_mod_tap_begin((uint8_t)trns_layer);
         return true;
     }
-
     // Fix things up on the release for the mod_tap case.
-    if (!record->event.pressed && in_mod_tap) {
-        in_mod_tap = false;
-        layer_state = layer_state | (1 << in_mod_tap_layer);
-        in_mod_tap_layer = -1;
-        return true;
-    }
+    if (sval_trns_mod_tap_end(record)) return true;
 
     // Each key event on the debug console, only while debug is on (key_log.h).
     sval_key_log(keycode, record);
