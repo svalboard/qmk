@@ -681,7 +681,20 @@ void check_layer_67(void) {
 
 bool in_mod_tap = false;
 int8_t in_mod_tap_layer = -1;
+static keypos_t in_mod_tap_key; // the transparent mod-tap's key, while in_mod_tap
 int8_t mouse_keys_pressed = 0;
+
+// A combo has no key position (QMK gives it row 0, col 0), so it is a
+// mouse-layer key when its keycode is anywhere on the mouse layer.
+static bool keycode_on_mouse_layer(uint16_t keycode) {
+    for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
+        for (uint8_t col = 0; col < MATRIX_COLS; col++) {
+            if (keymap_key_to_keycode(MH_AUTO_BUTTONS_LAYER, (keypos_t){.col = col, .row = row}) == keycode) return true;
+        }
+    }
+    return false;
+}
+
 bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
 
     // Abort additional processing if userspace code did
@@ -696,12 +709,14 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
         layer_state = layer_state & ~(1 << in_mod_tap_layer);
 
         in_mod_tap = true;
+        in_mod_tap_key = record->event.key;
 
         return true;
     }
 
-    // Fix things up on the release for the mod_tap case.
-    if (!record->event.pressed && in_mod_tap) {
+    // Fix things up on the release for the mod_tap case: the mod-tap's own
+    // release, not that of another key let go meanwhile.
+    if (!record->event.pressed && in_mod_tap && !IS_COMBOEVENT(record->event) && KEYEQ(record->event.key, in_mod_tap_key)) {
         in_mod_tap = false;
         layer_state = layer_state | (1 << in_mod_tap_layer);
         in_mod_tap_layer = -1;
@@ -742,17 +757,18 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
                         keycode == SV_VELOCITY_SCROLL || \
                         keycode == SV_VELOCITY_SCROLL_TOGGLE)
 
-        uint16_t layer_keycode = keymap_key_to_keycode(MH_AUTO_BUTTONS_LAYER, record->event.key);
+        bool mouse_layer_key = IS_COMBOEVENT(record->event) ? keycode_on_mouse_layer(keycode) : keymap_key_to_keycode(MH_AUTO_BUTTONS_LAYER, record->event.key) == keycode;
         if (MOUSE_PASSTHROUGH_KEYCODE) {
             // Fall through to switch statement without touching mouse mode state
-        } else if (BAD_KEYCODE_CONDITONAL ||
-	    layer_keycode != keycode) {
-            dprint("process_record - mh_auto_buttons: off\n");
+        } else if (BAD_KEYCODE_CONDITONAL || !mouse_layer_key) {
+            // Only a press ends mouse mode: the release of a key held from
+            // before the mouse layer came on leaves it on.
+            if (record->event.pressed) {
+                dprint("process_record - mh_auto_buttons: off\n");
+                mouse_mode(false);
+            }
             if (BAD_KEYCODE_CONDITONAL) {
-                mouse_mode(false);
 	        return false;
-            } else {
-                mouse_mode(false);
             }
         } else {
             if (record->event.pressed) {
@@ -967,6 +983,13 @@ void ps2_mouse_moved_user(report_mouse_t *mouse_report) {
 #endif
 
 void matrix_scan_kb(void) {
+    // A key took the mouse layer away while mouse mode was on (a TO() key on
+    // it): mouse mode ends, and the keys it counted as held are let go, or the
+    // layer would never time out again. A transparent mod-tap on the mouse
+    // layer lifts it only until the mod-tap is released.
+    if (mouse_mode_enabled && !(layer_state & ((layer_state_t)1 << MH_AUTO_BUTTONS_LAYER)) && !(in_mod_tap && in_mod_tap_layer == MH_AUTO_BUTTONS_LAYER)) {
+        mouse_mode(false);
+    }
     const int32_t mh_timeout = sval_automouse_timeout(global_saved_values.mh_timer_index, global_saved_values.automouse_10ms);
     if ((mh_timeout >= 0) && mouse_mode_enabled && ((int32_t)timer_elapsed(mh_auto_buttons_timer) > mh_timeout) && mouse_keys_pressed == 0 && !velocity_scroll_active()) {
         if (!tp_buttons) {
