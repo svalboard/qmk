@@ -378,6 +378,9 @@ typedef struct {
 static pad_state_t pads[2];
 
 static bool     native, paused, mode3, output, hold, release_pending, dirty, ever_sent, scan_started, busy_streak;
+// The last frame sent is older than SVAL_PTP_CONTACTS_STALE_MS. Latched by
+// the task, so the age on the 32-bit clock never wraps back to fresh.
+static bool sent_old;
 static uint32_t release_at, last_sent, scan_clock, scan_rem, frames_sent, send_busy, busy_since;
 static uint16_t cid_busy, xid_busy, scan, host_silent, merge_waits, pool_full;
 static uint8_t  cid_next, key_buttons, sent_buttons, seen_switches = 3, pad_mask;
@@ -997,15 +1000,23 @@ static void commit(bool release) {
 // strictly increasing from one sent frame to the next. t is the newest pad
 // sample in the frame (a keepalive or a release: the send time), so the host
 // sees the pads' own sample spacing, not the USB half's send jitter.
+// A sample up to SVAL_PTP_SCAN_OLDER_US older than the last stamp is late
+// news and leaves the clock alone. Anything further back is a gap of more
+// than 2^31 us (35.8 min) since the last frame, wrapped negative: count it
+// forward like any other gap.
+#ifndef SVAL_PTP_SCAN_OLDER_US
+#    define SVAL_PTP_SCAN_OLDER_US 1000000
+#endif
 static uint16_t stamp(uint32_t t) {
     if (!scan_started) {
         scan_started = true;
         scan_clock   = t;
     }
     int32_t d = (int32_t)(t - scan_clock);
-    if (d > 0) {
-        uint32_t acc = (uint32_t)d + scan_rem;
-        scan += acc / 100;
+    if (d > 0 || d < -(int32_t)SVAL_PTP_SCAN_OLDER_US) {
+        uint32_t gap = t - scan_clock;
+        uint32_t acc = gap % 100 + scan_rem;
+        scan += gap / 100 + acc / 100;
         scan_rem   = acc % 100;
         scan_clock = t;
     }
@@ -1059,6 +1070,7 @@ static bool send_frame(uint32_t now, bool release) {
     commit(release);
     last_sent = now;
     ever_sent = true;
+    sent_old  = false;
     frames_sent++;
     sent_buttons = r[34];
     PTP_LOCK();
@@ -1106,6 +1118,7 @@ static bool wait_for_other_pad(uint32_t now) {
 
 void sval_ptp_task(void) {
     uint32_t now = ptp_now_us();
+    if (ever_sent && now - last_sent > SVAL_PTP_CONTACTS_STALE_MS * 1000u) sent_old = true;
     if (f_reset) {
         // USB reset or SET_CONFIGURATION: the host starts over in mouse mode.
         PTP_LOCK();
@@ -1396,7 +1409,7 @@ uint8_t sval_ptp_contacts(uint8_t *o, uint8_t length) {
     PTP_LOCK();
     memcpy(r, last_report, sizeof(r));
     PTP_UNLOCK();
-    uint32_t age_ms = ever_sent ? (ptp_now_us() - last_sent) / 1000u : 0;
+    uint32_t age_ms = !ever_sent ? 0 : sent_old ? UINT32_MAX : (ptp_now_us() - last_sent) / 1000u;
     o[0]            = 1;
     o[1]            = (output ? 1 : 0) | (pad_mask & 3) << 1;
     o[2]            = age_ms > 255 ? 255 : (uint8_t)age_ms;
@@ -1502,7 +1515,7 @@ void sval_ptp_test_reset(void) {
     memset(pads, 0, sizeof(pads));
     pad_used[0] = pad_used[1] = 0;
     arrival                   = 0;
-    native = paused = mode3 = output = hold = release_pending = dirty = ever_sent = scan_started = busy_streak = false;
+    native = paused = mode3 = output = hold = release_pending = dirty = ever_sent = scan_started = busy_streak = sent_old = false;
     grabbed          = false;
     grab_holders     = 0;
     handback_pending = false;

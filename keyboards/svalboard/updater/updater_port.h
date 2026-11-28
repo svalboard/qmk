@@ -59,3 +59,12 @@ bool updater_port_is_master(void);
 // commit's watchdog reset, not a power cut.
 void updater_port_commit_mark(bool on);
 bool updater_port_commit_mark_take(void);
+
+// The updater is making progress: called first thing in every updater_task()
+// pass, in every host request (updater_via_command), on every well-formed
+// request from the other half (update_split_slave_rpc, the half without USB),
+// and between sectors of the commit's slot check. The board's session
+// watchdog (kb/session_watchdog.c) runs while updater_active() and is fed
+// here; a session that stops calling this resets the half. Weak and empty in
+// updater.c.
+void updater_port_alive(void);

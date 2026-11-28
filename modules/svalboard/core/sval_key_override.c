@@ -51,7 +51,17 @@ static void sval_deserialize_key_override(uint16_t index, key_override_t *out) {
 
 void sval_reload_key_override(void) {
     for (size_t i = 0; i < SVAL_KEY_OVERRIDE_ENTRIES; ++i) {
-        sval_deserialize_key_override(i, &sval_key_overrides[i]);
+        key_override_t next;
+        sval_deserialize_key_override(i, &next);
+        if (memcmp(&next, &sval_key_overrides[i], sizeof(next)) == 0) continue;
+        // QMK keeps a pointer to the active override and releases its
+        // replacement through it later. Deactivate it while the entries are
+        // still the ones it pressed, before one of them is rewritten.
+        if (key_override_is_enabled()) {
+            key_override_off();
+            key_override_on();
+        }
+        memcpy(&sval_key_overrides[i], &next, sizeof(next));
     }
 }
 

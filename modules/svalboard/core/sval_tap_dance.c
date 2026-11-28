@@ -13,6 +13,13 @@ enum { SINGLE_TAP = 1, SINGLE_HOLD, DOUBLE_TAP, DOUBLE_HOLD, DOUBLE_SINGLE_TAP, 
 
 static uint8_t                dance_state[SVAL_TAP_DANCE_ENTRIES];
 static sval_tap_dance_entry_t td_entry;
+// The keycode each dance's on_dance_finished pressed, for its on_dance_reset.
+static uint16_t held_keycode[SVAL_TAP_DANCE_ENTRIES];
+
+static void dance_down(uint16_t index, uint16_t keycode) {
+    held_keycode[index] = keycode;
+    sval_keycode_down(keycode);
+}
 
 static uint8_t dance_step(tap_dance_state_t *state) {
     if (state->count == 1) {
@@ -47,44 +54,61 @@ static void on_dance(tap_dance_state_t *state, void *user_data) {
     }
 }
 
+static void dance_finished_outputs(uint16_t index);
+
+// sval_keycode_down() runs a keycode above QK_MODS_MAX (MO, sniper, boost,
+// Repeat and the like) through action_exec(), so process_record_quantum()
+// hands it to preprocess_tap_dance() as a key pressed during this dance: QMK
+// clears active_td only after this callback returns. For a dance key already
+// released, that nested call resets the dance at once, so the output's release
+// went out before its press and the press then stayed on. The dance counts as
+// held while its outputs go out, so the nested call leaves the reset to QMK,
+// which then sends the release after the press.
 static void on_dance_finished(tap_dance_state_t *state, void *user_data) {
     uint16_t index = (uintptr_t)user_data;
     if (sval_get_tap_dance(index, &td_entry) != 0) return;
     if (!TD_ENABLED(td_entry)) return;
     dance_state[index] = dance_step(state);
+    bool pressed       = state->pressed;
+    state->pressed     = true;
+    dance_finished_outputs(index);
+    state->pressed = pressed;
+}
+
+static void dance_finished_outputs(uint16_t index) {
     switch (dance_state[index]) {
         case SINGLE_TAP: {
-            if (td_entry.on_tap) sval_keycode_down(td_entry.on_tap);
+            if (td_entry.on_tap) dance_down(index, td_entry.on_tap);
             break;
         }
         case SINGLE_HOLD: {
             if (td_entry.on_hold)
-                sval_keycode_down(td_entry.on_hold);
+                dance_down(index, td_entry.on_hold);
             else if (td_entry.on_tap)
-                sval_keycode_down(td_entry.on_tap);
+                dance_down(index, td_entry.on_tap);
             break;
         }
         case DOUBLE_TAP: {
             if (td_entry.on_double_tap) {
-                sval_keycode_down(td_entry.on_double_tap);
+                dance_down(index, td_entry.on_double_tap);
             } else if (td_entry.on_tap) {
                 sval_keycode_tap(td_entry.on_tap);
-                sval_keycode_down(td_entry.on_tap);
+                dance_down(index, td_entry.on_tap);
             }
             break;
         }
         case DOUBLE_HOLD: {
             if (td_entry.on_tap_hold) {
-                sval_keycode_down(td_entry.on_tap_hold);
+                dance_down(index, td_entry.on_tap_hold);
             } else {
                 if (td_entry.on_tap) {
                     sval_keycode_tap(td_entry.on_tap);
                     if (td_entry.on_hold)
-                        sval_keycode_down(td_entry.on_hold);
+                        dance_down(index, td_entry.on_hold);
                     else
-                        sval_keycode_down(td_entry.on_tap);
+                        dance_down(index, td_entry.on_tap);
                 } else if (td_entry.on_hold) {
-                    sval_keycode_down(td_entry.on_hold);
+                    dance_down(index, td_entry.on_hold);
                 }
             }
             break;
@@ -92,7 +116,7 @@ static void on_dance_finished(tap_dance_state_t *state, void *user_data) {
         case DOUBLE_SINGLE_TAP: {
             if (td_entry.on_tap) {
                 sval_keycode_tap(td_entry.on_tap);
-                sval_keycode_down(td_entry.on_tap);
+                dance_down(index, td_entry.on_tap);
             }
             break;
         }
@@ -101,54 +125,16 @@ static void on_dance_finished(tap_dance_state_t *state, void *user_data) {
 
 static void on_dance_reset(tap_dance_state_t *state, void *user_data) {
     uint16_t index = (uintptr_t)user_data;
-    if (sval_get_tap_dance(index, &td_entry) != 0) return;
-    if (!TD_ENABLED(td_entry)) return;
+    // Release what on_dance_finished pressed, not what the entry says now: the
+    // host may have rewritten or disabled the entry while it was held.
+    uint16_t kc      = held_keycode[index];
+    bool     enabled = sval_get_tap_dance(index, &td_entry) == 0 && TD_ENABLED(td_entry);
+    if (!enabled && !kc) return;
     wait_ms(get_tap_code_delay());
-    uint8_t st         = dance_state[index];
-    state->count       = 0;
-    dance_state[index] = 0;
-    switch (st) {
-        case SINGLE_TAP: {
-            if (td_entry.on_tap) sval_keycode_up(td_entry.on_tap);
-            break;
-        }
-        case SINGLE_HOLD: {
-            if (td_entry.on_hold)
-                sval_keycode_up(td_entry.on_hold);
-            else if (td_entry.on_tap)
-                sval_keycode_up(td_entry.on_tap);
-            break;
-        }
-        case DOUBLE_TAP: {
-            if (td_entry.on_double_tap) {
-                sval_keycode_up(td_entry.on_double_tap);
-            } else if (td_entry.on_tap) {
-                sval_keycode_up(td_entry.on_tap);
-            }
-            break;
-        }
-        case DOUBLE_HOLD: {
-            if (td_entry.on_tap_hold) {
-                sval_keycode_up(td_entry.on_tap_hold);
-            } else {
-                if (td_entry.on_tap) {
-                    if (td_entry.on_hold)
-                        sval_keycode_up(td_entry.on_hold);
-                    else
-                        sval_keycode_up(td_entry.on_tap);
-                } else if (td_entry.on_hold) {
-                    sval_keycode_up(td_entry.on_hold);
-                }
-            }
-            break;
-        }
-        case DOUBLE_SINGLE_TAP: {
-            if (td_entry.on_tap) {
-                sval_keycode_up(td_entry.on_tap);
-            }
-            break;
-        }
-    }
+    state->count        = 0;
+    dance_state[index]  = 0;
+    held_keycode[index] = 0;
+    if (kc) sval_keycode_up(kc);
 }
 
 // Finish a dance on its release when no later tap can change the result, as

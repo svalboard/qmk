@@ -126,6 +126,7 @@ bool pointing_device_driver_init(void) {
     sensor_note_ids(product, inverse);
     if (!ok && sensor == SVAL_SENSOR_NO_RESPONSE) sensor_unstick(); // not a pair: reset it for the next look
     sensor_init_ok = ok;
+    if (!ok) sval_squal_set_down();
     if (ok) {
 #if defined(POINTING_DEVICE_IS_PMW3389)
         sval_squal_set_capable(true);
@@ -227,6 +228,7 @@ static bool sensor_running(void) {
         if (sensor_answers()) return true;
         sensor_init_ok      = false;
         sensor_recover_wait = 0;
+        sval_squal_set_down();
         dprintf("PMW33XX: failed its health check, restarting\n");
     }
     if (!sensor_was_running) {

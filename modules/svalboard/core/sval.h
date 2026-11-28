@@ -101,6 +101,8 @@ enum sval_command_id {
     sval_cmd_flicker_latch   = 0x3D, // advertised by sval_flag3_flicker_latch
     sval_cmd_debug_console   = 0x3E, // advertised by sval_flag4_debug_console
     sval_cmd_status_report   = 0x3F, // advertised by sval_flag5_status_report: the board's status report, as data
+    sval_cmd_app_foreground  = 0x40, // advertised by sval_flag5_app_rules: the app in front on the computer
+    sval_cmd_app_rules       = 0x41, // advertised by sval_flag5_app_rules: the app rules record
     sval_cmd_error           = 0xFF,
 };
 
@@ -155,7 +157,7 @@ enum sval_feature_flags4 {
 
 // Fifth feature byte, GET_INFO byte 22. Older firmware leaves it zero.
 enum sval_feature_flags5 {
-    // Bit 0 is allocated by the app rules branch (sval_flag5_app_rules, 0x40 and 0x41).
+    sval_flag5_app_rules     = (1 << 0), // 0x40 and 0x41: app rules (keyboards/svalboard/docs/protocol.md)
     sval_flag5_status_report = (1 << 1), // 0x3F: the status report SV_OUTPUT_STATUS types, as data
 };
 
@@ -421,6 +423,12 @@ uint8_t sval_get_feature_flags5_kb(void);
 // STATUS_REPORT (0x3F): data after [0xDF] [0x3F], handled in place:
 // [page] [arg] -> [page] [format] [...]. The module's weak default answers format 0.
 void sval_status_report_kb(uint8_t *data, uint8_t length);
+// APP_FOREGROUND (0x40) and APP_RULES (0x41): as TYPING_PAUSE, data after the
+// command byte, handled in place. The module's weak defaults answer status 0xFF.
+void sval_app_foreground_kb(uint8_t *data, uint8_t length);
+void sval_app_rules_kb(uint8_t *data, uint8_t length);
+// sval_layer_lookup_kb(keypos_t key) (sval_context_layer.c): the layer a key's
+// action comes from when the keyboard decides it (app rules), else UINT8_MAX.
 // DEBUG_CONSOLE (0x3E): data is [op] in, [op] [status] [state] out. Weak,
 // answers status 0xFF.
 void sval_debug_console_kb(uint8_t *data, uint8_t length);

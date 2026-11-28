@@ -24,12 +24,15 @@
 #include "sval.h"
 #include "pointing_motion.h" // after sval.h: needs the generated fragment ids
 #include "identity.h"
+#include "automouse_threshold.h"
 #ifdef SVAL_SCROLL_TEST
 #    include "scroll_test.h"
 #endif
 #include "build_reset.h"
+#include "app_rules_kb.h"
 #include "link_light.h"
 #include "status_report.h"
+#include "usb_wake.h"
 #include "nvm_via.h"
 #ifdef SVAL_EITHER_HAND
 #    include "side.h"
@@ -46,6 +49,7 @@
 #ifdef SVAL_UPDATER
 #    include "updater/updater.h"
 #    include "updater/update_split.h"
+#    include "session_watchdog.h"
 #    include "split_pause.h"
 #    include "split_common/transport.h"
 _Static_assert(sizeof(((presence_rsp_t *)0)->update) == UPDATE_PRESENCE_BYTES, "presence reply: update_presence_t");
@@ -340,7 +344,7 @@ static void pointer_unpack(const uint8_t r[SVAL_SET_POINTER_CAP]) {
     global_saved_values.mh_timer_index      = r[3];
     global_saved_values.automouse_10ms      = r[4];
     global_saved_values.automouse_threshold = get16(r + 5);
-    global_saved_values.automouse_decay     = r[7];
+    global_saved_values.automouse_decay     = sval_automouse_decay_setting(r[7]);
 }
 static void scan_pack(uint8_t r[SVAL_SET_SCAN_CAP]) {
     put16(r + 0, global_saved_values.scan_prewait_us);
@@ -485,7 +489,7 @@ void svalboard_saved_values_defaults(void) {
     global_saved_values.left_automouse      = true;
     global_saved_values.right_automouse     = true;
     global_saved_values.automouse_threshold = 15;
-    global_saved_values.automouse_decay     = 7; // 70ms
+    global_saved_values.automouse_decay     = SVAL_AUTOMOUSE_DECAY_DEFAULT; // 70ms
     // Revision B settles more slowly; start it on conservative timing.
     // Revision A starts on the first preset, 90 / 90 us, as it always has.
     global_saved_values.scan_prewait_us     = sval_hw_rev_is_flipfet() ? SVAL_FLIPFET_DEFAULT_PREWAIT_US : sval_turbo_us[0];
@@ -537,6 +541,9 @@ void sval_storage_reset_clear_kb(void) {
 // Runs after the EEPROM driver is up and before anything validates or resets
 // stored settings.
 void keyboard_pre_init_kb(void) {
+#ifdef SVAL_UPDATER
+    session_watchdog_off(); // no hardware watchdog outside an update session
+#endif
     identity_init();
     sval_thumb_hand_probe(); // before ws2812/rgblight and split init use GP19
 #ifdef SVAL_EITHER_HAND
@@ -575,6 +582,7 @@ void read_eeprom_kb(void) {
         }
         pad_gestures_load();
     }
+    sval_app_rules_load(); // after a fresh area is formatted: no rules
     sval_active_layer = 0;
 }
 
@@ -756,10 +764,22 @@ uint8_t sval_get_feature_flags4_kb(void) {
     return flags;
 }
 
-// GET_INFO byte 22 (the fifth feature byte): the status report (0x3F).
-// Bit 0 is the app rules branch's (sval_flag5_app_rules).
+// GET_INFO byte 22 (the fifth feature byte): app rules (0x40, 0x41;
+// app_rules_kb.c) and the status report (0x3F).
 uint8_t sval_get_feature_flags5_kb(void) {
-    return sval_flag5_status_report;
+    return sval_flag5_app_rules | sval_flag5_status_report;
+}
+
+void sval_app_foreground_kb(uint8_t *data, uint8_t length) {
+    sval_app_foreground_command(data, length);
+}
+
+void sval_app_rules_kb(uint8_t *data, uint8_t length) {
+    sval_app_rules_command(data, length);
+}
+
+uint8_t sval_layer_lookup_kb(keypos_t key) {
+    return sval_app_rules_lookup(key);
 }
 
 void sval_pointing_sensor_kb(uint8_t *data, uint8_t length) {
@@ -778,76 +798,7 @@ bool sval_host_recent(void) {
     return host_seen_any && timer_elapsed32(host_last_ms) < SVAL_HOST_ACTIVE_MS;
 }
 
-// ---- RGB idle dimming (master). Light idle divides the brightness, deep idle turns the
-// strip off; the first input restores it. Layer colour changes while dimmed keep using the
-// awake brightness so the dimmed value never reaches EEPROM.
-static uint8_t  rgb_idle_applied  = 0; // 0 awake, 1 dimmed, 2 off
-static uint32_t rgb_last_write_ms = 0;
-
-bool sval_rgb_idle_quiesced(void) {
-    if (!is_keyboard_master()) return true;
-    if (!(global_saved_values.idle_flags & SVAL_IDLE_RGB_DIM)) return true;
-    return rgb_idle_applied == 2 && timer_elapsed32(rgb_last_write_ms) > 5;
-}
-static uint8_t rgb_awake_val     = 0;
-static bool     rgb_woken;
-static uint32_t rgb_woken_at;
-
-// Lights up as an input would, without one: the idle dimming counts from now.
-void sval_rgb_wake(void) {
-    rgb_woken    = true;
-    rgb_woken_at = timer_read32();
-}
-static uint8_t rgb_dim_val       = 0;
-static bool    rgb_awake_enabled = false;
-
-uint8_t sval_rgb_awake_val(void) {
-    return rgb_idle_applied ? rgb_awake_val : rgblight_get_val();
-}
-
-static void sval_rgb_idle_restore(void) {
-    if (!rgb_idle_applied) return;
-    sval_clock_full(); // WS2812 timing needs the clock the driver was set up for
-    if (rgb_awake_enabled && !rgblight_is_enabled()) rgblight_enable_noeeprom();
-    // Only undo our own change; if someone adjusted the brightness while dimmed, keep theirs.
-    if (rgb_idle_applied == 2 || rgblight_get_val() == rgb_dim_val) {
-        rgblight_sethsv_noeeprom(rgblight_get_hue(), rgblight_get_sat(), rgb_awake_val);
-    }
-    rgb_idle_applied = 0;
-}
-
-void sval_rgb_idle_task(void) {
-    if (!(global_saved_values.idle_flags & SVAL_IDLE_RGB_DIM)) {
-        sval_rgb_idle_restore();
-        return;
-    }
-    uint32_t quiet = last_input_activity_elapsed();
-    if (rgb_woken && timer_elapsed32(rgb_woken_at) < quiet) quiet = timer_elapsed32(rgb_woken_at); // sval_rgb_wake()
-    uint8_t  want  = 0;
-    if (global_saved_values.scan_deep_after_s && quiet > (uint32_t)global_saved_values.scan_deep_after_s * 1000u) {
-        want = 2;
-    } else if (global_saved_values.scan_idle_after_ms && quiet > global_saved_values.scan_idle_after_ms) {
-        want = 1;
-    }
-    if (want == rgb_idle_applied) return;
-    if (want == 0) {
-        sval_rgb_idle_restore();
-        return;
-    }
-    if (rgb_idle_applied == 0) {
-        rgb_awake_val     = rgblight_get_val();
-        rgb_awake_enabled = rgblight_is_enabled();
-    }
-    if (want == 1) {
-        rgb_dim_val = rgb_awake_val / SVAL_IDLE_RGB_LIGHT_DIV;
-        if (rgb_awake_val && rgb_dim_val < 2) rgb_dim_val = 2;
-        rgblight_sethsv_noeeprom(rgblight_get_hue(), rgblight_get_sat(), rgb_dim_val);
-    } else {
-        rgblight_disable_noeeprom();
-    }
-    rgb_last_write_ms = timer_read32();
-    rgb_idle_applied  = want;
-}
+// RGB idle dimming and the host-sleep blackout: rgb_idle.c.
 
 __attribute__((weak)) void sval_pointer_rest_apply(void) {}
 __attribute__((weak)) void sval_pointer_status(sval_idle_status_t *st) {
@@ -891,7 +842,7 @@ void sval_idle_status(sval_idle_status_t *st) {
     sval_pointer_status(st);
     st->rgb_val_now   = rgblight_get_val();
     st->rgb_val_awake = sval_rgb_awake_val();
-    st->rgb_stage     = rgb_idle_applied;
+    st->rgb_stage     = sval_rgb_idle_stage();
     st->rgb_enabled   = rgblight_is_enabled();
 }
 
@@ -905,7 +856,7 @@ void sval_set_active_layer(uint32_t layer, bool save) {
     if (!is_rgblight_initialized) return;
     struct layer_hsv cols  = global_saved_values.layer_colors[layer];
     uint8_t          awake = sval_rgb_awake_val();
-    uint8_t          shown = rgb_idle_applied == 1 ? rgb_dim_val : awake;
+    uint8_t          shown = sval_rgb_shown_val();
     if (save) {
         rgblight_sethsv(cols.hue, cols.sat, awake); // store with the awake brightness
         if (shown != awake) rgblight_sethsv_noeeprom(cols.hue, cols.sat, shown);
@@ -925,6 +876,10 @@ void sval_set_active_layer(uint32_t layer, bool save) {
 static uint8_t       rgb_resyncs;                     // the half with USB: pings left that resend everything
 static uint8_t       rgb_redraws = SVAL_RGB_SYNC_PINGS; // the other half: pings left that redraw (from boot)
 static volatile bool rgb_redraw_due;
+// The other half: the idle flags changed in a ping, so the trackball's rest mode is applied
+// from housekeeping. The link's handler runs in its own thread and must not write the
+// sensor between the main loop's SPI steps (a burst read, a firmware upload).
+static volatile bool pointer_rest_due;
 
 void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
     const presence_rpc_t *in                = (const presence_rpc_t *)in_data;
@@ -938,7 +893,7 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
     global_saved_values.scan_deep_period_ms = in->scan_deep_period_ms;
     if (global_saved_values.idle_flags != in->idle_flags) {
         global_saved_values.idle_flags = in->idle_flags;
-        sval_pointer_rest_apply();
+        pointer_rest_due               = true; // applied from housekeeping, not from the link's handler
     }
     global_saved_values.scan_deep_clock_idx = in->scan_deep_clock_idx;
     // The master's optical debounce mode, when its ping carries it (RAM only, as above).
@@ -1069,9 +1024,23 @@ void sval_link_stopping(void) {
 
 bool shutdown_kb(bool jump_to_bootloader) {
     if (!shutdown_user(jump_to_bootloader)) return false;
+#ifdef SVAL_UPDATER
+    // The boot ROM's USB bootloader never feeds the session watchdog.
+    if (jump_to_bootloader) session_watchdog_off();
+#endif
     sval_link_stopping();
     return true;
 }
+
+#ifdef SVAL_UPDATER
+// While USB is suspended the main loop runs no updater pass (chibios.c's
+// suspend loop): no session watchdog. The first pass after the wake turns it
+// on again if the session is still active.
+void suspend_power_down_kb(void) {
+    session_watchdog_off();
+    suspend_power_down_user();
+}
+#endif
 
 static bool is_connected = false;
 bool        sval_other_half_connected(void) {
@@ -1129,16 +1098,23 @@ uint8_t sval_pad_hands(void) {
 // The scroll kind of each hand's module (enum sval_scroll_kind), and whether
 // the hand has settled: its module answered, or the boot search gave up on one.
 #define SVAL_SCROLL_SETTLE_MS (SVAL_POINTER_PROBE_AFTER_MS + 1000)
+// A hand no half reports (the other half, before or without the link) never
+// settles (sval_scroll_hand_settled).
 static bool scroll_hand_kind(uint8_t hand, uint8_t *kind) {
     sval_pointer_identity_t id;
-    bool                    local;
-    *kind = SVAL_SCROLL_KIND_BALL;
-    if (!sval_pointer_for_hand(hand == 0, &id, &local)) return timer_read32() >= SVAL_SCROLL_SETTLE_MS; // no such half
-    if (id.detected == SVAL_SENSOR_AZOTEQ) *kind = SVAL_SCROLL_KIND_PAD;
-    if (id.detected == SVAL_SENSOR_TRACKPOINT) *kind = SVAL_SCROLL_KIND_TRACKPOINT;
-    if (id.detected == SVAL_SENSOR_NONE) return timer_read32() >= SVAL_SCROLL_SETTLE_MS;
-    if (id.detected == SVAL_SENSOR_NO_RESPONSE) return local ? sval_pointer_searched() : timer_read32() >= SVAL_SCROLL_SETTLE_MS;
-    return true;
+    bool                    local  = false;
+    uint8_t                 state  = SVAL_SCROLL_MODULE_ANSWERED;
+    const bool              passed = timer_read32() >= SVAL_SCROLL_SETTLE_MS;
+    *kind                          = SVAL_SCROLL_KIND_BALL;
+    if (!sval_pointer_for_hand(hand == 0, &id, &local)) {
+        state = SVAL_SCROLL_MODULE_UNSEEN;
+    } else {
+        if (id.detected == SVAL_SENSOR_AZOTEQ) *kind = SVAL_SCROLL_KIND_PAD;
+        if (id.detected == SVAL_SENSOR_TRACKPOINT) *kind = SVAL_SCROLL_KIND_TRACKPOINT;
+        if (id.detected == SVAL_SENSOR_NONE) state = SVAL_SCROLL_MODULE_UNCHECKED;
+        if (id.detected == SVAL_SENSOR_NO_RESPONSE) state = SVAL_SCROLL_MODULE_NO_ANSWER;
+    }
+    return sval_scroll_hand_settled(state, local, sval_pointer_searched(), passed);
 }
 
 // The module a hand's DPI list is held to (enum sval_dpi_module): SVAL_DPI_MODULE_ANY until it is found.
@@ -1342,7 +1318,7 @@ static void sval_usb_wake_handler(void) {
         // Check if host has enabled remote wakeup capability
         if (USB_DRIVER.status & USB_GETSTATUS_REMOTE_WAKEUP_ENABLED) {
             // Check for wake condition (key pressed)
-            if (suspend_wakeup_condition()) {
+            if (sval_usb_wake_key_down()) {
                 usbWakeupHost(&USB_DRIVER);
 #if USB_SUSPEND_WAKEUP_DELAY > 0
                 wait_ms(USB_SUSPEND_WAKEUP_DELAY);
@@ -1400,6 +1376,7 @@ void housekeeping_task_kb(void) {
 #endif
     sval_pointer_probe_task();
     sval_scroll_speed_task();
+    sval_app_rules_task();
 #ifdef SVAL_EITHER_HAND
     sval_side_task();
 #endif
@@ -1407,6 +1384,10 @@ void housekeeping_task_kb(void) {
     if (is_keyboard_master()) sval_typing_pause_task();
     scanlab_housekeeping();
     sval_link_task();
+    if (pointer_rest_due) { // the other half, after a ping changed the idle flags
+        pointer_rest_due = false;
+        sval_pointer_rest_apply();
+    }
     if (rgb_redraw_due) { // the other half, after a ping: draw what the half with USB sent
         rgb_redraw_due = false;
         rgb_redraws--;
@@ -1431,6 +1412,7 @@ void housekeeping_task_kb(void) {
         if (!updater_active())
 #endif
             sval_rgb_idle_task();
+        sval_rgb_host_sleep_task();
         static uint32_t last_ping = 0;
 #ifdef SVAL_UPDATER
         // No presence ping while the split link is paused (D15); the first
@@ -1689,7 +1671,7 @@ void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
                     global_saved_values.automouse_threshold = value_data[0] | (value_data[1] << 8);
                     break;
                 case id_automouse_decay:
-                    global_saved_values.automouse_decay = value_data[0];
+                    global_saved_values.automouse_decay = sval_automouse_decay_setting(value_data[0]);
                     break;
                 case id_left_automouse:
                     global_saved_values.left_automouse = value_data[0];
