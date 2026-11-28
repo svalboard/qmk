@@ -58,6 +58,8 @@ static sval_qmk_settings_t settings;
 static void sval_qmk_settings_load(void);
 static void sval_qmk_settings_save(void);
 static void sval_qmk_settings_apply(void);
+static void sval_qmk_settings_apply_auto_shift(void);
+static void sval_qmk_settings_apply_one_shot(void);
 
 // QSID definitions - must match GUI's qmk_settings.json
 enum sval_qsid {
@@ -309,6 +311,7 @@ void sval_qmk_settings_init(void) {
     if (sval_qmk_settings_repair() || migrated) {
         sval_qmk_settings_save();
     }
+    sval_qmk_settings_apply_auto_shift();
     sval_qmk_settings_apply();
 }
 
@@ -322,12 +325,15 @@ static void sval_qmk_settings_save(void) {
     eeconfig_update_kb_datablock(&settings, SVAL_QMK_SETTINGS_OFFSET, sizeof(settings));
 }
 
-// Apply settings to QMK subsystems
-static void sval_qmk_settings_apply(void) {
+// Apply the stored Auto Shift on/off bit (QSID 3) and timeout (QSID 4). The
+// AS_TOGG, AS_ON, AS_OFF, AS_UP and AS_DOWN keycodes change the same state in
+// RAM only, so this runs on boot, on a reset and when QSID 3 or 4 is written,
+// not on every write: a write to another setting used to put back the stored
+// values and undo the keycodes. Each write applies only its own value.
+static void sval_qmk_settings_apply_auto_shift_enable(void) {
 #ifdef AUTO_SHIFT_ENABLE
     // The Auto Shift byte last applied (-1: none yet, at boot).
     static int16_t applied_auto_shift = -1;
-    set_autoshift_timeout(settings.auto_shift_timeout);
     if (settings.auto_shift & (1 << AUTO_SHIFT_ENABLE_BIT)) {
         // A key pending under the old bits would finish under the new ones: a
         // key no longer auto-shifted skips Auto Shift on release, so it was
@@ -340,6 +346,41 @@ static void sval_qmk_settings_apply(void) {
     }
     applied_auto_shift = settings.auto_shift;
 #endif
+}
+
+static void sval_qmk_settings_apply_auto_shift_timeout(void) {
+#ifdef AUTO_SHIFT_ENABLE
+    set_autoshift_timeout(settings.auto_shift_timeout);
+#endif
+}
+
+static void sval_qmk_settings_apply_auto_shift(void) {
+    sval_qmk_settings_apply_auto_shift_timeout();
+    sval_qmk_settings_apply_auto_shift_enable();
+}
+
+// A one-shot tap toggle (QSID 5, Sval 0x0A) of 0 or 1 turns locking off, and
+// QMK unlocks a locked one-shot mod only on a tap while the toggle is above 1
+// (action.c). A mod locked under the old count would then stay registered, so
+// locks are released when locking is off. A toggled one-shot layer goes too.
+static void sval_qmk_settings_apply_one_shot(void) {
+#ifndef NO_ACTION_ONESHOT
+    if (settings.osk_tap_toggle > 1) return;
+    uint8_t locked = get_oneshot_locked_mods();
+    if (locked) {
+        clear_oneshot_locked_mods();
+        unregister_mods(locked);
+    }
+    if (get_oneshot_layer_state() & ONESHOT_TOGGLED) {
+        layer_off(get_oneshot_layer());
+        reset_oneshot_layer();
+    }
+#endif
+}
+
+// Apply settings to QMK subsystems. Auto Shift is applied separately (above).
+static void sval_qmk_settings_apply(void) {
+    sval_qmk_settings_apply_one_shot();
 
 #ifdef MOUSEKEY_ENABLE
     // Held at the variables' limits here too, so no stored value can wrap. The
@@ -405,6 +446,23 @@ int sval_qmk_settings_get(uint16_t qsid, uint8_t *buffer, uint8_t length) {
         return 0;
     }
 
+#ifdef AUTO_SHIFT_ENABLE
+    // Auto Shift on/off and timeout read back what the board is doing: the
+    // AS_* keycodes change them in RAM without a write (see
+    // sval_qmk_settings_apply_auto_shift).
+    if (qsid == QSID_AUTO_SHIFT) {
+        if (length < 1) return -1;
+        buffer[0] = (settings.auto_shift & ~(1 << AUTO_SHIFT_ENABLE_BIT)) | (get_autoshift_state() ? 1 << AUTO_SHIFT_ENABLE_BIT : 0);
+        return 0;
+    }
+    if (qsid == QSID_AUTO_SHIFT_TIMEOUT) {
+        if (length < 2) return -1;
+        uint16_t timeout = get_generic_autoshift_timeout();
+        memcpy(buffer, &timeout, 2);
+        return 0;
+    }
+#endif
+
     // Regular settings
     if (desc->size > length) return -1;
     memcpy(buffer, ((uint8_t *)&settings) + desc->offset, desc->size);
@@ -460,6 +518,8 @@ int sval_qmk_settings_set(uint16_t qsid, const uint8_t *data, uint8_t length) {
     // of 0) is stored as the default, the same as on boot.
     sval_qmk_settings_repair();
     sval_qmk_settings_save();
+    if (qsid == QSID_AUTO_SHIFT) sval_qmk_settings_apply_auto_shift_enable();
+    if (qsid == QSID_AUTO_SHIFT_TIMEOUT) sval_qmk_settings_apply_auto_shift_timeout();
     sval_qmk_settings_apply();
     return 0;
 }
@@ -540,6 +600,7 @@ void sval_qmk_settings_reset(void) {
     settings.leader_options = default_leader_options();
 
     sval_qmk_settings_save();
+    sval_qmk_settings_apply_auto_shift();
     sval_qmk_settings_apply();
 
     // Reset magic settings to defaults
@@ -711,6 +772,7 @@ void sval_qmk_settings_set_one_shot(uint16_t timeout, uint8_t tap_toggle) {
     settings.osk_timeout    = timeout;
     settings.osk_tap_toggle = SVAL_AT_MOST(tap_toggle, SVAL_TAP_COUNT_MAX);
     sval_qmk_settings_save();
+    sval_qmk_settings_apply_one_shot();
 }
 
 // Bits as Keybard writes them: 0 Alt, 1 Control, 2 GUI, 3 Shift (the
@@ -721,7 +783,8 @@ uint8_t get_grave_esc_overrides(void) {
 
 // Auto Shift, QSID 3 (bits in sval_qmk_settings.h). Bit 0 is applied through
 // autoshift_enable() and autoshift_disable(), and the timeout (QSID 4) through
-// set_autoshift_timeout(); sval_auto_shift.c reads the rest.
+// set_autoshift_timeout(), only when QSID 3 or 4 is written (and on boot and
+// reset); sval_auto_shift.c reads the rest.
 uint8_t sval_auto_shift(void) {
     return settings.auto_shift;
 }

@@ -1263,8 +1263,11 @@ __attribute__((weak)) const char* usb_product_string(void) {
 // an unaligned halfword store (Svalboard patch to QMK core).
 static _Alignas(4) uint8_t ProductStringRuntime[sizeof(USB_Descriptor_Header_t) + USB_PRODUCT_STRING_MAX_UNITS * 2];
 
-// UTF-8 to UTF-16, surrogate pairs above the BMP; malformed bytes become U+FFFD.
+// UTF-8 to UTF-16, surrogate pairs above the BMP; malformed bytes, overlong
+// forms, surrogates and code points past U+10FFFF become U+FFFD.
+// (Svalboard patch to QMK core: the range checks.)
 static const void* product_string_runtime(uint16_t* size) {
+    static const uint32_t min_cp[4] = {0, 0x80, 0x800, 0x10000};
     const uint8_t* s = (const uint8_t*)usb_product_string();
     if (!s || !*s) return NULL;
     uint16_t* out   = (uint16_t*)(ProductStringRuntime + sizeof(USB_Descriptor_Header_t));
@@ -1284,6 +1287,7 @@ static const void* product_string_runtime(uint16_t* size) {
             cp = 0xFFFD, extra = 0;
         }
         s++;
+        uint8_t length = extra;
         for (; extra; extra--, s++) {
             if ((*s & 0xC0) != 0x80) {
                 cp = 0xFFFD;
@@ -1291,6 +1295,7 @@ static const void* product_string_runtime(uint16_t* size) {
             }
             cp = (cp << 6) | (*s & 0x3F);
         }
+        if (cp < min_cp[length] || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
         if (cp >= 0x10000) {
             if (units + 2 > USB_PRODUCT_STRING_MAX_UNITS) break;
             cp -= 0x10000;

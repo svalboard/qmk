@@ -93,10 +93,13 @@ either contact lifts, so the other half's contacts are held at their last
 position for up to 150 ms without a new sample (`SVAL_PTP_REMOTE_STALE_MS`)
 before they are lifted, and a reply with no sample from a half that has been
 sending them counts as a failed fetch until three come in a row (QMK's RPC
-reply carries no checksum). A pad lifted because its samples stopped arms
-again on its next valid sample, so a finger still down is reported again as a
-new contact instead of staying unseen until it lifts; a chip reset or palm
-still waits for an all-up sample. The dev command's status (v3) counts these
+reply carries no checksum), also once the other pad has been lifted as lost.
+A pad lifted because its samples stopped arms again on its next valid sample,
+so a finger still down is reported again as a new contact instead of staying
+unseen until it lifts; a chip reset or palm still waits for an all-up sample.
+Neither is ever a tap: the lift goes out with Confidence clear, and a contact
+that comes back this way lifts with Confidence clear within 300 ms, as after
+the scroll key. The dev command's status (v3) counts these
 lifts per pad.
 
 While Velocity Scroll is on (`SV_VELOCITY_SCROLL` held, or

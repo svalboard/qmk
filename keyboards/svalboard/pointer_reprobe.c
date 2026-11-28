@@ -69,7 +69,7 @@ void sval_pointer_probe_task(void) {
                     break;
             }
         }
-        pointer_search_skip = sval_pointer_own_bus();
+        pointer_search_skip = sval_probe_skip_buses(sval_pointer_own_bus());
         pointer_search_step = 1;
         return; // the buses start on the next pass
     }

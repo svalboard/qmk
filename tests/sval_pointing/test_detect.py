@@ -45,6 +45,25 @@ class PointerReprobeTests(unittest.TestCase):
             self.assertIn('OK', result.stdout)
 
 
+class TrackPointStartTests(unittest.TestCase):
+    """trackpoint/trackpoint.c: the Sprintek setup waits for no missing reply (S21); Get Device ID finds a stick that streamed at boot (S24)."""
+    def test_trackpoint_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'trackpoint_init'
+            subprocess.run([
+                'gcc', '-std=gnu11', '-Wall', '-Werror', '-I',
+                str(HERE / 'trackpoint_stubs'), '-I',
+                str(ROOT / 'modules/svalboard/pointing_device_ps2'), '-I',
+                str(ROOT / 'keyboards/svalboard'),
+                str(HERE / 'trackpoint_init_test.c'), '-o',
+                str(binary)
+            ],
+                           check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('OK', result.stdout)
+
+
 class PointingMotionTests(unittest.TestCase):
     """pointing_motion.h: fragment ids for each detected module (0x18) and the 0x2D packing."""
     def test_fragment_mapping_and_motion_packing(self):
