@@ -31,7 +31,7 @@ QMK_ENABLE_MAP = {
     'tap_dance': 'TAP_DANCE_ENABLE',
     'combo': 'COMBO_ENABLE',
     'key_override': 'KEY_OVERRIDE_ENABLE',
-    'leader': 'LEADER_ENABLE',
+    'leader': 'SVAL_LEADER_ENABLE',
 }
 
 

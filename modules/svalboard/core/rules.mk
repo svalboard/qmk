@@ -43,8 +43,8 @@ $(shell mkdir -p "$(INTERMEDIATE_OUTPUT)/src" && \
 -include $(SVAL_CONFIG_MK)
 
 # Explicitly add OPT_DEFS for features (in case module is processed after generic_features.mk)
-ifeq ($(LEADER_ENABLE),yes)
-    OPT_DEFS += -DLEADER_ENABLE
+ifeq ($(SVAL_LEADER_ENABLE),yes)
+    OPT_DEFS += -DSVAL_LEADER_ENABLE
 endif
 
 # Add include path for generated headers
@@ -78,7 +78,7 @@ ifeq ($(KEY_OVERRIDE_ENABLE),yes)
     SRC += $(SVAL_MODULE_PATH)sval_key_override.c
 endif
 
-ifeq ($(LEADER_ENABLE),yes)
+ifeq ($(SVAL_LEADER_ENABLE),yes)
     SRC += $(SVAL_MODULE_PATH)sval_leader.c
 endif
 
