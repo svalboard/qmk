@@ -9,9 +9,7 @@
 #    include "split_common/transactions.h"
 #    include "usb_device_state.h"
 #    include "svalboard.h"
-#    ifdef SVAL_UPDATER
-#        include "updater/updater.h" // updater_active
-#    endif
+#    include "updater/updater_api.h" // updater_busy
 #endif
 #include "link_light.h"
 #include <string.h>
@@ -133,10 +131,8 @@ bool sval_link_quiet(void) {
 
 bool sval_link_light(void) {
     if (!lost) return false;
-#ifdef SVAL_UPDATER
     // An update restarts halves on purpose: no link light while one runs.
-    if (updater_active()) return false;
-#endif
+    if (updater_busy()) return false;
     if (is_keyboard_master()) return !sval_link_quiet();
     return !sub_quiet;
 }

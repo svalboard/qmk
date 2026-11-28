@@ -10,6 +10,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+// The keyboard headers the updater uses, all here, so this file is the
+// updater folder's only way into the rest of keyboards/svalboard.
+#include "link_light.h"  // sval_link_light: the link light while the updater shows nothing
+#include "build_reset.h" // BUILD_RESET_TO_* (SETTINGS_RESET, D44), BUILD_RESET_SECTOR
+#include "identity.h"    // IDENTITY_SECTOR_A (the flash map, update_flash.c)
+#include "split_pause.h" // sval_split_pause (D15, update_split.c)
+#ifdef SVAL_EITHER_HAND
+#    include "side.h" // SVAL_SIDE_SECTOR_A, _B; sval_side(); SVAL_BUILD_SIDE
+#endif
+
 uint32_t updater_port_now_ms(void);
 
 // Whether the packet being handled came inside the client wrapper, and if so

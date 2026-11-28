@@ -36,7 +36,7 @@ typedef struct __attribute__((packed)) {
     char     version[UPDATE_VERSION_CHARS]; // SVAL_FW_VERSION_STRING, NUL-padded (the release tag)
     uint8_t  hand;           // UPDATE_HAND_* of this build (update_self.h); 0xFF in host tests
     uint8_t  pointing_id;    // UPDATE_POINTING_* of this build; 0xFF in host tests
-    uint8_t  keymap_id;      // SVAL_UPDATE_KEYMAP_ID (rules.mk): 1 sval, 2 blank, 0 any other keymap
+    uint8_t  keymap_id;      // SVAL_UPDATE_KEYMAP_ID (updater/updater.mk): 1 sval, 2 blank, 0 any other keymap
     uint8_t  reserved;       // 0
 } update_build_info_t;       // 32 B
 

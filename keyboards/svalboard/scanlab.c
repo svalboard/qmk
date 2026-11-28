@@ -24,10 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #if VIA_ENABLE
 #    include "via.h"
 #endif
-#ifdef SVAL_UPDATER
-#    include "updater/updater.h"
-#    include "split_pause.h"
-#endif
+#include "updater/updater_api.h"
 
 // Microsecond clock for the probe. The ChibiOS system timer on the RP2040
 // port runs at 1 MHz and is readable with interrupts disabled.
@@ -248,14 +245,12 @@ void scanlab_handle(const uint8_t *req, uint8_t *rsp) {
     switch (op) {
         case SCANLAB_OP_SET_MODE: {
             uint8_t mode = req[1];
-#ifdef SVAL_UPDATER
             // No host-chosen scan timing while an update session is active:
             // the updater reads its confirmation chord from the matrix.
-            if (mode == 1 && updater_active()) {
+            if (mode == 1 && updater_busy()) {
                 rsp[0] = sweep.state;
                 return;
             }
-#endif
             if (mode == 1) {
                 sweep.prewait       = get16(&req[2]);
                 sweep.postwait      = get16(&req[4]);
@@ -272,9 +267,7 @@ void scanlab_handle(const uint8_t *req, uint8_t *rsp) {
             return;
         }
         case SCANLAB_OP_PROBE:
-#ifdef SVAL_UPDATER
-            if (updater_active()) return;  // nor drive rows by hand (rsp all zero: no probe)
-#endif
+            if (updater_busy()) return;  // nor drive rows by hand (rsp all zero: no probe)
             sweep.state = SCANLAB_IDLE;  // never probe mid-sweep
             if (!is_keyboard_master() && req[1] < SCANLAB_ROWS) {
                 // From the split link (probe_queued): run between scans.
@@ -465,13 +458,11 @@ void scanlab_via_command(uint8_t *data, uint8_t length) {
     bool local = (hand == 0) == is_keyboard_left();
     if (local) {
         scanlab_handle(req, rsp);
-#ifdef SVAL_UPDATER
-    } else if (sval_split_paused()) {
+    } else if (updater_split_paused()) {
         // The split link is paused for an update (D15): no relay, answered as
         // if the other half were silent.
         memset(rsp, 0, sizeof(rsp));
         rsp[0] = 0xFF;
-#endif
     } else {
         // The other half goes to its bootloader on purpose: no link light for it.
         if (req[0] == SCANLAB_OP_REBOOT_GO) sval_link_stopped();

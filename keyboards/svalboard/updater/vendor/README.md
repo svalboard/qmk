@@ -2,7 +2,7 @@
 
 SHA-512 for the in-firmware updater: the manifest hash the chord confirms, and
 the image hash checked at verify and again at commit. Compiled only when the
-build sets `SVAL_UPDATER=yes` (`keyboards/svalboard/rules.mk`).
+build sets `SVAL_UPDATER=yes` (`keyboards/svalboard/updater/updater.mk`).
 
 - **Upstream:** https://github.com/LoupVaillant/Monocypher
 - **Release tarball:** https://github.com/LoupVaillant/Monocypher/releases/download/4.0.2/monocypher-4.0.2.tar.gz
@@ -30,7 +30,7 @@ The source files they were cut from, for checking against the tarball:
 ## Use
 
 - `#include "sha512.h"` (this directory is on the include path: `EXTRAINCDIRS`
-  in `rules.mk`), then `crypto_sha512` or `crypto_sha512_init` / `_update` /
+  in `updater.mk`), then `crypto_sha512` or `crypto_sha512_init` / `_update` /
   `_final`. This is standard SHA-512 (FIPS 180-4).
 - The host tests (`util/updater_test/run.sh`) check the FIPS 180-2 vectors and
   that the incremental and one-shot forms agree.

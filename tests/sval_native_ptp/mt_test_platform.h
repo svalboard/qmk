@@ -31,7 +31,7 @@ static bool is_keyboard_left(void) {
 static bool is_transport_connected(void) {
     return connected;
 }
-#define mt_updater_busy() (busy)
+#define updater_busy() (busy)
 static uint32_t timer_read32(void) {
     return clock_ms;
 }

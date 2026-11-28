@@ -21,12 +21,7 @@
 // The pad read schedule (azoteq/azoteq.c): its lead, bare transfer and last stretch.
 void sval_pad_sched_stats(uint32_t *lead_us, uint32_t *xfer_us, uint32_t *wait_us);
 #endif
-#ifdef SVAL_UPDATER
-#    include "updater/updater.h"
-#    define perf_split_busy() updater_active()
-#else
-#    define perf_split_busy() false
-#endif
+#include "updater/updater_api.h"
 #ifdef SVAL_UPDATE_RELEASE
 #    error "release builds cannot have SVAL_PERF_STATS"
 #endif
@@ -270,7 +265,7 @@ bool sval_perf_split_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uin
 
 static bool remote(uint8_t page, uint8_t part, uint8_t *reply) {
     uint8_t req[3] = {SVAL_PERF_RPC_OP, page, part};
-    if (perf_split_busy() || !is_transport_connected()) return false;
+    if (updater_busy() || !is_transport_connected()) return false;
     uint8_t prev = sval_perf_enter(SVAL_PERF_GAP_COUNTERS);
     bool    ok   = transaction_rpc_exec(KEYBOARD_SYNC_B, sizeof(req), req, SVAL_PERF_RPC_REPLY, reply) && reply[0] == SVAL_PERF_RPC_OP && reply[1];
     sval_perf_leave(prev);

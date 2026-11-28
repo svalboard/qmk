@@ -27,7 +27,6 @@ static inline bool sval_other_half_connected(void) {
 static inline int usb_device_state_get_configure_state(void) {
     return host_usb_configured ? USB_DEVICE_STATE_CONFIGURED : 3;
 }
-#define SVAL_UPDATER
-static inline bool updater_active(void) {
+static inline bool updater_busy(void) {
     return host_updater_active;
 }

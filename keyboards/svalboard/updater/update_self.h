@@ -19,7 +19,7 @@
 // boot. A one-side build (SVAL_BUILD_SIDE, side.h) is for its own side: its
 // build-info record says so, and make_update.py and the boot relay refuse to
 // make it a pair UF2 or send it to the other half.
-#        include "side.h"
+#        include "updater_port.h" // side.h
 #        if defined(SVAL_BUILD_SIDE)
 _Static_assert(SVAL_SIDE_LEFT == UPDATE_HAND_LEFT && SVAL_SIDE_RIGHT == UPDATE_HAND_RIGHT, "sides are numbered as hands");
 #            define UPDATE_SELF_HAND SVAL_BUILD_SIDE

@@ -85,7 +85,7 @@ or keep settings.
 
 `SVAL_UPDATER` cannot be combined with `SVAL_KEYTEST` (keytest injects key
 events, so a host could fake the confirmation chord). Main's stack is
-`0xAE0` bytes in updater builds (`USE_PROCESS_STACKSIZE`, `kb/rules.mk`): the
+`0xAE0` bytes in updater builds (`USE_PROCESS_STACKSIZE`, `kb/updater/updater.mk`): the
 size the M1 and M2b hardware tests ran with. The hardware tests use plain
 updater builds, or test-hooks builds for the halt points:
 

@@ -12,12 +12,8 @@
 #include <stddef.h>
 #include <string.h>
 #include "update_flash.h"
-#include "identity.h"    // IDENTITY_SECTOR_A
-#include "build_reset.h" // BUILD_RESET_SECTOR
-#include "update_pair.h" // UPDATE_PAIR_RECORD_OFFSET
-#ifdef SVAL_EITHER_HAND
-#    include "side.h" // SVAL_SIDE_SECTOR_A, _B
-#endif
+#include "updater_port.h" // the flash map: IDENTITY_SECTOR_A, BUILD_RESET_SECTOR, SVAL_SIDE_SECTOR_A, _B
+#include "update_pair.h"  // UPDATE_PAIR_RECORD_OFFSET
 
 #ifdef SVAL_UPDATER_HOST_TEST
 #    include "update_flash_host.h" // tests/sval_updater: flash and ROM mocks
