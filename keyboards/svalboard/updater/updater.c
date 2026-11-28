@@ -1220,10 +1220,16 @@ static struct {
 // The half without USB: written by the presence ping's callback (the split
 // SlaveThread), read by housekeeping. A torn read costs one pass of light.
 static volatile uint8_t rx_light = LIGHT_NO_BYTE, rx_n;
+static volatile bool    rx_seen; // a ping came since this half booted
 
 void updater_split_light_seen(bool has_light, uint8_t light) {
     rx_light = has_light ? light : LIGHT_NO_BYTE;
     rx_n     = rx_n + 1;
+    rx_seen  = true;
+}
+
+bool updater_split_pinged(void) {
+    return rx_seen;
 }
 
 // Work on this half outranks the green flash it just showed: a pair update's
@@ -1549,6 +1555,7 @@ void updater_host_reset(void) {
     memset(&lt, 0, sizeof(lt));
     rx_light = LIGHT_NO_BYTE;
     rx_n     = 0;
+    rx_seen  = false;
     reset_session();
     held_clear();
     memset(&kept, 0, sizeof(kept)); // RAM: gone with a reset

@@ -47,6 +47,7 @@ At boot the firmware hashes its own image in flash and compares the hash with th
 - The board identity (serial and name) and the updater's own state are kept.
 - On a flash chip smaller than 16 MB the record has nowhere to go, so the board keeps its settings; an incompatible layout is still reset by the magic below.
 - If the record can't be written, the next boot resets again, and the board reports that changes won't survive a restart (byte 18 bit 1).
+- Clearing the notice (`0x2A`) programs a mark next to the record and never erases or rewrites it, so losing power then can't reset the settings. The sector holds 16 one-page slots (`build_reset.h`); the record after a blank reset goes into a free slot, so that losing power while it is written still comes back blank.
 - A firmware without the record in between doesn't count: flashing build A, then vLaunch2, then the same build A again keeps what vLaunch2 left.
 
 ## Upgrading from earlier firmware

@@ -93,6 +93,11 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -DSVAL_SIDE_HOST_TEST -DBUILD_RESET_HOST_TEST -I"$kb" "$tests/test_side.c" "$kb/side.c" "$kb/build_reset.c" -o "$out/test_side"
 "$out/test_side"
 "$out/test_build_reset"
+# The build reset log (kb/build_reset.c): a power cut at each write of the
+# host's acknowledgement, of a blank reset and of a reset to defaults.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -DBUILD_RESET_HOST_TEST -I"$kb" "$tests/test_build_reset_log.c" "$kb/build_reset.c" -o "$out/test_build_reset_log"
+"$out/test_build_reset_log"
 # Side writes during a firmware update (kb/side.c, its firmware part, against
 # the mocks in tests/sval_side/stub): refused for both halves, and a write or
 # restart the other half took waits for the end of its session. side.c is

@@ -54,27 +54,76 @@ void build_reset_record_make(build_reset_record_t *rec, uint32_t image, uint32_t
 // The 8 bytes after the record are the blank mark (D44). SETTINGS_RESET mode
 // BLANK programs BUILD_RESET_BLANK_MAGIC and its complement there, so the next
 // boot resets every stored setting and then sets every key on every layer to
-// KC_NO. The record written after that boot erases the sector, mark included.
-// Mode DEFAULTS programs zeros there, so a mark left by a blank reset that
-// never completed cannot turn a reset to defaults into a blank one. The mark
-// counts only over a cleared record, and a mark programmed over bytes that
-// were not erased reads wrong, so build_reset_invalidate() then fails.
+// KC_NO. Mode DEFAULTS programs zeros there, so a mark left by a blank reset
+// that never completed cannot turn a reset to defaults into a blank one. The
+// mark counts only over a record that is not valid (cleared, or a record write
+// cut short), and a mark programmed over bytes that were not erased reads
+// wrong, so build_reset_invalidate() then fails.
+//
+// The sector is a log of BUILD_RESET_SLOTS one-page slots, so that no erase
+// stands between a request and the record that answers it. The slot in force
+// is the last of the leading slots whose record bytes are not erased (slot 0
+// alone for firmware from before the log, which erases the sector for every
+// record). A slot holds the record, the blank mark, then the acknowledgement
+// mark:
+//   - the host's acknowledgement (0x2A) programs BUILD_RESET_ACK_MAGIC and its
+//     complement into the slot in force. The record itself is never rewritten,
+//     so a power cut there never resets the settings.
+//   - the record after a blank reset goes into the next free slot, its blank
+//     mark first, so the request stays in force until the record reads back;
+//     then the marks of both slots are zeroed.
+//   - every other record erases the sector and starts again at slot 0, as
+//     before: a power cut there only repeats the reset that just happened.
+// Only a blank reset that finds the slots used up still erases first (the
+// last slot stays free for a SETTINGS_RESET after it).
 #define BUILD_RESET_PAGE_BYTES 256u
 #define BUILD_RESET_BLANK_MAGIC 0x4B4E4C42u // "BLNK"
 #define BUILD_RESET_HEAD_BYTES 24u          // the record, then the blank mark (magic, ~magic)
 #define BUILD_RESET_TO_DEFAULTS 0u          // SETTINGS_RESET mode 0: firmware defaults
 #define BUILD_RESET_TO_BLANK 1u             // SETTINGS_RESET mode 1: defaults, then every key KC_NO
 #define BUILD_RESET_MODE_MAX BUILD_RESET_TO_BLANK
+#define BUILD_RESET_SLOTS 16u             // one-page slots in the 4 KB sector
+#define BUILD_RESET_ACK_MAGIC 0x4B434153u // "SACK": the host acknowledged the notice
+#define BUILD_RESET_ACK_OFFSET 24u        // in a slot: after the record and the blank mark
 void build_reset_invalid_page(uint8_t page[BUILD_RESET_PAGE_BYTES], uint8_t mode);
 // What the sector's first BUILD_RESET_HEAD_BYTES read after that page is programmed over them.
 void build_reset_program_head(uint8_t head[BUILD_RESET_HEAD_BYTES], const uint8_t page[BUILD_RESET_PAGE_BYTES]);
-// The sector's head asks for a blank board: a cleared record and a whole blank mark.
+// A slot's head asks for a blank board: a record that is not valid and a whole blank mark.
 bool build_reset_blank_requested(const uint8_t head[BUILD_RESET_HEAD_BYTES]);
 // What the record reads after that page is programmed over it (bitwise AND).
 void build_reset_program_over(build_reset_record_t *rec, const uint8_t page[BUILD_RESET_PAGE_BYTES]);
 // The record reads all zeros: invalidated by SETTINGS_RESET (never a valid
-// record, never erased flash). Dev keep builds reset settings only then.
+// record, never erased flash).
 bool build_reset_cleared(const build_reset_record_t *rec);
+
+// The log (above). sector: the whole sector as it reads.
+// The slot in force; -1 when there is none (an erased sector).
+int build_reset_slot(const uint8_t *sector);
+typedef struct {
+    bool pending;   // this boot resets every stored setting
+    bool notice;    // not pending, and the host has yet to acknowledge the reset
+    bool blank_due; // pending, and the reset is to a blank board (D44)
+    bool requested; // SETTINGS_RESET asked for a reset (dev keep builds reset only then)
+} build_reset_state_t;
+void build_reset_state(const uint8_t *sector, uint32_t image, build_reset_state_t *st);
+// The flash under the log. The log fills page before each program(), which
+// programs it at off in the sector, with no erase. rewrite() erases the
+// sector, then programs data at its start; true if it reads back.
+typedef struct {
+    uint8_t *page; // BUILD_RESET_PAGE_BYTES
+    void (*program)(uint32_t off);
+    bool (*rewrite)(const void *data, uint32_t len);
+} build_reset_flash_t;
+// The record for image after a reset (flags: BUILD_RESET_NOTICE). blank: the
+// reset was to a blank board. True if the record reads back.
+bool build_reset_log_record(const uint8_t *sector, const build_reset_flash_t *f, uint32_t image, uint32_t flags, bool blank);
+// The host acknowledged the notice (0x2A). True if it now reads acknowledged.
+bool build_reset_log_ack(const uint8_t *sector, const build_reset_flash_t *f);
+// SETTINGS_RESET: the invalid page over the slot in force, or for a blank
+// reset into the next free slot when that slot's blank mark bytes are no
+// longer erased. True if the slot in force then reads invalid, with the mark
+// as mode asks.
+bool build_reset_log_invalidate(const uint8_t *sector, const build_reset_flash_t *f, uint8_t mode);
 
 #ifndef BUILD_RESET_HOST_TEST
 // SETTINGS_RESET (D42): invalidates the record with one page program (no
