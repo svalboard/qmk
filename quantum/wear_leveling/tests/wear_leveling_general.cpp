@@ -243,9 +243,11 @@ TEST_F(WearLevelingGeneral, UnlockFailure_NoErase) {
 }
 
 /**
- * This test verifies that only one write invocation occurs if `backing_store_write()` fails.
+ * This test verifies that a log entry which fails to program is not programmed again: the store consolidates
+ * instead, and when that fails too, the next write retries the consolidation rather than appending.
+ * (Svalboard: upstream left write_address on the failed slot, and the next write programmed it again.)
  */
-TEST_F(WearLevelingGeneral, WriteFailure_NoSubsequentWrites) {
+TEST_F(WearLevelingGeneral, WriteFailure_ConsolidatesInstead) {
     auto& inst = MockBackingStore::Instance();
     inst.set_write_callback([](std::uint64_t count, std::uint32_t address) { return false; });
 
@@ -253,9 +255,14 @@ TEST_F(WearLevelingGeneral, WriteFailure_NoSubsequentWrites) {
     EXPECT_EQ(wear_leveling_write(0x04, &test_val, sizeof(test_val)), WEAR_LEVELING_FAILED) << "Overall write operation should have failed";
 
     EXPECT_EQ(inst.unlock_invoke_count(), 1) << "Unlock should have been invoked once";
-    EXPECT_EQ(inst.erase_invoke_count(), 0) << "Erase should not have been invoked";
-    EXPECT_EQ(inst.write_invoke_count(), 1) << "Write should have been invoked once";
+    EXPECT_EQ(inst.erase_invoke_count(), 1) << "Erase should have been invoked once, to consolidate";
+    EXPECT_EQ(inst.write_invoke_count(), 2) << "The entry, then the consolidated data, should each have been tried once";
     EXPECT_EQ(inst.lock_invoke_count(), 1) << "Lock should have been invoked once";
+
+    inst.set_write_callback(nullptr);
+    uint8_t other = 0x22;
+    EXPECT_EQ(wear_leveling_write(0x05, &other, sizeof(other)), WEAR_LEVELING_CONSOLIDATED) << "The next write should consolidate";
+    EXPECT_EQ(inst.erase_invoke_count(), 2) << "Erase should have been invoked again";
 
     test_val = 0;
     wear_leveling_read(0x04, &test_val, sizeof(test_val));

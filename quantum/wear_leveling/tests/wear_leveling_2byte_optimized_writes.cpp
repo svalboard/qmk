@@ -111,8 +111,8 @@ TEST_F(WearLeveling2ByteOptimizedWrites, WriteOneThenZeroToEvenAddresses) {
                     ++write_iter;
                 }
             } else {
-                // Multibyte write
-                e.raw16[0] = write_iter->value;
+                // Multibyte write: its first word, which holds the type, is programmed last (Svalboard)
+                e.raw16[0] = (write_iter + 2)->value;
                 EXPECT_EQ(LOG_ENTRY_GET_TYPE(e), LOG_ENTRY_TYPE_MULTIBYTE) << "Invalid write log entry type at " << (address + offset);
                 EXPECT_EQ(LOG_ENTRY_MULTIBYTE_GET_LENGTH(e), 2) << "Invalid write log entry length at " << (address + offset);
                 ++write_iter;
@@ -210,14 +210,15 @@ TEST_F(WearLeveling2ByteOptimizedWrites, WriteOneThenZeroToOddAddresses) {
                 EXPECT_EQ(LOG_ENTRY_GET_TYPE(e), LOG_ENTRY_TYPE_OPTIMIZED_64) << "Invalid write log entry type";
                 ++write_iter;
 
-                // Second log entry is the multibyte entry for the second logical byte
-                e.raw16[0] = write_iter->value;
+                // Second log entry is the multibyte entry for the second logical byte; its first word, which holds the
+                // type, is programmed last (Svalboard)
+                e.raw16[0] = (write_iter + 1)->value;
                 EXPECT_EQ(LOG_ENTRY_GET_TYPE(e), LOG_ENTRY_TYPE_MULTIBYTE) << "Invalid write log entry type";
                 EXPECT_EQ(LOG_ENTRY_MULTIBYTE_GET_LENGTH(e), 1) << "Invalid write log entry length";
                 ++write_iter;
             } else {
-                // Multibyte write
-                e.raw16[0] = write_iter->value;
+                // Multibyte write: its first word, which holds the type, is programmed last (Svalboard)
+                e.raw16[0] = (write_iter + 2)->value;
                 EXPECT_EQ(LOG_ENTRY_GET_TYPE(e), LOG_ENTRY_TYPE_MULTIBYTE) << "Invalid write log entry type";
                 EXPECT_EQ(LOG_ENTRY_MULTIBYTE_GET_LENGTH(e), 2) << "Invalid write log entry length";
                 ++write_iter;

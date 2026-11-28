@@ -42,4 +42,4 @@ jobs:
         persist-credentials: false
 
     - name: Wear-leveling gtests
-      run: make test:wear_leveling_mirror test:wear_leveling_mirror_large test:wear_leveling_general
+      run: make test:wear_leveling_mirror test:wear_leveling_mirror_large test:wear_leveling_general test:wear_leveling_2byte test:wear_leveling_2byte_optimized_writes test:wear_leveling_4byte test:wear_leveling_8byte
