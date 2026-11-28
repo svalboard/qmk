@@ -7,12 +7,19 @@
 
 extern uint32_t host_now_ms;
 extern bool     host_master, host_transport_up, host_other_connected, host_usb_configured, host_updater_active;
+// Called at every timer read, once the value is taken: a test runs the presence
+// ping there, as the SlaveThread preempting the main loop would.
+extern void (*host_on_timer)(void);
 
 static inline uint32_t timer_read32(void) {
-    return host_now_ms;
+    uint32_t now = host_now_ms;
+    if (host_on_timer) host_on_timer();
+    return now;
 }
 static inline uint32_t timer_elapsed32(uint32_t t) {
-    return host_now_ms - t;
+    uint32_t e = host_now_ms - t;
+    if (host_on_timer) host_on_timer();
+    return e;
 }
 static inline bool is_keyboard_master(void) {
     return host_master;

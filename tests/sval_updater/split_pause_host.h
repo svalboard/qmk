@@ -32,6 +32,7 @@ void    matrix_scan_kb(void);
 bool    is_keyboard_master(void);
 bool    is_transport_connected(void);
 void    split_watchdog_update(bool done);
+void    transport_connection_restart(void);
 void    pointing_device_set_shared_report(report_mouse_t report);
 uint8_t matrix_scan(void);
 bool    update_split_slave_frozen(void);

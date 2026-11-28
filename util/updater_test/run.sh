@@ -35,6 +35,14 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 # the WS2812 timing.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$kb" "$root/tests/sval_power_idle/test_power_policy.c" -o "$out/test_power_policy"
 "$out/test_power_policy"
+# The deep-idle clock switch (kb/power.c) with mock pico-sdk headers: the split
+# serial's state machine keeps its rate at every step anything else could run in.
+# Built from a copy in its own directory, so its "svalboard.h" is the mock.
+mkdir -p "$out/power" && cp "$kb/power.c" "$out/power/power.c"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -I"$root/tests/sval_power_idle/stub" -I"$kb" \
+    "$root/tests/sval_power_idle/test_clock_switch.c" "$out/power/power.c" -o "$out/test_clock_switch"
+"$out/test_clock_switch"
 
 # RGB at rest (kb/rgb_idle.c): the idle dimming kept out of the saved lighting
 # (keys, VIA), and RGBLIGHT_SLEEP while the host sleeps.

@@ -9,6 +9,7 @@
 
 uint32_t host_now_ms;
 bool     host_master, host_transport_up, host_other_connected, host_usb_configured, host_updater_active;
+void (*host_on_timer)(void);
 
 #include "link_light.c"
 
@@ -31,8 +32,9 @@ static int checks, failures;
 static uint32_t boot_ms = 1000;
 
 static void boot(bool master) {
-    armed = lost = cable_paired = cable_lost = sub_paired = sub_quiet = stop_wait = stop_down = false;
+    armed = lost = cable_paired = cable_lost = sub_paired = sub_quiet = sub_busy = sub_ping_due = sub_stop_due = stop_wait = stop_down = false;
     lost_at = sub_last_ping = stopped_at = 0;
+    host_on_timer                        = NULL;
     host_now_ms                          = boot_ms;
     host_master                          = master;
     host_transport_up                    = true; // QMK's check reads connected until 200 ms of failures
@@ -133,14 +135,103 @@ static void test_sub_stop(void) {
     // the half with USB restarts on purpose (its last ping said so): no light; its
     // next ping pairs again, and a loss after that shows
     boot(false);
-    sval_link_ping_seen(false);
+    sval_link_ping_seen(0);
     run_ms(500);
-    sval_link_stopped();
+    sval_link_ping_seen(SVAL_LINK_QUIET_STOPPING);
+    CHECK(armed); // noted only: the main loop stops it
+    run_ms(1);
+    CHECK(!armed);
     run_ms(5000);
     CHECK(!sval_link_light());
-    sval_link_ping_seen(false);
+    sval_link_ping_seen(0);
+    run_ms(1);
     CHECK(armed);
     run_ms(SVAL_LINK_SUB_LOST_MS + 1);
+    CHECK(sval_link_light());
+
+    // a ping and then the STOPPING ping before the main loop runs: stopped
+    boot(false);
+    sval_link_ping_seen(0);
+    run_ms(500);
+    sval_link_ping_seen(0);
+    sval_link_ping_seen(SVAL_LINK_QUIET_STOPPING);
+    run_ms(1);
+    CHECK(!armed);
+    run_ms(5000);
+    CHECK(!sval_link_light());
+}
+
+// The presence ping runs on the SlaveThread, which preempts the main loop: it
+// only notes the ping, and the main loop's pass pairs from it.
+static void test_sub_ping_thread(void) {
+    boot(false);
+    sval_link_ping_seen(0);
+    run_ms(500);
+    run_ms(SVAL_LINK_SUB_LOST_MS);
+    CHECK(sval_link_light());
+    int before = recovered;
+    sval_link_ping_seen(0); // on the SlaveThread: no pairing state changes there
+    CHECK(lost);
+    CHECK(recovered == before);
+    run_ms(1); // the main loop's next pass
+    CHECK(!lost);
+    CHECK(recovered == before + 1);
+}
+
+// The link comes back exactly at the 1.5 s mark: the ping lands inside the main
+// loop's loss check, at each timer read in it. Whichever, the pass after the ping
+// shows no light, and a real silence later still shows it.
+static int  ping_at, timer_reads;
+static void ping_now(void) {
+    if (timer_reads++ == ping_at) {
+        host_on_timer = NULL; // the ping's own timer read
+        sval_link_ping_seen(0);
+    }
+}
+static void test_sub_ping_race(void) {
+    for (ping_at = 0; ping_at < 4; ping_at++) {
+        boot(false);
+        sval_link_ping_seen(0);
+        run_ms(1);
+        run_ms(SVAL_LINK_SUB_LOST_MS - 1); // the next pass calls the loss
+        timer_reads   = 0;
+        host_on_timer = ping_now;
+        run_ms(1);
+        if (host_on_timer) { // fewer timer reads than that: the ping lands just after the pass
+            host_on_timer = NULL;
+            sval_link_ping_seen(0);
+        }
+        run_ms(1);
+        CHECK(!sval_link_light());
+        CHECK(sub_paired);
+        if (sval_link_light() || !sub_paired) printf("  ping at timer read %d\n", ping_at);
+        run_ms(SVAL_LINK_SUB_LOST_MS + 1); // and no ping since: a real loss
+        CHECK(sval_link_light());
+    }
+}
+
+// A settings consolidation on the half with USB stops its main loop for a few
+// seconds: its BUSY ping before each erase allows SVAL_LINK_SUB_BUSY_MS of silence.
+static void test_sub_busy(void) {
+    boot(false);
+    sval_link_ping_seen(0);
+    run_ms(500);
+    sval_link_ping_seen(SVAL_LINK_QUIET_BUSY);
+    run_ms(SVAL_LINK_SUB_BUSY_MS);
+    CHECK(!sval_link_light());
+    sval_link_ping_seen(0); // the consolidation is done: plain pings again
+    run_ms(SVAL_LINK_SUB_LOST_MS);
+    CHECK(!sval_link_light());
+    run_ms(1);
+    CHECK(sval_link_light()); // and the plain allowance applies again
+
+    // the half with USB stops for good during a consolidation: the light shows
+    // once the longer allowance is over
+    boot(false);
+    sval_link_ping_seen(0);
+    run_ms(500);
+    sval_link_ping_seen(SVAL_LINK_QUIET_BUSY);
+    run_ms(SVAL_LINK_SUB_BUSY_MS + 1);
     CHECK(sval_link_light());
 }
 
@@ -152,7 +243,7 @@ static void test_sub(void) {
 
     boot(false);
     for (int i = 0; i < 6; i++) {
-        sval_link_ping_seen(false);
+        sval_link_ping_seen(0);
         run_ms(500);
     }
     CHECK(!sval_link_light());
@@ -161,14 +252,15 @@ static void test_sub(void) {
     run_ms(1);
     CHECK(sval_link_light());
     CHECK(timer_elapsed32(sub_last_ping) == SVAL_LINK_SUB_LOST_MS + 1);
-    sval_link_ping_seen(false); // the link is back
+    sval_link_ping_seen(0); // the link is back
+    run_ms(1);
     CHECK(!sval_link_light());
 
     // the half with USB in USB suspend: its pings say so, and a loss stays dark
-    sval_link_ping_seen(true);
+    sval_link_ping_seen(SVAL_LINK_QUIET_SUSPEND);
     run_ms(5000);
     CHECK(!sval_link_light());
-    sval_link_ping_seen(false);
+    sval_link_ping_seen(0);
     run_ms(SVAL_LINK_SUB_LOST_MS + 1);
     CHECK(sval_link_light());
 }
@@ -180,6 +272,9 @@ int main(void) {
         test_master_stop();
         test_sub();
         test_sub_stop();
+        test_sub_ping_thread();
+        test_sub_ping_race();
+        test_sub_busy();
     }
     printf("link light: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
