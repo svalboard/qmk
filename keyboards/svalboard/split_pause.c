@@ -55,10 +55,17 @@ bool sval_split_pause(bool on) {
             // without one (quantum/split_common/split_util.c): re-arm it, so
             // the next exchange pings.
             split_watchdog_update(false);
+            // A scan that failed just before the pause would otherwise make
+            // the first failure after it look 200 ms into a run of failures,
+            // and disconnect on that one scan (split_connection.h).
+            transport_connection_restart();
         }
         return true;
     }
-    if (paused) return true;
+    // One owner at a time: whoever got true here (the relay, or a link test's
+    // timed pause) is the only one that resumes. A second caller is refused,
+    // or it would believe it owns a pause the first one ends under it.
+    if (paused) return false;
     if (!is_keyboard_master() || !is_transport_connected()) return false;
     paused      = true;
     entry_clear = true;

@@ -28,15 +28,21 @@ void sval_link_stopping(void);
 // The half with USB pairs on the first presence ping the other half answers,
 // and loses it when the split transport counts as disconnected (the 200 ms
 // check, SPLIT_MIN_DISCONNECT_MS). The other half pairs on the first presence
-// ping it gets, and loses it when pings stop for SVAL_LINK_SUB_LOST_MS.
+// ping it gets, and loses it when pings stop for SVAL_LINK_SUB_LOST_MS
+// (SVAL_LINK_SUB_BUSY_MS after a BUSY ping).
 void sval_link_task(void);
 // The presence ping's link_quiet byte (svalboard.h).
 #define SVAL_LINK_QUIET_SUSPEND 1  // the half with USB is in USB suspend
 #define SVAL_LINK_QUIET_STOPPING 2 // its last ping before it restarts on purpose
+// Its main loop stops for a flash erase next (a settings consolidation, several
+// seconds in all, svalboard.c). Older halves read it as a plain ping.
+#define SVAL_LINK_QUIET_BUSY 3
 
-// The other half: a presence ping came in. quiet: the half with USB is in USB
-// suspend (its own light is dark then, and so is this half's).
-void sval_link_ping_seen(bool quiet);
+// The other half: a presence ping came in, with its link_quiet byte. SUSPEND:
+// the half with USB is in USB suspend (its own light is dark then, and so is
+// this half's). This runs on the split SlaveThread, so it only notes the
+// ping; sval_link_task, on the main loop, pairs (or stops) from the note.
+void sval_link_ping_seen(uint8_t link_quiet);
 // The half with USB: the presence ping's quiet byte.
 bool sval_link_quiet(void);
 

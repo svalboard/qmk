@@ -21,6 +21,12 @@
 #ifndef SVAL_LINK_SUB_LOST_MS
 #    define SVAL_LINK_SUB_LOST_MS 1500
 #endif
+// After a BUSY ping: the half with USB pings before each 64 KiB erase of a
+// settings consolidation, and one erase and the copy written after it take
+// up to about 3 s at the flash's datasheet maximum.
+#ifndef SVAL_LINK_SUB_BUSY_MS
+#    define SVAL_LINK_SUB_BUSY_MS 5000
+#endif
 // The half with USB after a stop on purpose: it pairs again once the link has gone
 // down and up, or after this long if the link never went down (a restart that did
 // not happen).
@@ -37,9 +43,14 @@ static bool cable_lost;   // the transport check fired while paired
 static bool     stop_wait;   // stopped on purpose: wait for the link to go down (or the delay)
 static bool     stop_down;   // the link went down since the stop
 static uint32_t stopped_at;
-// the other half
-static bool     sub_paired, sub_quiet;
-static uint32_t sub_last_ping;
+// the other half: sub_paired is the main loop's own; the rest is written by
+// the presence ping on the SlaveThread (sval_link_ping_seen), which preempts
+// the main loop, and only read here.
+static bool              sub_paired;
+static volatile bool     sub_quiet, sub_busy;
+static volatile bool     sub_ping_due; // a ping came in since the last pass
+static volatile bool     sub_stop_due; // a STOPPING ping came in since the last pass
+static volatile uint32_t sub_last_ping;
 
 #ifdef SVAL_LINK_TEST
 static uint16_t last_gap_ms;     // the other half: silence when it called the loss
@@ -80,12 +91,40 @@ void sval_link_stopped(void) {
     stopped_at   = timer_read32();
 }
 
-void sval_link_ping_seen(bool quiet) {
+// Only notes the ping: pairing here raced the main loop's loss check, and a ping
+// that landed inside it left the light on over a working link.
+void sval_link_ping_seen(uint8_t link_quiet) {
+    if (link_quiet == SVAL_LINK_QUIET_STOPPING) {
+        sub_stop_due = true;
+        return;
+    }
     sub_last_ping = timer_read32();
-    sub_quiet     = quiet;
-    if (!sub_paired) {
-        sub_paired = true;
-        sval_link_paired();
+    sub_quiet     = link_quiet == SVAL_LINK_QUIET_SUSPEND;
+    sub_busy      = link_quiet == SVAL_LINK_QUIET_BUSY;
+    sub_ping_due  = true; // last: the time is in place when the main loop sees it
+}
+
+// The other half, every pass: a stop first, then a ping, then the silence. A
+// ping that comes in during the silence check stamps the time the check reads,
+// or is seen on the next pass, which pairs again and clears the loss.
+static void sub_task(void) {
+    if (sub_stop_due) {
+        sub_stop_due = false;
+        sub_ping_due = false; // the ping before it
+        sval_link_stopped();
+    } else if (sub_ping_due) {
+        sub_ping_due = false;
+        if (!sub_paired) {
+            sub_paired = true;
+            sval_link_paired();
+        }
+    } else if (sub_paired && !sub_quiet && timer_elapsed32(sub_last_ping) > (sub_busy ? SVAL_LINK_SUB_BUSY_MS : SVAL_LINK_SUB_LOST_MS)) {
+#ifdef SVAL_LINK_TEST
+        uint32_t gap = timer_elapsed32(sub_last_ping);
+        last_gap_ms  = gap > 0xFFFF ? 0xFFFF : (uint16_t)gap;
+#endif
+        sub_paired = false;
+        sval_link_lost();
     }
 }
 
@@ -114,13 +153,8 @@ void sval_link_task(void) {
             cable_paired = true;
             sval_link_paired();
         }
-    } else if (sub_paired && !sub_quiet && timer_elapsed32(sub_last_ping) > SVAL_LINK_SUB_LOST_MS) {
-#ifdef SVAL_LINK_TEST
-        uint32_t gap = timer_elapsed32(sub_last_ping);
-        last_gap_ms  = gap > 0xFFFF ? 0xFFFF : (uint16_t)gap;
-#endif
-        sub_paired = false;
-        sval_link_lost();
+    } else {
+        sub_task();
     }
 #ifdef SVAL_LINK_TEST
     sval_link_test_task();
