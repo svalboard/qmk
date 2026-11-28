@@ -7,6 +7,7 @@
 #include "ps2.h"
 #include "svalboard.h"
 #include "pointing_detect.h"
+#include "pointer_speed.h"
 
 // Whether a PS/2 device answered Get Device ID at init, and the ID it sent.
 static bool    tp_found = false;
@@ -31,7 +32,27 @@ uint8_t sval_pointer_retry_own(void) {
 }
 #endif
 
-// Override get_report to apply axis rotation for svalboard orientation
+// The Pointer speed, as a DPI (800 is 1:1; pointer_speed.h). 0 until the half
+// with the board's settings sends one, which is also 1:1. A TrackPoint has no
+// DPI to set, so the speed is applied here, to its counts.
+static uint16_t        tp_cpi = 0;
+static sval_tp_scale_t tp_scale;
+
+static void sval_tp_apply_cpi(uint16_t cpi) {
+    tp_cpi = cpi;
+}
+
+#ifndef SVAL_POINTING_AUTO
+void pointing_device_driver_set_cpi(uint16_t cpi) {
+    sval_tp_apply_cpi(cpi);
+}
+
+uint16_t pointing_device_driver_get_cpi(void) {
+    return tp_cpi;
+}
+#endif
+
+// Override get_report to apply axis rotation for svalboard orientation, then the Pointer speed
 report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
     mouse_report = ps2_mouse_get_report(mouse_report);
 
@@ -39,6 +60,13 @@ report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
     int16_t swap = mouse_report.x;
     mouse_report.x = mouse_report.y;
     mouse_report.y = -swap;
+
+    // At 800 (and before any speed is set) the counts pass through untouched.
+    int32_t x, y;
+    sval_tp_scale(&tp_scale, tp_cpi, mouse_report.x, mouse_report.y, &x, &y);
+    const int32_t lim = (1L << (8 * sizeof(mouse_xy_report_t) - 1)) - 1;
+    mouse_report.x    = x > lim ? lim : x < -lim ? -lim : x;
+    mouse_report.y    = y > lim ? lim : y < -lim ? -lim : y;
 
     return mouse_report;
 }

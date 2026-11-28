@@ -17,7 +17,8 @@
 //
 // 2. KEYBOARD_UPDATE, a new split RPC (SPLIT_TRANSACTION_IDS_KB, SVAL_UPDATER
 //    builds only). Master to slave, at most 32 bytes each way
-//    (RPC_M2S_BUFFER_SIZE / RPC_S2M_BUFFER_SIZE, quantum/split_common/transport.h):
+//    (RPC_M2S_BUFFER_SIZE / RPC_S2M_BUFFER_SIZE, quantum/split_common/transport.h),
+//    except PAGE2 requests (the fast path, below), at most 248 bytes:
 //
 //      request  [op][seq][payload ...][crc16 LE]
 //      response [status][op][seq][state][payload ...][crc16 LE]
@@ -33,8 +34,8 @@
 //    0x00 INFO    -                               proto, hand, pointing_id, fw_version u32, git_hash u32,
 //                                                 storage_format, security_epoch u16, flags (bit0 die is
 //                                                 16 MiB, bit1 settings writes failing, bit2 release build,
-//                                                 bit3 test hooks, bit4 reserved, bit5 git
-//                                                 tree dirty)                                        (15 B)
+//                                                 bit3 test hooks, bit4 the fast path (FAST, below),
+//                                                 bit5 git tree dirty)                               (15 B)
 //    0x01 BEGIN   off u8, n 1..26, bytes          bytes filled u8 (of 108)                            (1 B)
 //                 The 108-byte manifest, in order; offset 0 starts a new session. The
 //                 fragment that completes it starts the slave's own manifest check and
@@ -55,6 +56,23 @@
 //                 resets every stored setting (D39). Protocol 2 and 3 halves do not know the op
 //                 and send no answer. mode (D44, optional): 0 defaults, 1 blank (then every
 //                 key KC_NO); a half from before D44 answers a 5-byte payload INVALID.
+//    0x08 PAGE2   off u24, n 1..240, bytes        next offset u24                                     (3 B)
+//                 The fast path's PAGE: up to 240 image bytes, and a fragment may cross a
+//                 256 B page (the slave programs the page it completes, then keeps the rest).
+//                 The same order and repeat rules as PAGE. Up to 248 bytes on the wire.
+//    0x09 FAST    mode u8 (1)                     -   the next session (BEGIN offset 0) runs the
+//                 fast path: the slave erases its slot in 64 KiB blocks, hashes pages as they
+//                 arrive, takes PAGE2 and stops scanning its keys while it receives. Only with
+//                 no session (else BUSY).
+//
+//    The fast path (both halves on a build with it). An old half takes the RPC
+//    length from the wire with no bound (quantum/split_common/transactions.c,
+//    slave_rpc_info_callback) into a 32-byte buffer, so a frame over 32 bytes
+//    must never reach one. The master reads INFO at the start of every relay,
+//    and sends FAST and any PAGE2 only after INFO flags bit4 was seen in that
+//    relay; after any request that went without a valid answer (the other half
+//    may have restarted, perhaps into an old build), it reads INFO again before
+//    the next PAGE2. It never tries a large frame to see whether it works.
 //
 //    status is an update_status_t, state the slave's update_state_t. A request
 //    that fails its CRC or its op's length rules is answered INVALID and
@@ -128,6 +146,11 @@ uint8_t usplit_presence_compare(const void *rsp, size_t len, const update_build_
 #define USPLIT_BEGIN_DATA_MAX (USPLIT_MSG_MAX - USPLIT_REQ_HDR - 2 - USPLIT_CRC_BYTES) // 26
 #define USPLIT_PAGE_DATA_MAX (USPLIT_MSG_MAX - USPLIT_REQ_HDR - 4 - USPLIT_CRC_BYTES)  // 24
 #define USPLIT_PAGE_BYTES 256
+// The fast path: PAGE2 requests, up to USPLIT_MSG2_MAX bytes (the RPC buffer
+// toward the half without USB is that large in builds with it: config.h).
+#define USPLIT_PAGE2_DATA_MAX 240
+#define USPLIT_MSG2_MAX (USPLIT_REQ_HDR + 4 + USPLIT_PAGE2_DATA_MAX + USPLIT_CRC_BYTES) // 248
+#define USPLIT_INFO_FAST 0x10 // INFO flags bit4
 
 typedef enum {
     USPLIT_OP_INFO   = 0x00,
@@ -138,7 +161,13 @@ typedef enum {
     USPLIT_OP_COMMIT = 0x05,
     USPLIT_OP_ABORT  = 0x06,
     USPLIT_OP_SETTINGS_RESET = 0x07, // protocol 4 (D42)
+    USPLIT_OP_PAGE2          = 0x08, // the fast path
+    USPLIT_OP_FAST           = 0x09, // the fast path
     USPLIT_OP_COUNT,
+    // SVAL_UPDATE_TEST_HOOKS builds only (unknown elsewhere): the half
+    // without USB resets itself 50 ms after answering, as a power cycle would
+    // leave it (SVAL_RELAY_FAULTS, docs/updater.md).
+    USPLIT_OP_TEST_RESET = 0x7E,
 } usplit_op_t;
 
 #define USPLIT_INFO_PAYLOAD 15
@@ -159,15 +188,16 @@ typedef struct {
     uint8_t        n;    // BEGIN, PAGE
     const uint8_t *data; // BEGIN, PAGE: n bytes
     uint16_t       crc_lo16; // COMMIT
-    uint8_t        mode;     // SETTINGS_RESET (D44): 0 defaults, 1 blank
+    uint8_t        mode;     // SETTINGS_RESET (D44): 0 defaults, 1 blank; FAST: 1
 } usplit_req_t;
 
-// Build a request frame into buf (USPLIT_MSG_MAX bytes). Returns its length,
-// or 0 if the payload breaks the op's rules.
+// Build a request frame into buf (USPLIT_MSG_MAX bytes; USPLIT_MSG2_MAX for
+// PAGE2). Returns its length, or 0 if the payload breaks the op's rules.
 uint8_t usplit_req_build(uint8_t *buf, uint8_t op, uint8_t seq, const uint8_t *payload, uint8_t payload_len);
 uint8_t usplit_req_begin(uint8_t *buf, uint8_t seq, uint8_t off, const uint8_t *data, uint8_t n);
 uint8_t usplit_req_page(uint8_t *buf, uint8_t seq, uint32_t off, const uint8_t *data, uint8_t n);
 uint8_t usplit_req_commit(uint8_t *buf, uint8_t seq, uint16_t crc_lo16);
+uint8_t usplit_req_page2(uint8_t *buf, uint8_t seq, uint32_t off, const uint8_t *data, uint8_t n);
 
 // Check and decode a request frame. UPDATE_OK, or UPDATE_INVALID (length, CRC,
 // unknown op, or the op's payload rules) with *r filled as far as known.
@@ -204,3 +234,11 @@ void usplit_pages_init(usplit_pages_t *a, uint32_t image_len);
 // USPLIT_PAGE_DATA_MAX, or the fragment crosses a page. *page_done is the
 // offset of a page this fragment completed (page[] holds it), else UINT32_MAX.
 update_status_t usplit_pages_accept(usplit_pages_t *a, uint32_t off, const uint8_t *data, uint8_t n, uint32_t *page_done);
+
+// One PAGE2 fragment (up to USPLIT_PAGE2_DATA_MAX bytes, which may cross a
+// page). The bytes of the page it completes go to program(page offset, page)
+// first; only when that returns UPDATE_OK is the rest kept and the fragment
+// taken. Any other result is returned and nothing is taken (BUSY: send it
+// again). Otherwise as usplit_pages_accept.
+typedef update_status_t (*usplit_program_t)(uint32_t off, const uint8_t *page);
+update_status_t usplit_pages_accept2(usplit_pages_t *a, uint32_t off, const uint8_t *data, uint8_t n, usplit_program_t program);

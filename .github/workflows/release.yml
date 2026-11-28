@@ -41,6 +41,11 @@ name: Release QMK Firmware
 #   version  the tag and keyboards/svalboard/updater/fw_version.txt (D32):
 #            the tag must be a release tag (above), and the number must go
 #            up past every published release, x tags included
+#   tests    before anything builds: the updater host tests and storage
+#            tests (updater-tests.yml), the native touchpad host tests,
+#            gtests and test images (native-touchpad.yml), and the Svalboard
+#            format and lint check (svalboard-lint.yml). A failing test stops
+#            the release: nothing builds or publishes
 #   build    4 release updater builds (pinned image and toolchain); each
 #            checks its RAM commit code and uploads its ELF and its pair UF2
 #            (make_update.py pair --release, then verify-pair) or, for a
@@ -121,8 +126,20 @@ jobs:
         python3 -I keyboards/svalboard/tools/release_version.py "$GITHUB_REF_NAME" \
           --repo "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT"
 
+  updater-tests:
+    if: github.repository == 'svalboard/qmk'
+    uses: ./.github/workflows/updater-tests.yml
+
+  native-touchpad:
+    if: github.repository == 'svalboard/qmk'
+    uses: ./.github/workflows/native-touchpad.yml
+
+  svalboard-lint:
+    if: github.repository == 'svalboard/qmk'
+    uses: ./.github/workflows/svalboard-lint.yml
+
   build:
-    needs: version
+    needs: [ version, updater-tests, native-touchpad, svalboard-lint ]
     permissions:
       contents: read
     uses: ./.github/workflows/build-firmware.yml
@@ -206,7 +223,7 @@ jobs:
           test -f "release/$f" || { echo "::error::missing $f"; exit 1; }
         done
         # The release body: a few plain lines on what to do with the files.
-        L1="To install by hand, update one half at a time: plug the USB cable into that half's U port, keep the split cable connected, press RESET twice about a quarter of a second apart, and drag svalboard_sval_left_$TAG.uf2 onto the left half's RPI-RP2 drive, or svalboard_sval_right_$TAG.uf2 onto the right half's. Each file tells its half which side it is. Use each file only on its own half. Pictures of the cables and every step: https://docs.svalboard.com/firmware/update/"
+        L1="To install by hand, update one half at a time: plug the USB cable into that half's U port, keep the split cable connected, press RESET twice within 0.6 seconds, and drag svalboard_sval_left_$TAG.uf2 onto the left half's RPI-RP2 drive, or svalboard_sval_right_$TAG.uf2 onto the right half's. Each file tells its half which side it is. Use each file only on its own half. Pictures of the cables and every step: https://docs.svalboard.com/firmware/update/"
         L2="A keyboard that already runs x4 or later can also update from Keybard."
         L3="If you need help, open a ticket in #customer-service on the Svalboard Discord (https://www.svalboard.com/discord)."
         NOTES="$(printf '%s\n\n%s\n\n%s' "$L1" "$L2" "$L3")"

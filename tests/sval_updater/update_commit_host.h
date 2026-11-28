@@ -18,12 +18,12 @@
 
 extern uint32_t update_host_ram0[UPDATE_HOST_RAM0_WORDS];
 
-uint32_t update_host_reg_rd(uint32_t addr);
-void     update_host_reg_wr(uint32_t addr, uint32_t v); // a watchdog trigger does not return
-uint32_t update_host_flash_rd32(uint32_t off);          // checks XIP is on
-void     update_host_primask(bool set);
-uint32_t update_host_vtor_value(const volatile uintptr_t *table);
-bool     update_host_rom_ptr_ok(void *p);
+uint32_t                       update_host_reg_rd(uint32_t addr);
+void                           update_host_reg_wr(uint32_t addr, uint32_t v); // a watchdog trigger does not return
+uint32_t                       update_host_flash_rd32(uint32_t off);          // checks XIP is on
+void                           update_host_primask(bool set);
+uint32_t                       update_host_vtor_value(const volatile uintptr_t *table);
+bool                           update_host_rom_ptr_ok(void *p);
 void __attribute__((noreturn)) update_host_halt(bool fed); // a test-hook halt point
-void     update_host_fault(void);                         // a HardFault: runs the vector table's handler
+void                           update_host_fault(void);    // a HardFault: runs the vector table's handler
 void __attribute__((noreturn)) update_host_spin(void);

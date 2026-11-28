@@ -22,6 +22,7 @@ static uint8_t             pointer_search_skip  = 0;     // buses this search le
 static uint8_t             pointer_init_fails   = 0;     // modules found that didn't start
 static uint32_t            pointer_spi_at       = 0;     // when this search's SPI probe ran
 static bool                pointer_spi_probed   = false; // this search has driven the SPI pins
+static uint32_t            pointer_search_ended = 0;     // when the last search ended (ms after boot)
 static sval_probe_result_t pointer_probe        = {.detected = SVAL_SENSOR_NO_RESPONSE};
 
 static bool sval_pointer_search_wanted(void) {
@@ -31,8 +32,9 @@ static bool sval_pointer_search_wanted(void) {
 }
 
 static void sval_pointer_search_end(void) {
-    pointer_search_step = 0;
-    pointer_probed      = true;
+    pointer_search_step  = 0;
+    pointer_probed       = true;
+    pointer_search_ended = timer_read32();
     pointer_searches++;
     if (!sval_pointer_search_wanted() || pointer_searches >= SVAL_REPROBE_SEARCHES) pointer_search_done = true;
 }
@@ -47,6 +49,7 @@ void sval_pointer_probe_task(void) {
             return;
         }
         if (timer_read32() < due) return; // only within the first 30 s, so the clock can't have wrapped
+        if (pointer_searches > 0 && timer_read32() - pointer_search_ended < SVAL_REPROBE_GAP_MS) return;
         if (!sval_pointer_search_wanted()) { // its own module answered at boot, or is running
             pointer_probed      = true;
             pointer_search_done = true;

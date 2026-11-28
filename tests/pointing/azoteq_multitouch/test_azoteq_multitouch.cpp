@@ -60,6 +60,18 @@ void sval_mt_read_status(i2c_status_t read, i2c_status_t end, uint32_t) {
     observed_read = read;
     observed_end  = end;
 }
+// The keyboard's frame check (azoteq.c in the firmware): off unless a test
+// sets it; it records what it was given and may drop the frame.
+static bool    filter_on, filter_drop, filter_woke;
+static int     filter_calls;
+static uint8_t filter_seen[10];
+bool           azoteq_iqs5xx_frame_filter_kb(uint8_t *base, bool woke) {
+    if (!filter_on) return true;
+    filter_calls++;
+    filter_woke = woke;
+    memcpy(filter_seen, base, 10);
+    return !filter_drop;
+}
 uint8_t pointing_device_handle_buttons(uint8_t buttons, bool pressed, pointing_device_buttons_t button) {
     return pressed ? buttons | (1 << button) : buttons & ~(1 << button);
 }
@@ -419,4 +431,46 @@ TEST_F(AzoteqMultitouch, GestureButtonsReleaseInTheMousePath) {
     EXPECT_EQ(poll(0, 0, 0), 0) << "right button stays down after a two-finger tap";
     EXPECT_EQ(poll(0x01, 0, 0), b1); // single tap
     EXPECT_EQ(poll(0, 0, 0), 0) << "left button stays down after a tap";
+}
+
+// A frame the keyboard drops is never acted on: no button, no contacts.
+TEST_F(AzoteqMultitouch, DroppedFrameReportsNothing) {
+    filter_on = filter_drop = true;
+    filter_calls            = 0;
+    source[0]               = 0;    // a cycle time no real frame has
+    source[2]               = 0x03; // two-finger tap and scroll
+    report_mouse_t report   = azoteq_iqs5xx_get_report((report_mouse_t){0});
+    EXPECT_EQ(filter_calls, 1);
+    EXPECT_EQ(filter_seen[2], 0x03);
+    EXPECT_FALSE(filter_woke);
+    EXPECT_EQ(report.buttons, 0);
+    EXPECT_FALSE(valid);
+    EXPECT_EQ(ends, 1); // the window is still closed
+    filter_on = filter_drop = false;
+}
+
+// The check can clear a gesture bit and keep the frame; it sees the retry.
+TEST_F(AzoteqMultitouch, FilterSeesTheWakeRetry) {
+    filter_on      = true;
+    filter_drop    = false;
+    read_status    = I2C_STATUS_ERROR; // NACK, then the retry answers
+    recover_second = true;
+    source[0]      = 10;
+    report_mouse_t report = azoteq_iqs5xx_get_report((report_mouse_t){0});
+    EXPECT_TRUE(filter_woke);
+    EXPECT_TRUE(valid);
+    EXPECT_EQ(report.buttons, 0);
+    filter_on = false;
+}
+
+// A failed read never reaches the check, and reports nothing.
+TEST_F(AzoteqMultitouch, FailedReadIsNotChecked) {
+    filter_on    = true;
+    filter_calls = 0;
+    read_status  = I2C_STATUS_TIMEOUT;
+    source[2]    = 0x01;
+    report_mouse_t report = azoteq_iqs5xx_get_report((report_mouse_t){0});
+    EXPECT_EQ(filter_calls, 0);
+    EXPECT_EQ(report.buttons, 0);
+    filter_on = false;
 }

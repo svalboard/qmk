@@ -43,6 +43,12 @@ typedef struct __attribute__((packed)) {
 STATIC_ASSERT(sizeof(pmw33xx_report_t) == 6, "pmw33xx_report_t must be 6 bytes in size");
 STATIC_ASSERT(sizeof((pmw33xx_report_t){0}.motion) == 1, "pmw33xx_report_t.motion must be 1 byte in size");
 
+// Svalboard: the six bytes after the motion data in the last burst, when a host polls Sval 0x39
+// (keyboards/svalboard/squal.c); pmw33xx_burst_has_extra says whether that burst carried them.
+extern uint8_t pmw33xx_burst_extra[6];
+extern bool    pmw33xx_burst_has_extra;
+bool           sval_squal_wanted(void);
+
 #if !defined(PMW33XX_CLOCK_SPEED)
 #    define PMW33XX_CLOCK_SPEED 2000000
 #endif

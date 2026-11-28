@@ -18,6 +18,11 @@ void sval_link_recovered(void);
 // armed until paired again. The half with USB pairs again only once the link has
 // gone down and up, or after SVAL_LINK_REARM_MS if it never went down.
 void sval_link_stopped(void);
+// This half restarts on purpose (svalboard.c): sval_link_stopped(), and the half
+// with USB sends the other half its last ping, with SVAL_LINK_QUIET_STOPPING.
+// From shutdown_kb, and from the updater's own commit, which resets from RAM
+// without QMK's shutdown.
+void sval_link_stopping(void);
 
 // Every housekeeping pass, on both halves: the split cable's own pairing.
 // The half with USB pairs on the first presence ping the other half answers,

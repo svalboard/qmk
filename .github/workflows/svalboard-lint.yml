@@ -1,0 +1,67 @@
+name: Svalboard format and lint
+
+# Checks every Svalboard file (keyboards/svalboard, modules/svalboard,
+# tests/sval_*) with the QMK formatters, validates the Svalboard keyboard
+# definitions, targets and aliases, and fails on any finding. It changes
+# nothing: format_svalboard.yml applies the formatting. `qmk lint` is not used:
+# it enforces QMK submission policy (license headers, no keyboard-level
+# VIA/combo/tap-dance) that this fork intentionally does not follow.
+#
+# release.yml runs it before building a release; run it by hand with
+#   gh workflow run svalboard-lint.yml -R svalboard/qmk
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    container: ghcr.io/qmk/qmk_cli
+
+    steps:
+    - name: Disable safe.directory check
+      run: git config --global --add safe.directory '*'
+
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Install dependencies
+      run: pip3 install -r requirements-dev.txt
+
+    - name: Svalboard files are formatted
+      shell: 'bash {0}'
+      run: |
+        git ls-files 'keyboards/svalboard/**' 'modules/svalboard/**' 'tests/sval_*/**' > ~/files.txt
+        qmk format-c --core-only $(< ~/files.txt) || true
+        qmk format-python $(< ~/files.txt) || true
+        qmk format-text $(< ~/files.txt) || true
+        git diff
+        for file in $(git diff --name-only); do
+          echo "::error file=${file}::Requires formatting"
+        done
+        test -z "$(git diff --name-only)"
+
+    - name: Validate Svalboard keyboard definitions
+      if: always()
+      shell: 'bash {0}'
+      run: |
+        exit_code=0
+        for KB in $(qmk list-keyboards | grep '^svalboard/'); do
+          echo "validating ${KB}"
+          qmk info -l --keyboard ${KB} > /dev/null || exit_code=$(($exit_code + 1))
+        done
+        exit $exit_code
+
+    - name: Verify Svalboard targets and aliases
+      if: always()
+      shell: 'bash {0}'
+      run: |
+        git reset --hard
+        { qmk ci-validate-keyboard-targets; qmk ci-validate-aliases; } 2>&1 | tee ~/validate.txt
+        ! grep -i 'svalboard' ~/validate.txt

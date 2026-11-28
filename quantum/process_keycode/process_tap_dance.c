@@ -83,7 +83,7 @@ void tap_dance_pair_reset(tap_dance_state_t *state, void *user_data) {
     tap_dance_pair_t *pair = (tap_dance_pair_t *)user_data;
 
     if (state->count == 1) {
-        wait_ms(get_tap_code_delay());
+        wait_ms(GET_TAP_CODE_DELAY());
         unregister_code16(pair->kc1);
     } else if (state->count == 2) {
         unregister_code16(pair->kc2);
@@ -113,7 +113,7 @@ void tap_dance_dual_role_reset(tap_dance_state_t *state, void *user_data) {
     tap_dance_dual_role_t *pair = (tap_dance_dual_role_t *)user_data;
 
     if (state->count == 1) {
-        wait_ms(get_tap_code_delay());
+        wait_ms(GET_TAP_CODE_DELAY());
         unregister_code16(pair->kc);
     }
 }

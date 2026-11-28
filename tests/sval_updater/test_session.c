@@ -16,6 +16,7 @@
 #include "update_led.h"
 #include "update_commit.h"
 #include "update_split.h"
+#include "update_split_wire.h"
 
 void updater_host_reset(void);
 void update_split_host_slave_reset(void);
@@ -57,6 +58,15 @@ static uint8_t port_split_presence; // update_presence_status_t
 static bool    presence_sim;        // presence from the simulated pings (update_split.c) instead
 uint8_t        updater_port_split_presence(void) {
     return presence_sim ? update_split_presence() : port_split_presence;
+}
+// The session watchdog's feed (updater_port_alive): calls on each half.
+static uint32_t alive_master, alive_slave;
+void            updater_port_alive(void) {
+    if (sim_slave) {
+        alive_slave++;
+    } else {
+        alive_master++;
+    }
 }
 #define HOST_STACK_SIZE 0xAE0
 #define HOST_STACK_FREE 0x2A4
@@ -162,12 +172,14 @@ static uint64_t slave_busy_until_us;
 static uint32_t slave_busy_rpcs; // RPCs that failed for it
 #define SIM_ERASE_US 50000       // M1 #13: a sector erase 50-53 ms
 #define SIM_SLAVE_COMMIT_US 1500000
+static uint64_t sim_block_busy_us = 3 * SIM_ERASE_US; // a 64 KiB block erase, about 150 ms (2 s at most)
 // DMA busy when the other half programs a page (update_split_port_program_page).
 static uint32_t       dma_busy_pct, dma_refusals;
-static bool           slave_hk_frozen;  // the other half's housekeeping does not run (it is stuck)
-static int            drop_rsp_op = -1; // every answer to requests with this op is lost
-static bool           old_slave;        // the other half on protocol 3: KEYBOARD_UPDATE op 0x07 is unknown there
-static const uint8_t *master_slot;      // this half's slot for the relay; NULL: the die's
+static bool           slave_hk_frozen;    // the other half's housekeeping does not run (it is stuck)
+static int            drop_rsp_op   = -1; // every answer to requests with this op is lost
+static int            drop_rsp_left = -1; // with drop_rsp_op: answers still to lose (-1: every one)
+static bool           old_slave;          // the other half on protocol 3: KEYBOARD_UPDATE op 0x07 is unknown there
+static const uint8_t *master_slot;        // this half's slot for the relay; NULL: the die's
 static uint8_t        shadow[SVAL_UPDATE_MAX_IMAGE];
 static bool           auto_shadow; // the relay's pause takes a copy of the die's slot as this half's (tool tests)
 static struct {
@@ -175,21 +187,32 @@ static struct {
     uint32_t drop_req, drop_rsp, flip_req, flip_rsp, dup, replay, stale; // percent chance per RPC
     uint32_t faults;                                                     // faults injected
 } lk;
-static uint8_t  hist[8][USPLIT_MSG_MAX], hist_len[8]; // the last requests, for replays
+static uint8_t  hist[8][USPLIT_MSG2_MAX], hist_len[8]; // the last requests, for replays
 static uint32_t hist_n;
 static uint64_t last_ping_us;
-static uint64_t last_slave_rx_us; // when the other half last got a request
-#define SIM_RPC_US 600            // four transactions at 1 Mbaud, with the handshakes
-#define SIM_RPC_FAIL_US 20000     // a transaction that times out (SERIAL_USART_TIMEOUT)
+static uint64_t last_slave_rx_us;  // when the other half last got a request
+#define SIM_RPC_US 600             // four transactions at 1 Mbaud, with the handshakes
+#define SIM_RPC_FAIL_US 20000      // a transaction that times out (SERIAL_USART_TIMEOUT)
+#define SIM_RPC_QUICK_FAIL_US 3000 // the same at the short deadline (SERIAL_USART_SHORT_TIMEOUT)
 
+uint32_t update_split_port_now_us(void) {
+    return (uint32_t)sim_us;
+}
 uint32_t update_split_port_now_ms(void) {
     return (uint32_t)(sim_us / 1000);
 }
 void update_split_port_build_id(update_build_id_t *id) {
     *id = sim_slave ? slave_id : master_id;
 }
-uint8_t update_split_port_info_flags(void) {
-    return 0x01 | (port_failing ? 0x02 : 0);
+// The fast path (update_split_wire.h): whether each half's build has it. A
+// half without it has a 32-byte RPC buffer: any longer request to it is
+// counted (oversize_to_old) and must never happen.
+static bool     master_fast = true, slave_fast = true;
+static bool     fast_default = true; // what fresh() sets both to (test_relay runs both ways)
+static uint32_t oversize_to_old, oversize_rpcs, oversize_to_old_ever;
+static bool     drop_big; // every request over 32 bytes is lost
+uint8_t         update_split_port_info_flags(void) {
+    return 0x01 | (port_failing ? 0x02 : 0) | ((sim_slave ? slave_fast : master_fast) ? USPLIT_INFO_FAST : 0);
 }
 bool update_split_port_updating(void) {
     return sim_slave ? update_split_slave_active() : updater_active();
@@ -205,6 +228,7 @@ void update_split_port_unlock(void) {
     unlocks++;
     if (unlock_hook) unlock_hook(unlocks);
 }
+void update_split_port_watchdog_ping(void) {}
 bool update_split_port_pause(bool on) {
     if (sim_slave) return false;
     if (on) {
@@ -269,6 +293,12 @@ void updater_port_reboot(void) {
     master_reset_pending = true;
     master_next_fw       = master_id.fw_version;
 }
+// The link light's last ping before this half's own commit (sval_link_stopping).
+static int master_stop_pings, stop_ping_commits = -1; // commit runs when the last one went
+void       updater_port_restarting(void) {
+    master_stop_pings++;
+    stop_ping_commits = commit_runs;
+}
 update_status_t update_split_port_settings_invalidate(uint8_t mode) {
     if (chance(dma_busy_pct)) {
         dma_refusals++;
@@ -287,27 +317,54 @@ void update_split_port_reboot(void) {
 
 // The other half's callback, as the SlaveThread runs it.
 static void slave_rpc(const uint8_t *in, uint8_t len, uint8_t *out, uint8_t out_len) {
-    bool was  = sim_slave;
-    sim_slave = true;
+    bool     was    = sim_slave;
+    uint32_t writes = slot_writes; // its own die: this half's slot write count stays
+    sim_slave       = true;
     update_split_slave_rpc(in, len, out, out_len);
-    sim_slave = was;
+    sim_slave   = was;
+    slot_writes = writes;
 }
 
+static uint32_t rpc_fail_us = SIM_RPC_FAIL_US; // what a transaction that times out costs now
+static uint32_t quick_rpcs;
+bool            update_split_port_rpc_quick(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
+    quick_rpcs++;
+    rpc_fail_us = SIM_RPC_QUICK_FAIL_US;
+    bool ok     = update_split_port_rpc(req, req_len, rsp, rsp_len);
+    rpc_fail_us = SIM_RPC_FAIL_US;
+    return ok;
+}
 bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, uint8_t rsp_len) {
-    if (sim_slave || req_len > USPLIT_MSG_MAX || rsp_len > USPLIT_MSG_MAX) {
+    if (sim_slave || req_len > USPLIT_MSG2_MAX || rsp_len > USPLIT_MSG_MAX || (!master_fast && req_len > USPLIT_MSG_MAX)) {
         lock_errors++;
         return false;
     }
     lk.n++;
-    sim_us += SIM_RPC_US;
-    if (!link_up || link_dead) {
-        sim_us += SIM_RPC_FAIL_US;
+    sim_us += SIM_RPC_US + (req_len > USPLIT_MSG_MAX ? (uint32_t)(req_len - USPLIT_MSG_MAX) * 10 : 0); // 10 us a byte at 1 Mbaud
+    if (!link_up || link_dead) {                                                                       // nothing arrives
+        sim_us += rpc_fail_us;
         return false;
     }
     if (sim_us < slave_busy_until_us) { // its interrupts are off: no answer
         slave_busy_rpcs++;
-        sim_us += SIM_RPC_FAIL_US;
+        sim_us += rpc_fail_us;
         return false;
+    }
+    if (req_len > USPLIT_MSG_MAX && drop_big) {
+        sim_us += rpc_fail_us;
+        return false;
+    }
+    if (req_len > USPLIT_MSG_MAX) {
+        oversize_rpcs++;
+        if (!slave_fast) {
+            // A half without the fast path, listening: it would write past its
+            // 32-byte buffer (QMK's RPC info callback takes the length from
+            // the wire). This must never happen.
+            oversize_to_old++;
+            oversize_to_old_ever++;
+            sim_us += rpc_fail_us;
+            return false;
+        }
     }
     if (old_slave && req[0] == USPLIT_OP_SETTINGS_RESET) {
         memset(rsp, 0, rsp_len); // an unknown op builds no answer (update_split_slave_rpc)
@@ -318,11 +375,11 @@ bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, ui
         usplit_rsp_build(rsp, rsp_len, UPDATE_INVALID, USPLIT_OP_SETTINGS_RESET, req[1], UPDATE_STATE_IDLE, NULL);
         return true;
     }
-    uint8_t in[USPLIT_MSG_MAX], out[USPLIT_MSG_MAX];
+    uint8_t in[USPLIT_MSG2_MAX], out[USPLIT_MSG_MAX];
     memcpy(in, req, req_len);
     if (chance(lk.drop_req)) { // lost on the way: the other half never runs it
         lk.faults++;
-        sim_us += SIM_RPC_FAIL_US;
+        sim_us += rpc_fail_us;
         return false;
     }
     if (chance(lk.replay) && hist_n) { // an older request arrives first (reordered)
@@ -352,9 +409,10 @@ bool update_split_port_rpc(const uint8_t *req, uint8_t req_len, uint8_t *rsp, ui
         hist_len[hist_n % 8] = req_len;
         hist_n++;
     }
-    if (chance(lk.drop_rsp) || (drop_rsp_op >= 0 && req[0] == drop_rsp_op)) { // the answer is lost
+    if (chance(lk.drop_rsp) || (drop_rsp_op >= 0 && req[0] == drop_rsp_op && drop_rsp_left != 0)) { // the answer is lost
+        if (drop_rsp_op >= 0 && req[0] == drop_rsp_op && drop_rsp_left > 0) drop_rsp_left--;
         lk.faults++;
-        sim_us += SIM_RPC_FAIL_US;
+        sim_us += rpc_fail_us;
         return false;
     }
     if (chance(lk.flip_rsp) && rsp_len) {
@@ -375,11 +433,11 @@ static void slave_reboot(void) {
 // The other half's housekeeping pass.
 static void slave_hk(void) {
     if (sim_us < slave_busy_until_us || slave_hk_frozen) return; // still erasing, or committing
-    int erases = erase_ops, commits = slave_commit_runs;
+    int erases = erase_ops, blocks = block_erases, commits = slave_commit_runs;
     sim_slave = true;
     update_split_slave_task();
     sim_slave = false;
-    if (slave_irq_sim && erase_ops != erases) slave_busy_until_us = sim_us + SIM_ERASE_US;
+    if (slave_irq_sim && erase_ops != erases) slave_busy_until_us = sim_us + (block_erases != blocks ? sim_block_busy_us : SIM_ERASE_US);
     if (slave_irq_sim && slave_commit_runs != commits) slave_busy_until_us = sim_us + SIM_SLAVE_COMMIT_US;
     if (slave_reset_pending) {
         slave_reset_pending = false;
@@ -387,6 +445,15 @@ static void slave_hk(void) {
         slave_id.fw_version = slave_next_fw;
     }
 }
+
+// The other half writes its own die: this half's slot write count
+// (update_flash_writes(), BEGIN reuse) stays as it was.
+static void slave_hk_own_die(void) {
+    uint32_t writes = slot_writes;
+    slave_hk();
+    slot_writes = writes;
+}
+#define slave_hk slave_hk_own_die
 
 // The 500 ms presence ping (svalboard.c), skipped while paused, with the
 // other half's real presence answer.
@@ -419,7 +486,7 @@ _Static_assert(T_REPORT == 64, "64-byte raw HID reports");
 static uint8_t  rsp[T_VALUE];
 static uint8_t  req_hand = UPDATE_HAND_RIGHT;
 static uint8_t  req_cmd  = 0x07; // id_custom_set_value
-static uint64_t max_op_us, max_pass_us, sig_pass_us;
+static uint64_t max_op_us, max_pass_us, sig_pass_us, erase_pass_us;
 
 static uint32_t get24le(const uint8_t *p) {
     return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16);
@@ -480,6 +547,8 @@ static void pass(void) {
     }
     if (before == UPDATE_STATE_VERIFYING_MANIFEST) {
         if (dt > sig_pass_us) sig_pass_us = dt;
+    } else if (before == UPDATE_STATE_ERASING) {
+        if (dt > erase_pass_us) erase_pass_us = dt; // one block or one sector per pass
     } else if (dt > max_pass_us) {
         max_pass_us = dt;
     }
@@ -640,9 +709,13 @@ static void fresh(uint32_t len) {
     dma_busy_pct = dma_refusals = 0;
     slave_hk_frozen             = false;
     drop_rsp_op                 = -1;
+    drop_rsp_left               = -1;
     old_slave                   = false;
-    master_slot                 = NULL;
-    auto_shadow                 = false;
+    master_fast = slave_fast = fast_default;
+    oversize_to_old = oversize_rpcs = 0;
+    sim_block_busy_us               = 3 * SIM_ERASE_US;
+    master_slot                     = NULL;
+    auto_shadow                     = false;
     memset(&lk, 0, sizeof(lk));
     hist_n                   = 0;
     last_ping_us             = 0;
@@ -697,7 +770,10 @@ static void test_session_info_and_wrapper(void) {
     CHECK_EQ(rsp[23], T_CHUNK);
     CHECK_EQ(rsp[24], T_MPIECE);
     CHECK_EQ(rsp[25], T_REPORT);
-    for (int i = 26; i < T_VALUE; i++)
+    // faster uploads: a CHUNK window of 16 and BEGIN reuse; nothing after them
+    CHECK_EQ(rsp[26], UPDATE_CAP_CHUNK_WINDOW | UPDATE_CAP_REUSE_STAGED | UPDATE_CAP_BLOCK_ERASE);
+    CHECK_EQ(rsp[27], UPDATE_CHUNK_WINDOW);
+    for (int i = 28; i < T_VALUE; i++)
         CHECK_EQ(rsp[i], 0);
     // INFO page 1 (M3): the version from the build-info record; no wrapper needed
     const uint8_t page1 = 1, page2 = 2;
@@ -793,9 +869,9 @@ static void test_session_happy_path(void) {
     fresh(0x30000);                                                       // 48 sectors, across three 64 KiB blocks
     memset(update_host_flash + SVAL_UPDATE_BASE, 0x00, SVAL_UPDATE_SIZE); // every sector needs erasing
     snap();
-    max_op_us = max_pass_us = sig_pass_us = 0;
-    led_seen                              = 0;
-    const uint8_t clear                   = 1;
+    max_op_us = max_pass_us = sig_pass_us = erase_pass_us = 0;
+    led_seen                                              = 0;
+    const uint8_t clear                                   = 1;
     CHECK_EQ(send(CLIENT_C, UPDATE_OP_DIAG, &clear, 1), UPDATE_OK); // restart the longest-pass record
 
     // record each distinct state, in order
@@ -837,7 +913,7 @@ static void test_session_happy_path(void) {
         CHECK(updater_state() != UPDATE_STATE_ERROR);
     }
     CHECK_EQ(led_now, UPDATE_LED_PROGRESS);
-    CHECK_EQ(sector_erases, 0x30000 / 4096);
+    CHECK_EQ(sector_erases, 0x30000 / 4096); // a BEGIN without flags (an older host): sectors, as before
     CHECK_EQ(block_erases, 0);
     CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
     CHECK_EQ(get16le(rsp + 8), 48);
@@ -915,9 +991,11 @@ static void test_session_happy_path(void) {
         CHECK_EQ(seen[i], want[i]);
     CHECK_EQ(led_shown, (1 << UPDATE_LED_CONFIRM) | (1 << UPDATE_LED_CHORD) | (1 << UPDATE_LED_PROGRESS) | (1 << UPDATE_LED_WRITING) | (1 << UPDATE_LED_ERROR));
 
-    // the 50 ms budget, in simulated flash time
-    printf("longest op %llu us, longest pass %llu us\n", (unsigned long long)max_op_us, (unsigned long long)max_pass_us);
+    // the 50 ms budget, in simulated flash time, for an older host's session:
+    // an erase pass is one sector
+    printf("longest op %llu us, longest pass %llu us, longest erase pass %llu us\n", (unsigned long long)max_op_us, (unsigned long long)max_pass_us, (unsigned long long)erase_pass_us);
     CHECK(max_op_us + max_pass_us <= 50000);
+    CHECK(max_op_us + erase_pass_us <= 50000);
     CHECK(max_op_us <= SIM_PAGE_PROGRAM_US); // at most one page per CHUNK
 
     // the commit refused and returned: no commit marker is left for the next boot
@@ -1309,6 +1387,49 @@ static void test_session_timeouts(void) {
     wait_ms(200);
     CHECK_EQ(commit_runs, 1);
     CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
+}
+
+// A host that went away leaves a latched ERROR. It holds the board
+// (updater_active: the native touchpad paused, the other half's pad, pacing,
+// idle dimming, the link light) only while its red light shows; then the board
+// works as usual, and the error stays for STATUS and ABORT.
+static void test_session_error_lets_go(void) {
+    fresh(0x3000);
+    CHECK(to_confirm_wait(CLIENT_A)); // the chord is never made
+    CHECK(updater_active());
+    wait_ms(SVAL_UPDATE_CONFIRM_WINDOW_MS + 100);
+    CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    CHECK(updater_active());
+    wait_ms(SVAL_UPDATE_RED_MS - 1000);
+    CHECK_EQ(led_now, UPDATE_LED_ERROR);
+    CHECK(updater_active());
+    wait_ms(2000);
+    CHECK_EQ(led_now, UPDATE_LED_NONE);
+    CHECK(!updater_active());
+    CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
+    CHECK_EQ(send(CLIENT_B, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
+    CHECK_EQ(rsp[1], UPDATE_STATE_ERROR);
+    CHECK(rsp[12] != UPDATE_OK);
+    // still no new session before ABORT, which anyone may send
+    uint8_t a[22] = {0, 20};
+    memcpy(a + 2, blob, 20);
+    CHECK_EQ(send(CLIENT_B, UPDATE_OP_MANIFEST, a, sizeof(a)), UPDATE_BUSY);
+    CHECK_EQ(send_nonce(CLIENT_C, UPDATE_OP_ABORT, 0), UPDATE_OK);
+    CHECK_EQ(updater_state(), UPDATE_STATE_IDLE);
+    CHECK(!updater_active());
+
+    // The host gone in the middle of the image: the same.
+    fresh(0x3000);
+    CHECK(to_receiving(CLIENT_A));
+    CHECK_EQ(send_chunk(CLIENT_A, 0, 18, img), UPDATE_OK);
+    CHECK(updater_active());
+    wait_ms(SVAL_UPDATE_SESSION_TIMEOUT_MS + 100);
+    CHECK_EQ(updater_state(), UPDATE_STATE_ERROR);
+    CHECK(updater_active());
+    wait_ms(SVAL_UPDATE_RED_MS + 1000);
+    CHECK(!updater_active());
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
 }
 
 static update_status_t refusal_after_begin(void) {
@@ -1836,8 +1957,134 @@ static void test_session_link_light(void) {
     CHECK_EQ(led_now, UPDATE_LED_NONE);
 }
 
+// The staging erase (BEGIN with UPDATE_BEGIN_BLOCK_ERASE): whole 64 KiB blocks
+// from offset 0, sectors only for a tail shorter than a block, never past the
+// image's last sector, and nothing outside the slot. A block that already
+// reads erased is skipped. Without the flag (an older host): sectors only.
+static void erase_case_flags(uint32_t len, int want_blocks, int want_sectors, bool pre_erase_block1, uint8_t flags) {
+    fresh(len);
+    memset(update_host_flash + SVAL_UPDATE_BASE, 0x00, SVAL_UPDATE_SIZE); // every byte needs erasing
+    if (pre_erase_block1) memset(update_host_flash + SVAL_UPDATE_BASE + UPDATE_FLASH_BLOCK, 0xFF, UPDATE_FLASH_BLOCK);
+    snap();
+    uint32_t end = (len + UPDATE_FLASH_SECTOR - 1) / UPDATE_FLASH_SECTOR * UPDATE_FLASH_SECTOR;
+    CHECK(to_confirm_wait(CLIENT_A));
+    chord();
+    uint8_t b[5];
+    put32(b, session_nonce);
+    b[4] = flags;
+    CHECK_EQ(send(CLIENT_A, UPDATE_OP_BEGIN, b, 5), UPDATE_ACCEPTED);
+    int passes = 0;
+    while (updater_state() != UPDATE_STATE_RECEIVING && updater_state() != UPDATE_STATE_ERROR && passes < 2000) {
+        pass();
+        passes++;
+        if (updater_state() == UPDATE_STATE_ERASING) {
+            CHECK_EQ(send_chunk(CLIENT_A, 0, 18, img), UPDATE_BUSY); // the host waits on STATUS
+            CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
+            CHECK_EQ(rsp[1], UPDATE_STATE_ERASING);
+            CHECK(get16le(rsp + 8) < get16le(rsp + 10));
+        }
+    }
+    CHECK_EQ(updater_state(), UPDATE_STATE_RECEIVING);
+    CHECK_EQ(block_erases, want_blocks);
+    CHECK_EQ(sector_erases, want_sectors);
+    CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
+    CHECK_EQ(get16le(rsp + 8), end / UPDATE_FLASH_SECTOR);
+    CHECK_EQ(get16le(rsp + 10), end / UPDATE_FLASH_SECTOR);
+    for (uint32_t i = 0; i < end; i++)
+        if (update_host_flash[SVAL_UPDATE_BASE + i] != 0xFF) {
+            CHECK_EQ(i, end); // the whole image's range reads erased
+            break;
+        }
+    for (uint32_t i = end; i < SVAL_UPDATE_SIZE; i++)
+        if (update_host_flash[SVAL_UPDATE_BASE + i] != (pre_erase_block1 && i >= UPDATE_FLASH_BLOCK && i < 2 * UPDATE_FLASH_BLOCK ? 0xFF : 0x00)) {
+            CHECK_EQ(i, SVAL_UPDATE_SIZE); // nothing past the image's last sector
+            break;
+        }
+    CHECK(unchanged_outside(SVAL_UPDATE_BASE, SVAL_UPDATE_BASE + SVAL_UPDATE_SIZE));
+    CHECK_EQ(outside_ops, 0);
+    CHECK_EQ(sequence_errors, 0);
+    if (len <= 0x40000) { // and the image goes in and verifies
+        CHECK_EQ(send_image(CLIENT_A, 0, img_len), UPDATE_OK);
+        CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_END, session_nonce), UPDATE_ACCEPTED);
+        passes_until(UPDATE_STATE_VERIFIED, 20000);
+        CHECK_EQ(updater_state(), UPDATE_STATE_VERIFIED);
+        CHECK(memcmp(update_host_flash + SVAL_UPDATE_BASE, img, img_len) == 0);
+    }
+}
+
+static void erase_case(uint32_t len, int want_blocks, int want_sectors, bool pre_erase_block1) {
+    erase_case_flags(len, want_blocks, want_sectors, pre_erase_block1, UPDATE_BEGIN_BLOCK_ERASE);
+}
+
+static void test_session_block_erase(void) {
+    erase_case_flags(0x2C100, 0, 45, false, 0);                                         // an older host's BEGIN: sectors only
+    erase_case_flags(0x2C100, 0, 45, false, UPDATE_BEGIN_REUSE);                        // reuse alone (nothing to keep): sectors
+    erase_case(0x2C100, 2, 13, false);                                                  // 180 KB class: 2 blocks, then a 13-sector tail
+    erase_case(0x2C000, 2, 12, false);                                                  // a tail of whole sectors
+    erase_case(0x3000, 0, 3, false);                                                    // under one block: sectors only
+    erase_case(UPDATE_FLASH_BLOCK, 1, 0, false);                                        // exactly one block
+    erase_case(UPDATE_FLASH_BLOCK + 0x100, 1, 1, false);                                // one page into the next block: one sector
+    erase_case(0x30000, 2, 0, true);                                                    // block 1 already erased: skipped
+    erase_case(SVAL_UPDATE_MAX_IMAGE, SVAL_UPDATE_SIZE / UPDATE_FLASH_BLOCK, 0, false); // the whole slot, no further
+
+    // ABORT lands between blocks: no erase after it
+    fresh(0x30000);
+    memset(update_host_flash + SVAL_UPDATE_BASE, 0x00, SVAL_UPDATE_SIZE);
+    CHECK(to_confirm_wait(CLIENT_A));
+    chord();
+    uint8_t ab[5];
+    put32(ab, session_nonce);
+    ab[4] = UPDATE_BEGIN_BLOCK_ERASE;
+    CHECK_EQ(send(CLIENT_A, UPDATE_OP_BEGIN, ab, 5), UPDATE_ACCEPTED);
+    for (int i = 0; i < 50 && block_erases == 0; i++)
+        pass();
+    CHECK_EQ(block_erases, 1);
+    CHECK_EQ(updater_state(), UPDATE_STATE_ERASING);
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
+    wait_ms(2000);
+    CHECK_EQ(block_erases, 1);
+    CHECK_EQ(updater_state(), UPDATE_STATE_IDLE);
+}
+
+// The session watchdog (updater_port_alive, kb/session_watchdog.c) is fed by
+// every updater_task() pass, every host request, whether or not it is
+// accepted, and every well-formed request from the other half; a frame that
+// fails its check feeds nothing.
+static void test_session_alive_hook(void) {
+    fresh(0x3000);
+    alive_master = alive_slave = 0;
+    updater_task();
+    CHECK_EQ(alive_master, 1);
+    updater_task();
+    CHECK_EQ(alive_master, 2);
+    CHECK_EQ(send(0, UPDATE_OP_INFO, NULL, 0), UPDATE_OK);
+    CHECK_EQ(alive_master, 3);
+    CHECK_EQ(send(0, UPDATE_OP_STATUS, NULL, 0), UPDATE_INVALID); // refused (no wrapper): still a request
+    CHECK_EQ(alive_master, 4);
+    CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
+    CHECK_EQ(alive_master, 5);
+    CHECK_EQ(alive_slave, 0);
+
+    // The half without USB: a relay request (STATUS) feeds it, a retry of the
+    // same request (answered from the cache) too, a damaged frame does not.
+    uint8_t req[USPLIT_MSG_MAX], out[USPLIT_MSG_MAX];
+    uint8_t len = usplit_req_build(req, USPLIT_OP_STATUS, 0x31, NULL, 0);
+    CHECK(len > 0);
+    slave_rpc(req, len, out, USPLIT_MSG_MAX);
+    CHECK_EQ(alive_slave, 1);
+    slave_rpc(req, len, out, USPLIT_MSG_MAX);
+    CHECK_EQ(alive_slave, 2);
+    req[len - 1] ^= 0x5A; // the CRC no longer matches
+    slave_rpc(req, len, out, USPLIT_MSG_MAX);
+    CHECK_EQ(alive_slave, 2);
+    slave_rpc(req, 1, out, USPLIT_MSG_MAX); // too short to name an op
+    CHECK_EQ(alive_slave, 2);
+    CHECK_EQ(alive_master, 5);
+}
+
 static void test_session(void) {
     int before_failures = failures;
+    test_session_alive_hook();
     test_session_info_and_wrapper();
     test_session_happy_path();
     test_session_gesture();
@@ -1846,7 +2093,9 @@ static void test_session(void) {
     test_session_clients_and_abort();
     test_session_chunks();
     test_session_max_pieces();
+    test_session_block_erase();
     test_session_timeouts();
+    test_session_error_lets_go();
     test_session_refusals();
     test_session_mismatch_accepted();
     test_session_presence();

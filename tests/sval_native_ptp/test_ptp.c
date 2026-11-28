@@ -360,6 +360,67 @@ static void test_scan_time(void) {
     puts("  scan time: the samples' read times, wraps at 16 bits, remainder carried, never repeats");
 }
 
+// A touch after a long idle (more than 2^31 us, 35.8 min, with no frame)
+// counts the whole gap forward; Scan Time then follows the samples again.
+static void test_scan_time_long_idle(void) {
+    start("scan-time-idle");
+    FEED(0, {0, 1, 100, 100});
+    run(5000);
+    up(0);
+    run(5000);
+    uint16_t s0 = scan_of(last());
+    uint32_t r0 = ptp_test_us - 5000; // the lift frame's stamp: its sample
+    new_reports();
+    run(40u * 60u * 1000000u); // 40 minutes, nothing sent
+    assert(new_reports() == 0);
+    FEED(0, {0, 1, 200, 200});
+    uint32_t t1 = ptp_test_us;
+    run(5000);
+    assert(new_reports() == 1);
+    uint16_t s1 = scan_of(last());
+    assert((uint16_t)(s1 - s0) == (uint16_t)((t1 - r0) / 100));
+    FEED(0, {0, 1, 210, 200});
+    run(8000);
+    assert(new_reports() == 1);
+    assert((uint16_t)(scan_of(last()) - s1) == 50); // 5 ms between the samples
+    up(0);
+    run(5000);
+    puts("  scan time: a touch after 40 minutes idle counts the gap, then follows the samples");
+}
+
+// POINTING_CONTACTS after the stream sits idle 2^32 us (71.6 min): the age
+// on the 32-bit clock wraps to 0, but the last frame's contacts stay stale.
+static void test_host_contacts_wrap(void) {
+    uint8_t o[32];
+    start("host-contacts-wrap");
+    FEED(0, {0, 1, 100, 200});
+    run(5000);
+    assert(new_reports() == 1);
+    up(0);
+    run(5000);
+    assert(new_reports() == 1);
+    memset(o, 0, sizeof(o));
+    sval_ptp_contacts(o, sizeof(o));
+    assert(o[3] == 1); // the lift frame, still fresh
+    for (int i = 0; i < 4; i++)
+        run(1u << 30); // the task runs; 2^32 us in all
+    run(20000);        // now 20 ms after the last frame, modulo 2^32
+    assert(new_reports() == 0);
+    memset(o, 0, sizeof(o));
+    sval_ptp_contacts(o, sizeof(o));
+    assert(o[2] == 255 && o[3] == 0);
+    // A new frame is fresh again.
+    FEED(0, {0, 1, 300, 200});
+    run(5000);
+    assert(new_reports() == 1);
+    memset(o, 0, sizeof(o));
+    sval_ptp_contacts(o, sizeof(o));
+    assert(o[2] < 255 && o[3] == 1);
+    up(0);
+    run(5000);
+    puts("  host contacts: 71.6 minutes idle still reads as stale, not fresh");
+}
+
 static void test_palm(void) {
     start("palm");
     FEED(0, {0, 1, 100, 100});
@@ -1350,6 +1411,7 @@ int main(int argc, char **argv) {
     test_short_tap();
     test_keepalive();
     test_scan_time();
+    test_scan_time_long_idle();
     test_palm();
     test_palm_area();
     test_palm_setting();
@@ -1378,6 +1440,7 @@ int main(int argc, char **argv) {
     test_view_true_position();
     test_host_contacts();
     test_host_contacts_six();
+    test_host_contacts_wrap();
     fresh("end");
     if (ptp_trace) fclose(ptp_trace);
     printf("native PTP: %u reports checked, all passed\n", ptp_sent_count);

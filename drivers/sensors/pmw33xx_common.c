@@ -23,6 +23,16 @@ static const pin_t cs_pins_right[] = PMW33XX_CS_PINS_RIGHT;
 static bool in_burst_left[ARRAY_SIZE(cs_pins_left)]   = {0};
 static bool in_burst_right[ARRAY_SIZE(cs_pins_right)] = {0};
 
+// Svalboard: Config2's Rest_En as last written, per sensor. With rest modes on, the
+// Motion byte's OP_MODE bits (2:1) read Rest1-3 while the sensor rests; that is not
+// a burst fault, so the panic recovery below then looks at bit 0 only.
+#define PMW33XX_CONFIG2_REST_EN_BIT 0x20
+static bool rest_on_left[ARRAY_SIZE(cs_pins_left)]   = {0};
+static bool rest_on_right[ARRAY_SIZE(cs_pins_right)] = {0};
+static bool *pmw33xx_rest_on(void) {
+    return is_keyboard_left() ? rest_on_left : rest_on_right;
+}
+
 bool __attribute__((cold)) pmw33xx_upload_firmware(uint8_t sensor);
 bool __attribute__((cold)) pmw33xx_check_signature(uint8_t sensor);
 
@@ -64,6 +74,9 @@ bool pmw33xx_write(uint8_t sensor, uint8_t reg_addr, uint8_t data) {
 
     if (reg_addr != REG_Motion_Burst) {
         in_burst[sensor] = false;
+    }
+    if (reg_addr == REG_Config2) {
+        pmw33xx_rest_on()[sensor] = (data & PMW33XX_CONFIG2_REST_EN_BIT) != 0;
     }
 
     // send address of the register, with MSBit = 1 to indicate it's a write
@@ -197,8 +210,21 @@ bool pmw33xx_init(uint8_t sensor) {
     return true;
 }
 
+// Svalboard: true while a host reads the sensor's quality registers (Sval 0x39);
+// the burst then carries the six bytes after the motion data. The strong
+// definition is keyboards/svalboard/squal.c.
+__attribute__((weak)) bool sval_squal_wanted(void) {
+    return false;
+}
+
+// SQUAL, Raw_Data_Sum, Maximum_Raw_data, Minimum_Raw_data, Shutter_Upper and
+// Shutter_Lower from the last burst that carried them; zero otherwise.
+uint8_t pmw33xx_burst_extra[6];
+bool    pmw33xx_burst_has_extra;
+
 pmw33xx_report_t pmw33xx_read_burst(uint8_t sensor) {
     pmw33xx_report_t report = {0};
+    pmw33xx_burst_has_extra = false;
 
     if (sensor >= pmw33xx_number_of_sensors) {
         return report;
@@ -220,9 +246,17 @@ pmw33xx_report_t pmw33xx_read_burst(uint8_t sensor) {
     wait_us(35); // waits for tSRAD_MOTBR
 
     spi_receive((uint8_t *)&report, sizeof(report));
+    if (sval_squal_wanted()) {
+        // Burst order (datasheet): Motion, Observation, Delta_X L/H, Delta_Y L/H, SQUAL,
+        // Raw_Data_Sum, Maximum_Raw_data, Minimum_Raw_data, Shutter_Upper, Shutter_Lower.
+        // The burst stays open while CS is low, so these ride on the same transaction.
+        spi_receive(pmw33xx_burst_extra, sizeof(pmw33xx_burst_extra));
+        pmw33xx_burst_has_extra = true;
+    }
 
-    // panic recovery, sometimes burst mode works weird.
-    if (report.motion.w & 0b111) {
+    // panic recovery, sometimes burst mode works weird. In a rest mode OP_MODE
+    // (bits 2:1) is nonzero by design, so only bit 0 counts then.
+    if (report.motion.w & (pmw33xx_rest_on()[sensor] ? 0b001 : 0b111)) {
         in_burst[sensor] = false;
     }
 

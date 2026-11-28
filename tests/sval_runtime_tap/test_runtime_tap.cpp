@@ -9,26 +9,26 @@ using testing::InSequence;
 
 static uint16_t     code_delay, caps_delay;
 static uint8_t      toggle_count, overrides, auto_shift_bits;
-extern "C" uint16_t sval_tap_code_delay(void) {
+extern "C" uint16_t get_tap_code_delay(void) {
     return code_delay;
 }
-extern "C" uint16_t sval_tap_hold_caps_delay(void) {
+extern "C" uint16_t get_tap_hold_caps_delay(void) {
     return caps_delay;
 }
-extern "C" uint8_t sval_tapping_toggle(void) {
+extern "C" uint8_t get_tapping_toggle(void) {
     return toggle_count ? toggle_count : 1;
 }
-extern "C" uint8_t sval_grave_esc_override(void) {
+extern "C" uint8_t get_grave_esc_overrides(void) {
     return overrides;
 }
 extern "C" uint8_t sval_auto_shift(void) {
     return auto_shift_bits;
 }
-extern "C" uint8_t sval_oneshot_tap_toggle(void) {
+extern "C" uint8_t get_oneshot_tap_toggle(void) {
     return 0;
 }
-extern "C" uint8_t sval_context_layer(void) {
-    return UINT8_MAX;
+extern "C" uint16_t get_oneshot_timeout(void) {
+    return 0;
 }
 
 class RuntimeTap : public TestFixture {
@@ -75,6 +75,25 @@ TEST_F(RuntimeTap, SendStringAndSendCharPreserveFullRuntimeDelay) {
         expect_timed_tap(driver, KC_A, delay, [] { send_string("a"); });
         expect_timed_tap(driver, KC_B, delay, [] { send_char('b'); });
     }
+}
+TEST_F(RuntimeTap, NonAsciiBytesAreSkippedWithoutAKeypress) {
+    TestDriver driver;
+    // "µ" in UTF-8 is C2 B5; only the ASCII letters around it are typed.
+    {
+        InSequence order;
+        EXPECT_REPORT(driver, (KC_A));
+        EXPECT_EMPTY_REPORT(driver);
+        EXPECT_REPORT(driver, (KC_B));
+        EXPECT_EMPTY_REPORT(driver);
+        send_string("a\xC2\xB5"
+                    "b");
+        testing::Mock::VerifyAndClearExpectations(&driver);
+    }
+    EXPECT_NO_REPORT(driver);
+    for (int c = 128; c < 256; c++) {
+        send_char((char)c);
+    }
+    testing::Mock::VerifyAndClearExpectations(&driver);
 }
 TEST_F(RuntimeTap, ExplicitStringDelayStillOverridesRuntimeDefault) {
     TestDriver driver;

@@ -170,17 +170,17 @@ static void tap_counts(void) {
     sval_qmk_settings_reset();
     set8(20, 15);
     set8(5, 15);
-    assert(sval_tapping_toggle() == 15 && sval_oneshot_tap_toggle() == 15);
+    assert(get_tapping_toggle() == 15 && get_oneshot_tap_toggle() == 15);
     set8(20, 16);
     set8(5, 50);
-    assert(sval_tapping_toggle() == 15 && sval_oneshot_tap_toggle() == 15);
+    assert(get_tapping_toggle() == 15 && get_oneshot_tap_toggle() == 15);
     assert(get8(20) == 15 && get8(5) == 15);
     set8(20, 0);
-    assert(sval_tapping_toggle() == 1); /* 0 is still read as 1 */
+    assert(get_tapping_toggle() == 1); /* 0 is still read as 1 */
     sval_qmk_settings_set_one_shot(5000, 100); /* Sval 0x0A */
-    assert(sval_oneshot_tap_toggle() == 15 && STORED.osk_tap_toggle == 15);
+    assert(get_oneshot_tap_toggle() == 15 && STORED.osk_tap_toggle == 15);
     sval_qmk_settings_set_one_shot(5000, 0);   /* 0 still means no lock */
-    assert(sval_oneshot_tap_toggle() == 0);
+    assert(get_oneshot_tap_toggle() == 0);
     sval_qmk_settings_t old = STORED;
     old.tapping_toggle = 100;
     old.osk_tap_toggle = 255;

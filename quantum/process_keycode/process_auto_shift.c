@@ -26,28 +26,6 @@
 #    define AUTO_SHIFT_STARTUP_STATE false /* disabled */
 #endif
 
-#ifdef SVAL_ENABLE
-// Svalboard: QSID 3 bits (0 enable, 1 modifiers, 2 no-special, 3 no-numeric,
-// 4 no-alpha, 5 repeat, 6 no-auto-repeat). Bit 0 is applied via
-// autoshift_enable() / autoshift_disable() in sval_qmk_settings.c.
-#    define AUTO_SHIFT_MODIFIERS_BIT (1 << 1)
-#    define AUTO_SHIFT_NO_SPECIAL_BIT (1 << 2)
-#    define AUTO_SHIFT_NO_NUMERIC_BIT (1 << 3)
-#    define AUTO_SHIFT_NO_ALPHA_BIT (1 << 4)
-#    define AUTO_SHIFT_REPEAT_BIT (1 << 5)
-#    define AUTO_SHIFT_NO_AUTO_REPEAT_BIT (1 << 6)
-#    ifndef AUTO_SHIFT_REPEAT_PER_KEY
-#        define AUTO_SHIFT_REPEAT_PER_KEY
-#    endif
-#    ifndef AUTO_SHIFT_NO_AUTO_REPEAT_PER_KEY
-#        define AUTO_SHIFT_NO_AUTO_REPEAT_PER_KEY
-#    endif
-uint8_t               sval_auto_shift(void);
-static inline uint8_t auto_shift_options(void) {
-    return sval_auto_shift();
-}
-#endif
-
 // Stores the last Auto Shift key's up or down time, for evaluation or keyrepeat.
 static uint16_t autoshift_time = 0;
 #if defined(RETRO_SHIFT) && !defined(NO_ACTION_TAPPING)
@@ -93,17 +71,9 @@ __attribute__((weak)) bool get_auto_shifted_key(uint16_t keycode, keyrecord_t *r
     switch (keycode) {
 #ifndef NO_AUTO_SHIFT_ALPHA
         case AUTO_SHIFT_ALPHA:
-#    ifdef SVAL_ENABLE
-            if (auto_shift_options() & AUTO_SHIFT_NO_ALPHA_BIT) break;
-            return true;
-#    endif
 #endif
 #ifndef NO_AUTO_SHIFT_NUMERIC
         case AUTO_SHIFT_NUMERIC:
-#    ifdef SVAL_ENABLE
-            if (auto_shift_options() & AUTO_SHIFT_NO_NUMERIC_BIT) break;
-            return true;
-#    endif
 #endif
 #ifndef NO_AUTO_SHIFT_SPECIAL
 #    ifndef NO_AUTO_SHIFT_TAB
@@ -111,10 +81,6 @@ __attribute__((weak)) bool get_auto_shifted_key(uint16_t keycode, keyrecord_t *r
 #    endif
 #    ifndef NO_AUTO_SHIFT_SYMBOLS
         case AUTO_SHIFT_SYMBOLS:
-#    endif
-#    ifdef SVAL_ENABLE
-            if (auto_shift_options() & AUTO_SHIFT_NO_SPECIAL_BIT) break;
-            return true;
 #    endif
 #endif
 #ifdef AUTO_SHIFT_ENTER
@@ -127,18 +93,10 @@ __attribute__((weak)) bool get_auto_shifted_key(uint16_t keycode, keyrecord_t *r
 
 /** \brief Called to check whether defines should apply if PER_KEY is set for it */
 __attribute__((weak)) bool get_auto_shift_repeat(uint16_t keycode, keyrecord_t *record) {
-#ifdef SVAL_ENABLE
-    return (auto_shift_options() & AUTO_SHIFT_REPEAT_BIT) != 0;
-#else
     return true;
-#endif
 }
 __attribute__((weak)) bool get_auto_shift_no_auto_repeat(uint16_t keycode, keyrecord_t *record) {
-#ifdef SVAL_ENABLE
-    return (auto_shift_options() & AUTO_SHIFT_NO_AUTO_REPEAT_BIT) != 0;
-#else
     return true;
-#endif
 }
 
 /** \brief Called when an Auto Shift key needs to be pressed */
@@ -206,10 +164,7 @@ static bool autoshift_press(uint16_t keycode, uint16_t now, keyrecord_t *record)
         // Prevents keyrepeating unshifted value of key after using it in a key combo.
         autoshift_lastkey = KC_NO;
 #ifndef AUTO_SHIFT_MODIFIERS
-#    ifdef SVAL_ENABLE
-        if (!(auto_shift_options() & AUTO_SHIFT_MODIFIERS_BIT))
-#    endif
-        {
+        if (!GET_AUTO_SHIFT_MODIFIERS()) {
             // We can't return true here anymore because custom unshifted values are
             // possible and there's no good way to tell whether the press returned
             // true upon release.
@@ -327,9 +282,9 @@ static void autoshift_end(uint16_t keycode, uint16_t now, bool matrix_trigger, k
         }
 #endif
         // clang-format on
-#if defined(SVAL_ENABLE) || TAP_CODE_DELAY > 0
-        if (get_tap_code_delay() > 0) {
-            wait_ms(get_tap_code_delay());
+#if defined(RUNTIME_QMK_SETTINGS) || TAP_CODE_DELAY > 0
+        if (GET_TAP_CODE_DELAY() > 0) {
+            wait_ms(GET_TAP_CODE_DELAY());
         }
 #endif
 
@@ -370,10 +325,10 @@ void autoshift_matrix_scan(void) {
     }
 }
 
-#ifdef SVAL_ENABLE
-// Svalboard: Auto Shift can be switched off from QMK Settings while a key is
-// pending. Finish that key now, as an interrupting key would, so the matrix
-// scan doesn't send it shifted after the timeout.
+#ifdef RUNTIME_QMK_SETTINGS
+// Auto Shift can be switched off at run time while a key is pending. Finish
+// that key now, as an interrupting key would, so the matrix scan doesn't send
+// it shifted after the timeout.
 static void autoshift_end_pending(void) {
     if (autoshift_flags.in_progress) {
         autoshift_end(KC_NO, timer_read(), false, &autoshift_lastrecord);
@@ -382,7 +337,7 @@ static void autoshift_end_pending(void) {
 #endif
 
 void autoshift_toggle(void) {
-#ifdef SVAL_ENABLE
+#ifdef RUNTIME_QMK_SETTINGS
     if (autoshift_flags.enabled) {
         autoshift_end_pending();
     }
@@ -396,7 +351,7 @@ void autoshift_enable(void) {
 }
 
 void autoshift_disable(void) {
-#ifdef SVAL_ENABLE
+#ifdef RUNTIME_QMK_SETTINGS
     autoshift_end_pending();
 #endif
     autoshift_flags.enabled = false;

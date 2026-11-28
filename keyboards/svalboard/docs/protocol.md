@@ -49,7 +49,7 @@ Check feature flags before using an extension, send one request at a time per co
 - Each half: `<flags> <built_for> <detected> <Product_ID> <Inverse_Product_ID>`.
   - `flags`: bit 0 the block holds a report, bit 1 the half is the left half, bit 2 the sensor driver initialized, bit 3 the firmware drives whichever module is attached (the plain `left`/`right` builds), so `built_for` is the module it chose after the probe, or `0` when none answered. Bit 4 (`SVAL_POINTER_OS_TOUCHPAD`, native touchpad builds): the computer has this pad as a touchpad now, the mode in force (clear with built-in gestures, `Touchpad mode`). Bit 5: the half has no side yet (one-image builds, see Side), and bit 1 means nothing. Bit 6 (`SVAL_POINTER_OS_ASKS`, native touchpad builds): the computer asked for this pad as a touchpad (Input Mode 3), whatever `Touchpad mode` says.
   - `built_for`: `0` no pointing module, `1` PMW3360 trackball, `2` PMW3389 trackball, `5` Azoteq trackpad, `6` TrackPoint.
-  - `detected`: `0` not checked yet, `1` PMW3360 (`42 BD`), `2` PMW3389 (`47 B8`), `3` no module answered, `4` the trackball bus answered with some other ID, `5` Azoteq (IDs: product number, high byte first), `6` TrackPoint (first ID byte: its PS/2 device ID).
+  - `detected`: `0` not checked yet, `1` PMW3360 (`42 BD`), `2` PMW3389 (`47 B8`), `3` no module answered, `4` the trackball bus answered with another device's ID pair (the second ID is the first inverted; IDs that aren't a pair count as `3`, and the half resets the sensor), `5` Azoteq (IDs: product number, high byte first), `6` TrackPoint (first ID byte: its PS/2 device ID).
   - Each build checks its own module at startup. When that module doesn't answer, or the build has none, the half checks the other modules' buses about 1.5 s after boot (the trackball first, since most boards have one; PS/2 a second later, then I2C), so `detected` names whatever is attached. Until then it reads `0` (no module build) or `3` (its own module missing). While nothing works, the half looks again, its own module first, then the other buses: 3, 6, 12 and 30 s after boot, and never after that, so a board with no pointing module isn't probed again. It stops sooner once a module works, once a per-module build finds a module it can't drive, or once a module that answers has failed to start four times. A half whose module works is never probed. So `detected`, `built_for` and bit 2 can change during a half's first 30 s, after a host has connected (the other half's block follows within a presence ping, 0.5 s); a host that shows `3` or `0` should read again until then.
 - The other half reports through the split link's half-second presence ping, so its block is zero while it is disconnected, for up to half a second after it connects, and when it runs firmware without this command.
 
@@ -202,7 +202,7 @@ One-side builds (the release files `svalboard_sval_left_<tag>.uf2` and `svalboar
 **SET:** `DF 33 01 <target> <side> <source> <flags>` → `DF 33 01 <status>`
 - `target`: `0` this half (the one with USB), `1` the other half, over the split link.
 - `side`: `0` left or `1` right. `source`: `1` factory or `2` Keybard.
-- `status`: `0` OK, `1` invalid request, `2` no room for the record, `3` the write did not read back, `4` refused because the thumb strap says the other side, `5` the other half is not connected, `6` the other half did not answer (older firmware), `7` the other half took the request and saves it from its main loop: read its side again after it restarts, `8` refused because that half runs a one-side build for the other side (install the one-image firmware on it first).
+- `status`: `0` OK, `1` invalid request, `2` no room for the record, `3` the write did not read back, `4` refused because the thumb strap says the other side, `5` the other half is not connected, `6` the other half did not answer (older firmware), `7` the other half took the request and saves it from its main loop: read its side again after it restarts, `8` refused because that half runs a one-side build for the other side (install the one-image firmware on it first), `9` refused because a firmware update is running on either half (send it again after the update; older firmware never sends `9`).
 
 **CLEAR:** `DF 33 02 <target> <flags>` → `DF 33 02 <status>`. Stores "unknown", so the half starts with no side (unless a strap says otherwise: then `4`; or the half runs a one-side build: then `8`). For testing and factory rework.
 
@@ -265,6 +265,69 @@ Combos can have names on the board, like layers, tap dances and macros: one name
 - Both need the 64-byte report (34 bytes after `3D`); a client-wrapped 32-byte report is answered with status `3`.
 - A host that reads both ops on a schedule keeps a running count per switch; a switch's presses since the last read are its changes, halved, rounded up when it was up at the last read and down when it was down.
 
+## Pointing sensor
+
+`POINTING_SENSOR` (`0x39`) reports how a PMW3360 or PMW3389 trackball sensor sees its surface, for a characterization panel: SQUAL (surface quality), Raw_Data_Sum, Maximum and Minimum_Raw_data, and the shutter, with the share of time the ball moved. Values are the sensor's raw register values (SQUAL is not scaled).
+
+- Discovery: GET_INFO byte 21 (the fourth feature byte), bit 3 (`sval_flag4_pointing_sensor`, `0x08`). Older firmware leaves it zero, and answers `0x39` with the command byte `0xFF` (unknown command). A half without a PMW sensor answers format `0`.
+- Capture is on only while a host polls: the first request starts it, and it stops 1.5 s (`SVAL_HOST_ACTIVE_MS`) after the last one. While on, the sensor's motion burst, which the driver already reads, carries six more bytes (SQUAL, Raw_Data_Sum, Maximum_Raw_data, Minimum_Raw_data, Shutter_Upper, Shutter_Lower; about 24 microseconds at 2 MHz) on the same transaction. While off, the burst is the usual six bytes. The pointer report and its timing are unchanged. Samples are taken on every read, at rest too, so SQUAL shows with the ball idle. Polling this command counts as host activity, so the board stays out of deep idle and reads at full rate while a panel is open.
+- Each half folds its reads into bins of 50 ms (`SVAL_SQUAL_BIN_MS`) and keeps the newest 256 (12.8 s) in RAM. The half with USB answers for both hands; for the other hand it asks the other half over the split link (`KEYBOARD_SYNC_B`, first byte `0xB9`) only when it is asked. Nothing is pushed over the link. A reply for the other hand is empty (format `0`) while the link is down or paused for an update.
+- The first request after a pause (a new session) starts with an empty ring. Bins are numbered with a 16-bit sequence that keeps counting and wraps.
+- Request: `DF 39 <op> <hand> <arg lo> <arg hi>`. `hand`: `0` left, `1` right. `op` `0` SAMPLES: `arg` is the cursor, the sequence number of the next bin wanted. `op` `1` STATS: `arg` is how many of the newest bins to cover (`0` = all held).
+- Response: `DF 39` then 25 bytes (offsets from the first of them). Byte `0` is the format: `1`, or `0` for no data (the rest zero). Byte `1` is flags for both ops: bit 0 a PMW sensor runs on that hand, bit 1 it is a PMW3389, bit 2 lost (SAMPLES: the cursor was older than the ring, or ahead of it; the reply starts at the oldest bin), bit 3 more bins wait (SAMPLES), bit 4 the hand is the right one, bits 5-6 the op answered, bit 7 the newest bin saw the ball lifted (STATS only; SAMPLES carries it per bin).
+
+SAMPLES (`op 0`), at most two bins per reply:
+
+| off | size | field |
+|---|---|---|
+| 0 | 1 | format = `1` |
+| 1 | 1 | flags |
+| 2 | 2 | sequence number of the first bin returned, uint16 little-endian |
+| 4 | 1 | bins returned, `0` to `2` |
+| 5 | 2 | sequence number of the next bin to be made (the head), uint16 little-endian |
+| 7 | 9 each | bins, oldest first |
+
+Each bin:
+
+| off | size | field |
+|---|---|---|
+| 0 | 1 | SQUAL, mean of the bin's reads |
+| 1 | 1 | SQUAL, lowest read |
+| 2 | 1 | SQUAL, highest read |
+| 3 | 1 | Raw_Data_Sum, mean |
+| 4 | 1 | Maximum_Raw_data, highest read |
+| 5 | 1 | Minimum_Raw_data, lowest read |
+| 6 | 2 | shutter, mean, uint16 little-endian |
+| 8 | 1 | bits 0-6: reads with motion (127 at most); bit 7: the ball was lifted at some read |
+
+A host keeps its own cursor: ask with the head it was last given, and ask again at once while bit 3 is set. A bin is a mean of every read the pointing task made in its 50 ms (about 15 to 30 on current builds; STATS bytes 22-23 give the measured rate), so a panel that polls every 100 ms asks about once per two bins.
+
+STATS (`op 1`), over the newest bins:
+
+| off | size | field |
+|---|---|---|
+| 0 | 1 | format = `1` |
+| 1 | 1 | flags |
+| 2 | 2 | head, as above |
+| 4 | 2 | bins in the window, uint16 little-endian |
+| 6 | 1 | SQUAL lowest |
+| 7 | 1 | SQUAL highest |
+| 8 | 2 | SQUAL mean, times 256, uint16 little-endian |
+| 10 | 1 | Raw_Data_Sum lowest bin mean |
+| 11 | 1 | Raw_Data_Sum highest bin mean |
+| 12 | 1 | Raw_Data_Sum mean |
+| 13 | 1 | Maximum_Raw_data highest |
+| 14 | 1 | Minimum_Raw_data lowest |
+| 15 | 2 | shutter lowest bin mean |
+| 17 | 2 | shutter highest bin mean |
+| 19 | 2 | shutter mean |
+| 21 | 1 | percent of bins with any motion |
+| 22 | 2 | sensor reads per second, from the newest bin, uint16 little-endian (the rate the firmware really achieved) |
+| 24 | 1 | zero |
+
+- The SQUAL minimum and maximum are the lowest and highest single reads; the other lows and highs are of the bins' means (raw maximum and minimum are of single reads).
+- Reader: `keyboards/svalboard/tools/read_squal.py`.
+
 ## Debug console
 
 `DEBUG_CONSOLE` (`0x3E`) turns QMK's debug flag (`debug_enable`) on or off, and reads it. The firmware prints key events on the QMK debug console (usage page `0xFF31`) only while the flag is on, and any program on the computer can read that console. Keybard's Settings show it as "Debug console".
@@ -280,7 +343,7 @@ Combos can have names on the board, like layers, tap dances and macros: one name
 | 1 | 1 | status: `0` done, `1` unknown op (nothing changed), `2` the build has no console (nothing changed), `3` report too short, `0xFF` the keyboard has no handler for it (the module's default; nothing changed) |
 | 2 | 1 | the flag now: `0` off, `1` on |
 
-- While on, each key event prints one line, `KL: kc: 0x<keycode>, col: <c>, row: <r>, pressed: <0|1>, time: <ms>, int: <0|1>, count: <n>`, as do the firmware's other debug lines.
+- While on, each key event prints one line, `KL: kc: 0x<keycode> (<name>), col: <c>, row: <r>, pressed: <0|1>, time: <ms>, int: <0|1>, count: <n>`, as do the firmware's other debug lines.
 
 ## Debounce mode
 
@@ -362,6 +425,30 @@ Whether the pads are a touchpad when Windows or Linux asks for one. Touchpad mod
 - Two flags tell them apart. The mode in force: the touch pages' "the computer has this pad as a touchpad" bits and `0x2C`'s `SVAL_POINTER_OS_TOUCHPAD` (flags bit 4) are set only while the pad's contacts go to the computer, so they are clear with built-in gestures even while the computer asks. What the computer asked for: `0x2C`'s `SVAL_POINTER_OS_ASKS` (flags bit 6) is set while it has written Input Mode 3, whatever this setting. A host shows the gesture settings by the mode in force, or by this setting.
 - A write works at once and reaches the other half in the presence ping (its last byte). `id_custom_save` (`0x09`) stores it. A settings reset sets Automatic.
 - Stored in two bytes of their own after the palm rejection's two (the value and its complement), so the settings keep their size and layout stamp. Bytes that don't check out read as Automatic.
+
+## Scroll speed
+
+How fast motion becomes scroll, one setting per hand, the same on every pointing module. It applies wherever a hand's motion scrolls: Scroll Mode, the Scroll Toggle keys, Drag Scroll, and a touchpad's two-finger scroll in built-in gestures. Velocity Scroll has its own curve and is not changed by it. Sniper and Boost still act on top while held.
+
+- Discovery: GET_INFO byte 21, bit 5 (`sval_flag4_scroll_speed`, `0x20`). Every build sets it. Older firmware leaves it zero. (Bit 3 is the trackball sensor page, `0x39`. The test build set bit 4 for value `60` alone, so a host must not read bit 4 as values `61` and `62`.)
+- Values `61` (`id_scroll_speed_left`) and `62` (`id_scroll_speed_right`), channel `0`, 16-bit little-endian: the hand's Scroll speed as a percent, 20 to 1000 (0.2x to 10x); 100 is 1.0x, the default. A write outside the range stores the nearest end. Read it back for the stored value.
+- Value `60` (`id_pad_scroll_speed_alias`) answers as the touchpad hand's Scroll speed, for a host written against the test build that had it: a write sets every touchpad hand (the right hand when none is known), a read returns the first one. Bit 4 of byte 21 (`sval_flag4_pad_scroll_speed_alias`, `0x10`) says so, the bit the test build set for it; Azoteq builds set it.
+- Independent of Pointer speed: motion becomes millimeters first, then wheel counts at a fixed rate, then the Scroll speed. A trackball counts x 25.4 / DPI mm, with 31.5 hi-res counts per mm at 1.0x (what 800 DPI scrolled before). A touchpad scrolls 170 pad pixels per detent at 1.0x (180 pixels per line on a Mac). A TrackPoint scrolls its raw counts as 800 DPI does (its DPI setting does nothing). The pointer's DPI is not an input. Remainders carry, so slow scroll is not lost.
+- The computer's own divisor applies after the multiplier, so 2.0x is twice as fast on a Mac and on Windows.
+- A write works at once. `id_custom_save` (`0x09`) stores it. A settings reset sets 1.0x. All scroll conversion runs on the half with USB, so nothing syncs between the halves.
+- First boot of this firmware on settings saved without it: each hand's Scroll speed is set to its DPI over 800, so scrolling does not change (a touchpad counts at most 1210 DPI, so 151%; a TrackPoint stays at 100%; above 8000 DPI the speed stops at 1000). A board that ran the test build keeps its touchpad speed (value `60`). The speed is set once the hand's module is known, a second or two after boot, and a speed a host writes before that is kept.
+- A touchpad hand's saved DPI index is lowered at boot to the touchpad's maximum, 1200, and written back. Behavior is the same, since the pointer already stopped gaining there; the stored value now matches.
+- Stored in five bytes of their own after the touchpad mode's two and three more that the test build used (left, right, and a check byte), so the settings keep their size and layout stamp. Bytes that don't check out are not a record, and the migration above runs.
+
+## Pointer speed per module
+
+The DPI list (`id_left_dpi` 1 and `id_right_dpi` 3, an index) now ends at 16000, appended after 12000 so saved indexes stay valid. Each hand's list stops at its module's maximum: touchpad 1200, PMW3360 12000, PMW3389 16000, TrackPoint 3200. The DPI step keys stop there, and a write above it stores the maximum. Before a hand's module is known the whole list is allowed.
+
+- A touchpad hand's saved index is held to 1200 at boot (Scroll speed, above), and a trackball hand's to its sensor's maximum.
+- Discovery: GET_INFO byte 21, bit 6 (`sval_flag4_trackpoint_speed`, `0x40`): a TrackPoint's DPI list is its Pointer speed. Every build sets it. Older firmware leaves it zero, and there a TrackPoint's DPI does nothing.
+- A TrackPoint has no DPI to set. Its list is a software Pointer speed applied to its counts as DPI over 800, with remainders carried: 800 is 1:1, exactly the motion it has always had; 400 is half, 1600 double, up to 3200 (4x). The half the TrackPoint is on applies it, so the speed reaches it the way a DPI does.
+- First boot of this firmware on settings saved without a Scroll speed: a TrackPoint hand's saved index is set to 800 (index 3), since its DPI did nothing before, so its motion does not change. A touch of the TrackPoint in the second or two before its module is known can still use the old index.
+- Scroll does not follow Pointer speed: a TrackPoint's scaled counts divide by the speed's DPI for scroll, so Scroll speed gives the same scroll at every Pointer speed.
 
 ## Touchpad touch
 
@@ -455,6 +542,16 @@ The board scans its keys with two saved waits per row, in microseconds: before r
 - Upgrading: firmware before this stored `0` in a wait to mean "use the turbo table at the saved turbo index". At the first boot, a wait of `0` is filled in from the table with that index, and saved, so every board keeps the timing it ran. A board on turbo 6 with both waits at 0 reads 15 / 15 afterwards; one on turbo 0, 90 / 90; explicit waits are kept as they are. The settings keep their size and layout stamp, so nothing else resets. The byte that held the turbo index now holds the auto mouse layer timeout (below).
 - Split: the half with USB sends both waits in the presence ping (every 0.5 s), as before, with the matching preset (0 for none) in the turbo byte. The other half uses them and doesn't store them. Waits are never 0 now, so an older half without USB runs them too. A new half without USB under an older half with USB that still sends 0 fills a 0 wait in from the turbo byte, as before.
 
+## Auto mouse layers
+
+The layers where pointer motion does not switch to the auto mouse layer.
+
+- Discovery: GET_INFO byte 21 (the fourth feature byte), bit 7 (`sval_flag4_automouse_layers`, `0x80`). Every Svalboard build sets it. Older firmware leaves it zero and doesn't answer the values below; a host must not write them then.
+- `id_automouse_layers_only` (VIA value `63`): `0`, Everywhere (the default, and the behavior before this setting); `1`, Only on Selected Layers.
+- `id_automouse_layer_mask` (VIA value `64`), 16-bit little-endian: bit `n` set, Auto Mouse is off on layer `n`. It counts only while value 63 is `1`, so a host can switch back to Everywhere without losing the layers picked. The auto mouse layer's own bit (layer 15) never counts.
+- The layer that counts is the highest active layer other than the auto mouse layer, with the default layer included: the layer the user is on, however they reached it. While it is a disabled layer, motion neither turns the mouse layer on nor counts toward the activation threshold, and a mouse layer already on goes off at the next scan once no mouse button is held. Mouse keys pressed on the mouse layer behave as before.
+- Storage: settings area record 9 (`settings_ids.h`), 4 bytes: `[mode][mask lo][mask hi][0xA5 ^ the three]`. A board with no record (or a record that fails the check) reads as Everywhere with no layers, the behavior before this setting.
+
 ## Auto mouse layer timeout
 
 How long the auto mouse layer stays on after the pointer stops, in milliseconds.
@@ -463,3 +560,98 @@ How long the auto mouse layer stays on after the pointer stops, in milliseconds.
 - `id_automouse_no_timeout` (VIA value `50`): `1`, the layer stays on until it is turned off another way (the old "Infinite"); `0`, it times out after value 49. Value 49 keeps its time while this is on.
 - `id_automouse_timeout` (VIA value `5`), kept for older hosts: the old choice, `0`-`5` = 200, 300, 400, 500, 800 ms, no timeout. A write sets value 49 to that time (or turns value 50 on for `5`); a read returns the nearest old choice. The `SV_MH_CHANGE_TIMEOUTS` key steps through the old choices, as before.
 - Storage: the time is kept in 10 ms units in the byte that held the turbo index, and the old choice byte keeps the nearest old choice, so firmware from before this on the same settings still finds a valid one. Values 100-2000 fit in that byte (10-200); a turbo index left there (0-6) is cleared at the first boot.
+
+## App rules
+
+Layer changes while a given app is in front on the computer. The rules live on the board; a host app (Keybard Host) tells the board which app is in front. Nothing a rule does is saved, and the user's own layer state is never written.
+
+- Discovery: GET_INFO byte 22 (the fifth feature byte), bit 0 (`sval_flag5_app_rules`, `0x01`). Older firmware leaves it zero (or sends a shorter reply) and answers `0x40` and `0x41` with the command byte `0xFF`.
+- Only the half with USB runs the rules; it owns the layer state. Both commands answer status `2` on the other half. The other half's lights follow the half with USB through the RGB split sync, so both halves show what a rule does. The rules are stored on the half that received them, as the keymap is.
+
+### App IDs
+
+An app is named by a key, and the board stores a 4-byte ID made from it:
+
+| System | Key | Example |
+|---|---|---|
+| Windows | the program's file name, with `.exe` | `notepad.exe` |
+| macOS | the bundle ID | `com.apple.Safari` |
+| Linux | the Wayland `app_id`, or the X11 `WM_CLASS` class | `firefox` |
+
+ID: drop spaces and tabs at both ends, change ASCII `A`-`Z` to `a`-`z` (nothing else), then FNV-1a 32 (offset basis `0x811C9DC5`, prime `0x01000193`) over the key's UTF-8 bytes. A result of `0` is sent as `1`; an empty key is `0`, "no app". Test values: `notepad.exe` and `Notepad.EXE` → `0xB884A32C`; `chrome.exe` → `0xFC0C788D`; `com.apple.Safari` → `0xECE537F6`; `firefox` → `0xF4D4D03A`.
+
+### What a rule does
+
+A rule has an app ID, a default layer, a "turn on" layer, and the other layers it turns on or off (two 16-bit masks, bit `n` = layer `n`). Keybard shows these as App Layers: "Default layer", "Turn on layer" and "Other layers while the app is in front". The first rule with the app's ID that is on applies; a rule may use any of its actions together. `FF` means "none" for either layer.
+
+- **On and off:** App Layers as a whole has a switch (header byte 2 bit 0, set = off), and each rule has one (its flags bit 0, set = off). Clear means on, so a rule written without flags, and a record without the header bit, are on. While App Layers is off no rule applies, exactly as with no app in front: the board restores the user's default layer and stops changing key lookup at once (at the COMMIT that turns it off), and keeps the rules stored. A rule that is off is skipped when matching, so a later rule for the same app applies instead. A host may stop sending the app in front while App Layers is off (STATUS flags bit 3, or INFO).
+
+- **Default layer:** while the app is in front, the board's default layer is the rule's (the runtime default layer only: never written to storage). When the rule stops applying, the user's own default layer comes back. If the user changes the default layer (a `DF` or `PDF` key, or `0x2B`) while the rule holds it, the user's choice stands, and the rule leaves the default layer alone until a different app comes to the front.
+- **Turn on layer** (the "front layer" field): a layer that is on while the app is in front, just above the default layer. Layers the user turns on (held, toggled or one-shot) stay above it, whatever their number; transparent keys on it fall through to the default layer.
+- **Other layers** (the on and off masks): applied over the user's layer state when the board looks up a key, never written into it: the layers used are `(user | on) & ~off`. Off wins over on, and over the turn on layer. A layer key the user holds still works unless the off mask includes its layer. The default layer itself is not masked: change it with the default layer action.
+- With no turn on layer, a key comes from the highest of the masked layers and the default layer, as in QMK. Keys already held keep the layer they were pressed on until released.
+- The auto mouse layer (15) belongs to Auto Mouse: the masks never turn it on or off (its bits are ignored), so mouse keys work whenever Auto Mouse turns it on, as without a rule. Hosts should leave it out of the masks they offer.
+- Lights show the highest layer on after the rule, as they do for layers the user turns on. Auto Mouse's "Only on Selected Layers" looks at the same layers, so a turn on layer or a layer the masks turn on counts as the layer the user is on.
+- `LAYER_STATE_GET` (`0x16`) is unchanged: its active mask is the user's own layer state (what `0x17` sets), so a host can read it, change it and write it back without baking a rule into it. Its default mask is the board's default layer now, which is the rule's while one holds it. The layers keys use now are in the `APP_FOREGROUND` STATUS reply (offset 26). A host that shows the layer the user is on (Keybard's layer indicator, Keybard Host and Keybard Overlay) reads STATUS on a board with app rules, and `0x16` otherwise; it reads and writes back `0x16` only for the user's own state.
+- Layers past the board's layer count are ignored.
+
+### Foreground app: `APP_FOREGROUND` (`0x40`)
+
+The host sends the app in front at every focus change and every 5 s while a board with the feature is connected. When the board hears nothing for the lifetime (15 s by default), or nothing since power-up, no app is in front and no rule applies: it restores the user's default layer and stops changing key lookup.
+
+| Request | Reply (after `DF 40`) |
+|---|---|
+| `DF 40 01 <id u32> <lifetime s>`: SET. Lifetime `0` = 15 s; at most 60. ID `0` = no app | `01 <status> <rule index or FF> <flags>` |
+| `DF 40 02`: CLEAR, the host is leaving (no app in front now) | `02 <status>` |
+| `DF 40 00`: STATUS | below |
+
+STATUS reply, offsets from the first byte after `40` (31 bytes):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | op `0` |
+| 1 | 1 | status |
+| 2 | 4 | app in front, `0` none (or expired) |
+| 6 | 2 | ms until it expires |
+| 8 | 1 | rule that applies, `FF` none |
+| 9 | 1 | turn on layer applied, `FF` none |
+| 10 | 2 | on mask applied |
+| 12 | 2 | off mask applied |
+| 14 | 4 | the user's own default layer state (restored when the rule lets go) |
+| 18 | 4 | default layer state now |
+| 22 | 4 | the user's layer state |
+| 26 | 4 | the layers keys use now (`(user \| on) & ~off`, plus the turn on layer) |
+| 30 | 1 | flags: bit 0 a rule applies; bit 1 the rule holds the default layer; bit 2 the user changed the default layer under the rule; bit 3 App Layers is off |
+
+The SET reply's flags are the same.
+
+### The rules: `APP_RULES` (`0x41`)
+
+One record, settings area record 10 (`settings_ids.h`), at most 1792 bytes: a 4-byte header `[format 2] [count] [flags] [0]`, then `count` rules packed back to back, each its 12 fixed bytes and its text (little-endian):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | app ID (`0`: an empty rule, never matches) |
+| 4 | 1 | default layer, `FF` none |
+| 5 | 1 | turn on layer, `FF` none |
+| 6 | 2 | on mask |
+| 8 | 2 | off mask |
+| 10 | 1 | flags: bit 0 the rule is off; bit 1 a website rule (its text is the site); other bits `0` |
+| 11 | 1 | text length `n`, at most 64 |
+| 12 | `n` | text, UTF-8: the app key as typed (`notepad.exe`), or the site (`practice.svalboard.com`) |
+
+Header flags (byte 2): bit 0 App Layers is off; other bits `0`. The rules and their text share the 1792 bytes, so 64 rules with names of about 15 bytes fit, or fewer rules with longer names (23 rules with 64-byte names). The board stores the text and returns it; it never reads it. A rule's next rule starts right after its text, so a reader walks the rules from the header. The text lets Keybard show the whole name (a site longer than any fixed label, for example) and Keybard Host find the website rules (bit 1).
+
+Format 1 (pre-release builds only: 24-byte rules with a 13-byte label) is upgraded when the board starts: same IDs and layers, the label becomes the text, a label whose ID is the hash of `site:` and it (or that starts with `…`) becomes a website rule, and App Layers is on. It is saved as format 2 at the next COMMIT. COMMIT accepts only format 2. A firmware update resets every stored setting (a different build), the rules included, so in practice a host carries them across: Keybard reads format 1 for the layout backup it takes before the update and writes format 2 when it puts the layout back.
+
+A board that never stored the record has no rules (and App Layers is on). Writes go to an edit copy; COMMIT checks it, puts it in use and saves it.
+
+| Request | Reply (after `DF 41`) |
+|---|---|
+| `DF 41 00`: INFO | `00 <status> <format 2> <max rules 64> <rule fixed bytes 12> <count> <record bytes u16, 1792> <chunk 48> <layer count> <used bytes u16> <text max 64> <header flags>` |
+| `DF 41 01 <offset u16> <len ≤ 48>`: READ the rules in use | `01 <status> <offset u16> <len> <bytes>` |
+| `DF 41 03`: BEGIN, the edit copy = the rules in use | `03 <status>` |
+| `DF 41 02 <offset u16> <len ≤ 48> <bytes>`: WRITE into the edit copy | `02 <status>` |
+| `DF 41 04`: COMMIT the edit copy | `04 <status> <count>` |
+
+Status: `0` done; `1` unknown op, or offset and length past the record; `2` not the half with USB; `3` report too short; `4` COMMIT: the edit copy is not format 2 with at most 64 rules, each text at most 64 bytes, all within 1792 bytes (nothing changed); `5` COMMIT: in use, but not saved to flash (lost on restart). COMMIT zeroes the bytes past the last rule and the header's spare bits, and the rules (and the switches) take effect at once. To read the rules: INFO, then READ the used bytes from offset 0. To save them: BEGIN, WRITE the header and the rules (only the used bytes are needed), COMMIT. A 64-byte report carries a 48-byte chunk; a client-wrapped 32-byte report is too short for a full chunk, so use smaller ones there.

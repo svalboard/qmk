@@ -179,6 +179,12 @@ static bool range_is(uint32_t off, uint32_t len, uint8_t value) {
     return true;
 }
 
+static uint32_t slot_writes; // update_flash_writes()
+
+uint32_t update_flash_writes(void) {
+    return slot_writes;
+}
+
 static bool unit_ok(uint32_t off, uint32_t size) {
     return off % size == 0 && update_slot_range_ok(off, size);
 }
@@ -187,6 +193,7 @@ static update_status_t erase_unit(uint32_t off, uint32_t size) {
     if (!unit_ok(off, size)) return UPDATE_INVALID;
     if (!update_flash_available()) return UPDATE_UNAVAILABLE;
     if (range_is(off, size, 0xFF)) return UPDATE_OK;
+    slot_writes++;
     uint32_t irq = save_and_disable_interrupts();
     slot_flash_op(SVAL_UPDATE_BASE + off, NULL, size);
     restore_interrupts(irq);
@@ -214,6 +221,7 @@ update_status_t update_flash_program_page(uint32_t off, const uint8_t data[UPDAT
     if (!update_flash_available()) return UPDATE_UNAVAILABLE;
     if (!range_is(off, UPDATE_FLASH_PAGE, 0xFF)) return UPDATE_INVALID;
     memcpy(page_buf, data, UPDATE_FLASH_PAGE); // the ROM reads it with XIP off
+    slot_writes++;
     uint32_t irq = save_and_disable_interrupts();
     slot_flash_op(SVAL_UPDATE_BASE + off, page_buf, 0);
     restore_interrupts(irq);

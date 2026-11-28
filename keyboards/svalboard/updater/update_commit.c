@@ -133,7 +133,10 @@ COMMIT_INLINE void __attribute__((noreturn)) spin_forever(void) {
 #    include "hardware/regs/dma.h"
 #    include "hardware/regs/m0plus.h"
 #    include "hardware/platform_defs.h"
-#    define COMMIT_RAM(name) __no_inline_not_in_flash_func(name)
+// noclone: GCC 15 otherwise splits an unexported RAM function with IPA-SRA
+// into "name.isra.0", and check_ram_funcs.py no longer finds "name" (the
+// clone is still in RAM; GCC 13.2 emits identical code either way).
+#    define COMMIT_RAM(name) __attribute__((noclone)) __no_inline_not_in_flash_func(name)
 typedef uint32_t commit_vec_t;
 _Static_assert(WD_CTRL == WATCHDOG_BASE + WATCHDOG_CTRL_OFFSET && WD_LOAD == WATCHDOG_BASE + WATCHDOG_LOAD_OFFSET, "watchdog registers");
 _Static_assert(WD_SCRATCH4 == WATCHDOG_BASE + WATCHDOG_SCRATCH4_OFFSET && WD_TICK == WATCHDOG_BASE + WATCHDOG_TICK_OFFSET, "watchdog registers");
@@ -449,6 +452,10 @@ static update_status_t check_slot(const sval_update_manifest_t *m, uint32_t crc_
     update_status_t   st  = UPDATE_OK;
     crypto_sha512_init(&sha);
     for (uint32_t off = 0; off < m->image_len; off += SECTOR) {
+        // One sector hashed: the session watchdog's feed (updater_port.h), so
+        // the whole-image hash in one pass never outlasts its period, however
+        // large the image. The loop ends at image_len.
+        updater_port_alive();
         uint32_t n = m->image_len - off < SECTOR ? m->image_len - off : SECTOR;
         for (uint32_t i = 0; i < n / 4; i++) commit_sector_buf[i] = flash_rd32(SLOT_ABS(off) + 4 * i);
         crypto_sha512_update(&sha, BUF8, n);

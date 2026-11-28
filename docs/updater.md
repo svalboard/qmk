@@ -177,19 +177,19 @@ byte layouts are in the comment at the top of `kb/updater/updater.c`. In short:
 
 | Op | Request after `[hand]` | Reply after `[status]` / rule |
 |---|---|---|
-| `0x00 INFO` | page (0, the default) | state, protocol (4), slot base/size and max image (4 KiB units), JEDEC ID, pointing ID, hand, fw version, storage format, security epoch, flags (bit0 16 MiB die, bit1 settings writes failing, bit2 release build, bit3 test hooks, bit4 reserved, bit5 the other half's version differs, bit6 reserved, bit7 a no-chord dev build, D43), last error, then the largest CHUNK data (50), the largest MANIFEST piece (52) and the report size (64), for either half. Page 1 (this half only): `1`, fw version u32, the 16-character version string from the build-info record. Other pages: INVALID |
+| `0x00 INFO` | page (0, the default) | state, protocol (4), slot base/size and max image (4 KiB units), JEDEC ID, pointing ID, hand, fw version, storage format, security epoch, flags (bit0 16 MiB die, bit1 settings writes failing, bit2 release build, bit3 test hooks, bit4 reserved, bit5 the other half's version differs, bit6 reserved, bit7 a no-chord dev build, D43), last error, then the largest CHUNK data (50), the largest MANIFEST piece (52) and the report size (64), for either half; then the upload flags (bit0 CHUNK window, bit1 BEGIN reuse; see "Faster uploads") and the CHUNK window (16). A build from before them sends 0 there. Page 1 (this half only): `1`, fw version u32, the 16-character version string from the build-info record. Other pages: INVALID |
 | `0x01 MANIFEST` | off, n ≤ 52, bytes | bytes filled, of 108. In order; offset 0 restarts. Bytes past 108 are INVALID. Ties the load to this client |
 | `0x02 ARM` | mode (protocol 4: 0 single, the default; 1 pair) | nonce u32 and the first 4 bytes of SHA-512(manifest), which the host shows; then (protocol 4) the first 4 bytes of SHA-512(the pair manifest) for a pair ARM (else 0), and flags: bit0 PRE_APPROVED (BEGIN needs no chord, no blue light), bit1 BY_PAIR, bit2 NO_CHORD, bit3 PAIR. Needs all 108 bytes. Checks the manifest fields, binds the session to client ID + nonce, starts the 30 s chord window. BUSY, with nothing changed, while a Scan Lab sweep runs. A pair ARM also needs the whole pair manifest and checks it against this half (see "One chord for both halves") |
-| `0x03 BEGIN` | nonce | ACCEPTED once the chord is made: the manifest is checked again, then the erase, one 4 KiB sector per main-loop pass |
+| `0x03 BEGIN` | nonce, flags u8 (bit0 reuse, bit1 block erase; 0 from older hosts) | ACCEPTED once the chord is made: the manifest is checked again, then the erase, one 4 KiB sector per main-loop pass, or with bit1 one 64 KiB block per pass and sectors for a tail shorter than a block (see "Faster uploads"). With reuse, and the slot's verified image is this manifest's: no erase, every byte staged (see "Faster uploads") |
 | `0x04 CHUNK` | off u24, n ≤ 50, bytes | next offset. Strictly in order; an earlier chunk is acknowledged and not written again |
 | `0x05 END` | nonce | ACCEPTED: SHA-512, structure checks and CRC of the staged image, 2 KiB per pass |
-| `0x06 STATUS` | - | state, bytes staged, image length, erase progress, last error, reserved u16 (0), verify ms, longest sector erase ms, CRC low 16 bits once VERIFIED, flags, the other half by split presence (see below), then (protocol 4) flags2: bit0 an approval is held for this half's next install, bit1 this session was pre-approved |
+| `0x06 STATUS` | - | state, bytes staged, image length, erase progress, last error, reserved u16 (0), verify ms, longest erase step ms (a block or a sector), CRC low 16 bits once VERIFIED, flags, the other half by split presence (see below), then (protocol 4) flags2: bit0 an approval is held for this half's next install, bit1 this session was pre-approved |
 | `0x07 COMMIT` | nonce, CRC low 16 | ACCEPTED; the commit runs from housekeeping 100 ms later. The CRC (CRC-32/MPEG-2 over image bytes `[0x100, len)`) must match the verified image |
 | `0x08 ABORT` | nonce | From the session, or from anyone while ERROR is latched. Never erases |
 | `0x09 REBIND` | nonce | Moves the session to the sender's client ID (Keybard renews its ID every 50 s); the old ID is refused after it. Protocol 4: with the pair session's nonce it also moves a held approval, in any state, IDLE included; it is also answered while the other half commits |
 | `0x0A TEST_HALT` | nonce, point, fed | Test-hooks builds only, in VERIFIED: where the commit stops (see Test hooks). INVALID elsewhere |
 | `0x0B DIAG` | clear | Main's stack: bytes never used since boot and its size; the longest `updater_task()` pass in ms and the state it began in; the last reset reason and updater breadcrumbs. `clear` 1 restarts the pass record. For M1 #13 |
-| `0x0C RELAY` | - | M2: the relay to the other half: phase, that half's state and last error, bytes it acknowledged, image length, its erase progress, retries, relay ms, link paused, the relay's error, this half's state |
+| `0x0C RELAY` | - | M2: the relay to the other half: phase, that half's state and last error, bytes it acknowledged, image length, its erase progress, retries, relay ms, link paused, the relay's error, this half's state. Then the time per phase in ms (erase, pages, verify, commit; u16 each, 0 until the phase ends), the page phase's RPCs u16, the longest RPC in us u16, the mean page RPC in us u16, BUSY answers u8, dropouts survived u8, flags2 u8 (bit0 the fast path); and the last relay failure since boot: phase, error, bytes acknowledged u24, retries u16, ms since the last answer u16, the other half's state and error then, what it said at the next relay's first STATUS (flags: bit0 answered, bit1 a session open; state; error), and the failure count u8 (0: no record) |
 | `0x0D PAIR_MANIFEST` | off, n ≤ 52, bytes; `[hand]` is this half's own | Protocol 4 (D41): bytes filled of this half's 108-byte manifest, loaded beside a session for the other hand while it is in MANIFEST_LOADING, from that session's client. INVALID with no such session, OTHER_CLIENT, BUSY after its ARM; refusals change nothing |
 | `0x0E SETTINGS_RESET` | `'R' 'S' 'E' 'T'`, scope (0 this half, 1 both), mode (0 defaults, 1 a blank board: D44) | Protocol 4 (D42): done mask (bit0 this half, bit1 the other half). Only in IDLE with no held approval and no relay, else BUSY. See "Settings reset" |
 
@@ -511,7 +511,7 @@ exactly as in M1. Then:
 ABORT works up to the second COMMIT, and tells the other half. A relay
 failure latches ERROR with the reason: the other half's own refusal (INVALID,
 UNSUPPORTED, BAD_HASH, EPOCH, FLASH_ERR, ...), or UNAVAILABLE when it
-stopped answering for 2 s, or TIMEOUT when it stayed in COMMITTING past the
+stopped answering for 4 s, or TIMEOUT when it stayed in COMMITTING past the
 probes. The 30 s session timeout still applies while relaying and while
 RELAYED (D23: a host that went away stops the relay before the copy). While a
 session for one hand runs, the session ops for the other hand get BUSY. INFO
@@ -525,21 +525,93 @@ with USB):
 
 | Phase | Link | What happens |
 |---|---|---|
-| start, manifest | paused | ABORT (clears an old session there), then BEGIN: the 108-byte manifest in 5 fragments |
-| checking and erasing | paused | The other half checks the manifest against its own build itself (D7), then erases its slot a sector per pass; this half polls STATUS every 20 ms. A sector erase keeps the other half's interrupts off for about 50 ms, longer than the 20 ms serial timeout, so it erases a sector that needs it only after a request since its last erase and 5 ms after that request (`SVAL_UPDATE_SPLIT_ERASE_GAP_MS`): this half gets an answer between every two sectors, and an ABORT lands within a sector |
-| sending | running | PAGE fragments read from this half's slot, at most 4 ms of RPCs per main-loop pass; both halves type between them |
+| start, manifest | paused | INFO (does the other half have the fast path, below?), ABORT (clears an old session there), FAST on the fast path, then BEGIN: the 108-byte manifest in 5 fragments |
+| checking and erasing | paused | The other half checks the manifest against its own build itself (D7), then erases its slot a sector per pass; this half polls STATUS every 20 ms. A sector erase keeps the other half's interrupts off for about 50 ms, longer than the 20 ms serial timeout, so it erases a sector that needs it only after a request since its last erase and 5 ms after that request (`SVAL_UPDATE_SPLIT_ERASE_GAP_MS`): this half gets an answer between every two sectors, and an ABORT lands within a sector. After an answer that says it erases, the next poll comes 50 ms later (`SVAL_UPDATE_RELAY_ERASE_POLL_MS`) with the 3 ms serial deadline, so a poll that still finds it erasing costs 3 ms, not 20: about one poll per sector |
+| sending | paused | PAGE fragments read from this half's slot, request after request, with a main-loop pass every 15 ms (`SVAL_UPDATE_RELAY_STREAM_MS`): USB, Keybard and this half's keys keep going, and the longest pass stays under 50 ms (R13) even when an RPC times out. The other half's keys were released when the pause began |
 | end, verifying | paused | END; the other half hashes its slot (SHA-512 against the manifest, structure, CRC); its CRC must equal this half's |
-| verified | running | STATUS every 1 s keeps the other half's session alive until the host's COMMIT |
-| commit, hold | paused | COMMIT; the other half commits 100 ms later from housekeeping with the M1 routine; the link stays paused 4.5 s. An answer of IDLE to COMMIT (it already rebooted, or lost the session), or no valid answer for 2 s (COMMIT may have been taken with its answer lost), also leads to the hold: the probe decides |
-| probe | paused | STATUS. ERROR, or IDLE with an error: it did not commit (failure). COMMITTING: it has not begun its copy; probe again every 500 ms, and if it then falls silent (its copy) the whole hold again; at most 20 probes, then TIMEOUT. IDLE without an error: done. No answer (a new release may not talk to this one, V): done, flagged unconfirmed (RELAY flags bit1) |
-| aborting | as it was | After an ABORT from the host, the session timeout, or a failure: ABORT once per pass until the other half answers (it may be erasing), for at most 2 s, and only then the link resumes. A relay whose link is already dead (no valid answer for 2 s) sends one ABORT and resumes at once |
+| verified | running | STATUS every 1 s keeps the other half's session alive until the host's COMMIT. If it answers IDLE (it reset), the relay pauses the link again and starts over from INFO (at most twice); if the link cannot be paused, the relay fails |
+| commit, hold | paused | COMMIT; the other half commits 100 ms later from housekeeping with the M1 routine; the link stays paused 4.5 s. An answer of IDLE to COMMIT (it already rebooted, or lost the session), or no valid answer for 4 s (COMMIT may have been taken with its answer lost), also leads to the hold: the probe decides |
+| probe | paused | STATUS. ERROR, or IDLE with an error: it did not commit (failure). COMMITTING: it has not begun its copy; probe again every 500 ms, and if it then falls silent (its copy) the whole hold again; at most 20 probes, then TIMEOUT. IDLE without an error: done, when COMMIT was answered ACCEPTED. When it was not (answered IDLE, or never), IDLE without an error may also be a half that reset before COMMIT and still runs its old image, so its INFO is read: still on the fw_version it had at the start (and the image's differs), a failure (UNAVAILABLE); on the image's, done; the two the same, INFO unanswered or neither: done, flagged unconfirmed. No answer (a new release may not talk to this one, V): done, flagged unconfirmed (RELAY flags bit1) |
+| aborting | as it was | After an ABORT from the host, the session timeout, or a failure: ABORT once per pass until the other half answers (it may be erasing), for at most 4 s, and only then the link resumes. A relay whose link is already dead (no valid answer for 4 s) sends one ABORT and resumes at once |
 
 A request without a valid answer is sent again unchanged (the other half
 answers a retry from its cache); INVALID is accepted as a refusal only on the
 fourth answer in a row, since a request damaged on the way is also answered
-INVALID. No valid answer for 2 s fails the relay with UNAVAILABLE, then this
-half sends one ABORT and resumes the link (in the commit phase it holds
-instead, above).
+INVALID. No valid answer for 4 s (`SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS`) fails
+the relay with UNAVAILABLE, then this half sends one ABORT and resumes the link
+(in the commit phase it holds instead, above). A shorter dropout is waited
+out: the other half keeps its session for 5 s, answers the request that was
+pending (from its cache if it had taken it), and the relay carries on from the
+offset it reports. The RELAY op counts these (dropouts survived), and keeps
+the last failure since boot: phase, error, bytes acknowledged, retries and ms
+since the last answer. The next relay reads the other half's STATUS before
+its ABORT and adds it to that record: TIMEOUT with no session means the other
+half stayed up and heard nothing; no session and no error means it restarted.
+
+**The fast path** (both halves on a build that has it; `update_split_wire.h`).
+The other half says so in its `KEYBOARD_UPDATE` INFO (flags bit4, protocol 2
+on; protocol 1 builds, never released, used that bit for their test key). The
+relay reads that INFO at the start of every relay and then sends FAST, which
+makes the session that BEGIN opens next (within 1 s) a fast one:
+
+- the other half erases its slot in 64 KiB blocks (about 400 ms each with its
+  interrupts off, 2 s at the datasheet maximum, inside the 4 s link timeout);
+  this half polls 150 ms after each answer, at the 3 ms deadline;
+- the pages go as PAGE2, up to 240 image bytes a request, which may cross a
+  256 B page (248 bytes on the wire). The RPC buffer toward the half without
+  USB is 248 bytes in these builds (`RPC_M2S_BUFFER_SIZE`, `config.h`;
+  QMK's lengths are `uint8_t`); answers stay within 32;
+- it hashes each page as it arrives, read back from its slot as the verify
+  always did, so END only finishes the hash. The commit's own hash of the
+  slot is unchanged;
+- it does not scan its keys from the manifest check to the end of the verify
+  (they read released), so the pages and the hash get the time and nothing
+  held then is reported when the link resumes.
+
+A half without the fast path takes the RPC length from the wire into a
+32-byte buffer with no bound (`quantum/split_common/transactions.c`), so a
+longer frame would overrun its memory. So this half sends FAST and PAGE2 only
+after that relay's INFO said so, and after any request that went unanswered
+(the other half may have restarted, perhaps into an older build) it reads
+INFO again, a small frame, before the next PAGE2. It never tries a large
+frame to see what happens. Builds with the fast path also bound those
+lengths in the core callback: one past the buffer moves no data and runs no
+callback. No split transaction ID was added (P1). The split table golden
+(`tools/split_table_golden.json`) changes in two fields only: the default
+size of `PUT_RPC_REQ_DATA` (ID 9), which both halves set again before every
+RPC (`transaction_rpc_exec`, `slave_rpc_info_callback`), and the offset of
+`GET_RPC_RESP_DATA`'s buffer (ID 11), which is local memory. Neither is on
+the wire, and halves on the old and the new table were tested together.
+
+A half without the fast path at either end gets the old relay: a new half
+with USB streams 24-byte PAGEs with the link paused (above), and a new other
+half that is sent no FAST erases by sector and hashes after END, as before.
+
+**Measured** on the trackball test pair (right half with USB, a 176-179 KB
+image, `sval_update.py`; ms, the mean of the runs):
+
+| Sender, receiver | Runs | Erase | Pages | Verify | Relay, start to verified |
+|---|---|---|---|---|---|
+| old, old (before this change) | 3 | 3,535 | 12,950 | 856 | 17,459 |
+| new, old (the sender's changes only) | 10 | 3,048 | 8,208 | 852 | 12,217 |
+| old, new | 3 | 3,534 | 12,831 | 854 | 17,330 |
+| new, new (the fast path) | 20 | 1,228 | 4,283 | 21 | 5,630 |
+
+The commit phase (COMMIT to done) is the fixed 4.5 s hold either way. A page
+RPC takes 0.9 ms with 24 bytes and 4.4 ms with 240; erasing is the other
+half's flash: about 70 ms a sector, about 400 ms a 64 KiB block on these
+dies.
+
+**Relay faults** (`SVAL_RELAY_FAULTS=yes`, with `SVAL_UPDATE_TEST_HOOKS=yes`;
+dev builds for the test boards only). The half with USB injects a fault into
+each relay it sends since it booted, in turn: (1) one damaged request, one
+damaged answer, the link silent for 1 s and for 3 s in the pages: the relay
+finishes, two dropouts survived; (2) the link silent for 6 s in the pages:
+it fails, the other half's session times out, and the next relay records
+TIMEOUT from it; (3) the other half reset while it erases; (4) the other
+half reset halfway through the pages (`KEYBOARD_UPDATE` op `0x7E`, test-hook
+builds only); (5) none. Silence means no request goes out at all, as with the
+split cable unplugged.
 
 After a relay ends done, INFO flags bit5 stays set until presence first reads
 MATCH, also while presence reads NONE: a release that changes the split table
@@ -559,7 +631,9 @@ after 60 s idle (see LEDs).
   with interrupts off in the same section as the program, and the fragment
   is given back (the relay sends it again).
 - The request and response lengths come from the wire (`rpc_info`, behind a
-  CRC-8 only) and are clamped to the 32-byte RPC buffers.
+  CRC-8 only) and are clamped to the RPC buffers (248 bytes in, for PAGE2; 32
+  out). Builds with the fast path also bound them in QMK's own RPC info
+  callback, before any byte is read.
 - The manifest check, the erase, the image hash and the commit run in
   housekeeping, behind the pause. The two meet in a single-slot mailbox with a
   sequence number: the callback posts a job by changing the state, and moves
@@ -607,6 +681,53 @@ with (`kb/updater/fw_version.txt` unless `make ... SVAL_FW_VERSION=N`), and
 manifest, so the two agree unless `--fw-version` says otherwise (which it
 refuses when the record has a nonzero number). For an A/B pair of test images
 build twice with `SVAL_FW_VERSION=2101` and `2102`.
+
+## Faster uploads
+
+INFO page 0 byte 26 says what a build adds for uploads; it stays protocol 4,
+and a host that does not read the byte (or reads 0 from an older build) uploads
+as before: one CHUNK, then its reply, then the next.
+
+- **CHUNK window** (bit0). A host may send up to INFO byte 27 (16) CHUNKs back
+  to back before it waits for their replies. The board takes each in order and
+  answers each, in order, with the next offset, exactly as before. Raw HID OUT
+  reports wait in the endpoint queue (the endpoint NAKs while it is full), so
+  none is lost on the way in. A CHUNK past the next offset is OUT_OF_ORDER and
+  changes nothing; the host goes back to that offset and sends from there. A
+  repeat is acknowledged and not written again. So a reply that goes missing
+  costs a resend, never a wrong byte, and the SHA-512 at END still checks the
+  whole image before anything is committed. One report per 1 ms USB frame is
+  the ceiling of a full-speed interrupt endpoint: about 50 KB/s of image
+  (50 data bytes per frame; measured figures are in the PR).
+- **BEGIN reuse** (bit1). BEGIN takes a flags byte after the nonce; bit0 asks
+  to keep the image already in the slot. The board keeps it only when a session
+  verified it there (END's SHA-512, structure and build-info checks), the slot
+  has not been erased or programmed since (`update_flash_writes()`), no reset
+  came between (the record is RAM only), and that session's manifest (its
+  SHA-512) and length are this one's. Then BEGIN goes straight to RECEIVING
+  with every byte staged: no erase, no CHUNKs. END verifies the slot again
+  before COMMIT, as always. Otherwise BEGIN erases as before, and STATUS's
+  staged count (0) tells the host to send the image.
+- **Block erase** (bit2; BEGIN flags bit1). A host that asks for it waits
+  through a block erase. BEGIN then erases the slot in whole 64 KiB blocks from offset 0
+  (the slot starts on a block), then 4 KiB sectors for a tail shorter than a
+  block; it never erases past the image's last sector, so never outside the
+  slot. A 180 KB image is 2 blocks and 12 sectors instead of 44 sectors. Each
+  block erase keeps this half's interrupts off for about 400 ms (2 s at the
+  datasheet maximum, inside the 8 s watchdog). USB requests wait in the
+  endpoint queue meanwhile and are answered when it ends; STATUS says ERASING
+  throughout and CHUNK and END are BUSY, as before. A host that asks must
+  allow for one block erase in its reply timeout: Keybard with this change
+  asks again after a STATUS that times out while the board erases. A host
+  that doesn't ask (any older Keybard, `sval_update.py`) gets 4 KiB sectors
+  as before, so its 1 s or 2 s reply timeout never meets a block erase.
+  ABORT lands within a block.
+
+A pair update of one image for both halves (`svalboard/either`) uses both:
+the image goes to the half with USB once, in a window, is relayed to the other
+half, and the half with USB then installs that same staged image on the held
+approval (one manifest, so the same SHA-512), after its own verify. Per-hand
+images have two manifests, so the half with USB is sent its own image.
 
 ## One chord for both halves (protocol 4, D41)
 
@@ -819,10 +940,13 @@ python3 -I $MU verify OUT.svup --build plain
   not a refusal (D33): the tool asks `[y/N]` before writing, `--yes` skips
   the question, and no answer (no terminal) writes nothing.
 - `--diagnostic` sets DIAGNOSTIC (Scan Lab, keytest or host-bootloader
-  images). `--epoch` and `--storage-format` set the floors' fields.
+  images). `--epoch` and `--storage-format` set the floors' fields; they
+  default to the firmware's (`SECURITY_EPOCH` and `STORAGE_FORMAT` in the
+  tool mirror `config.h`, and the host tests check that they agree).
 - `--release` sets RELEASE and refuses anything that is not a clean release
   update: a manifest with flags other than exactly RELEASE, a keymap other
-  than `sval` or `blank`, another updater protocol or an older storage format;
+  than `sval` or `blank`, another updater protocol, an older storage format or
+  a lower security epoch;
   an image without a build-info record, or whose record is not a release
   build, has test hooks, keytest, the host bootloader or a reserved bit set,
   reports another version than the manifest, or names another keymap (another
@@ -833,7 +957,9 @@ python3 -I $MU verify OUT.svup --build plain
   for rejection tests. Never with `--release`.
 - `verify FILE.svup --build release|plain` checks a `.svup` offline as that
   kind of build would before erasing anything: the manifest rules, the hash
-  and the structure. A release build also refuses DIAGNOSTIC.
+  and the structure. A release build also refuses DIAGNOSTIC, and an image
+  whose build-info record is a dev build (no-chord or keep-settings) whatever
+  the manifest's flags, as the board does at END.
 
 `util/updater_test/run.sh` with `SVAL_RELEASE_SVUPS="a.svup:ok b.svup:refused"`
 runs `.svup` files through the C code of a release build
@@ -1006,8 +1132,8 @@ pointing device and keymap, and accepted by `make_update.py verify-pair
   `test_relay.c` (in the `test_updater` and `test_commit` builds) runs both
   halves' code in one process over a simulated split link
   (`tests/sval_updater/test_session.c`): the relay start to finish (the other
-  half erases and verifies only behind the pause, the pause is never held
-  while the image streams, the per-pass budget holds), the other half's own
+  half erases and verifies only behind the pause, the image streams behind
+  it too, the per-pass budget holds), the other half's own
   refusals (including a version-1 manifest and a nonzero reserved byte), faults on every RPC (dropped, damaged, duplicated, stale and
   reordered requests and answers), the link pulled in each phase (this half
   fails within 2 s and resumes the link, the other half drops its session 5 s

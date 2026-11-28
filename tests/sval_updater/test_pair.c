@@ -389,8 +389,12 @@ static void test_p4_held_rules(void) {
     CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_END, session_nonce), UPDATE_ACCEPTED);
     passes_until(UPDATE_STATE_VERIFIED, 5000);
     CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_ACCEPTED);
-    for (int i = 0; i < 50; i++)
+    update_relay_info_t pri;
+    for (int i = 0; i < 5000; i++) {
+        update_relay_info(&pri);
+        if (pri.phase == RELAY_PAGES && pri.acked > 0) break;
         pass();
+    }
     link_dead = true; // the split cable pulled mid-relay
     for (int i = 0; i < 10000 && updater_state() == UPDATE_STATE_RELAYING; i++)
         pass();
@@ -752,6 +756,172 @@ static void test_p4_image_build_check(void) {
     CHECK_EQ(b.flags, a.flags);
 }
 
+// ---- faster uploads: the CHUNK window and BEGIN reuse ----------------------------------------
+
+static update_status_t begin_flags(uint32_t client, uint8_t flags) {
+    uint8_t a[5];
+    put32(a, session_nonce);
+    a[4] = flags;
+    return send(client, UPDATE_OP_BEGIN, a, sizeof(a));
+}
+
+// BEGIN (with flags) to RECEIVING; returns the staged count STATUS then reports.
+static uint32_t begun(uint32_t client, uint8_t flags, int *erases) {
+    int e0 = erase_ops;
+    CHECK_EQ(begin_flags(client, flags), UPDATE_ACCEPTED);
+    passes_until(UPDATE_STATE_RECEIVING, 2000);
+    CHECK_EQ(updater_state(), UPDATE_STATE_RECEIVING);
+    if (erases) *erases = erase_ops - e0;
+    CHECK_EQ(send(client, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
+    return get24le(rsp + 2);
+}
+
+static update_state_t end_and_verify(uint32_t client) {
+    CHECK_EQ(send_nonce(client, UPDATE_OP_END, session_nonce), UPDATE_ACCEPTED);
+    passes_until(UPDATE_STATE_VERIFIED, 5000);
+    return updater_state();
+}
+
+static void test_fast_upload(void) {
+    const uint32_t len = 0x5000;
+    int            erases;
+
+    // The window: CHUNKs back to back, each answered in order. One that went
+    // missing makes every later one OUT_OF_ORDER with the next offset, and
+    // changes nothing; the host resends from there. A repeat is acknowledged.
+    fresh(len);
+    commit_avail = true;
+    CHECK(to_receiving(CLIENT_A));
+    uint32_t off = 0;
+    for (int i = 0; i < UPDATE_CHUNK_WINDOW; i++, off += T_CHUNK) {
+        if (i == 5) continue; // lost on the way
+        update_status_t st = send_chunk(CLIENT_A, off, T_CHUNK, img + off);
+        CHECK_EQ(st, i < 5 ? UPDATE_OK : UPDATE_OUT_OF_ORDER);
+        CHECK_EQ(get24le(rsp + 1), i < 5 ? off + T_CHUNK : 5 * T_CHUNK);
+    }
+    CHECK_EQ(updater_state(), UPDATE_STATE_RECEIVING);
+    CHECK_EQ(send_chunk(CLIENT_A, 0, T_CHUNK, img), UPDATE_OK); // a repeat
+    CHECK_EQ(get24le(rsp + 1), 5 * T_CHUNK);
+    CHECK_EQ(send_image(CLIENT_A, 5 * T_CHUNK, len), UPDATE_OK);
+    CHECK_EQ(end_and_verify(CLIENT_A), UPDATE_STATE_VERIFIED);
+
+    // BEGIN reuse after a verified session of the same manifest: no erase, every
+    // byte staged, END verifies the slot again, and COMMIT installs it.
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
+    CHECK(to_confirm_wait(CLIENT_A));
+    chord();
+    CHECK_EQ(begun(CLIENT_A, UPDATE_BEGIN_REUSE, &erases), len);
+    CHECK_EQ(erases, 0);
+    int p0 = program_ops;
+    CHECK_EQ(end_and_verify(CLIENT_A), UPDATE_STATE_VERIFIED);
+    CHECK_EQ(program_ops, p0);
+    CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_ACCEPTED);
+    for (int i = 0; i < 300 && commit_runs == 0; i++)
+        pass();
+    CHECK_EQ(commit_runs, 1);
+
+    // Without the flag (an older host): the slot is erased and sent again.
+    fresh(len);
+    CHECK(to_verified(CLIENT_A));
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
+    CHECK(to_confirm_wait(CLIENT_A));
+    chord();
+    CHECK_EQ(begun(CLIENT_A, 0, &erases), 0);
+    CHECK(erases > 0);
+
+    // Another manifest (a different image of the same length): erased, sent again.
+    fresh(len);
+    CHECK(to_verified(CLIENT_A));
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
+    img[0x2000] ^= 0x5A;
+    crypto_sha512(blob_manifest()->sha512, img, img_len);
+    CHECK(to_confirm_wait(CLIENT_A));
+    chord();
+    CHECK_EQ(begun(CLIENT_A, UPDATE_BEGIN_REUSE, &erases), 0);
+    CHECK(erases > 0);
+    CHECK_EQ(send_image(CLIENT_A, 0, len), UPDATE_OK);
+    CHECK_EQ(end_and_verify(CLIENT_A), UPDATE_STATE_VERIFIED);
+
+    // The slot written since it was verified (a sector erased): not reused.
+    fresh(len);
+    CHECK(to_verified(CLIENT_A));
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
+    CHECK_EQ(update_flash_erase_sector(0x4000), UPDATE_OK);
+    CHECK(to_confirm_wait(CLIENT_A));
+    chord();
+    CHECK_EQ(begun(CLIENT_A, UPDATE_BEGIN_REUSE, NULL), 0);
+
+    // A reset forgets the image: not reused.
+    fresh(len);
+    CHECK(to_verified(CLIENT_A));
+    updater_host_reset();
+    CHECK(to_confirm_wait(CLIENT_A));
+    chord();
+    CHECK_EQ(begun(CLIENT_A, UPDATE_BEGIN_REUSE, NULL), 0);
+
+    // The slot changed under the record (a bit flipped, no write counted): the
+    // session takes it, and END's SHA-512 refuses it. Nothing is committed.
+    fresh(len);
+    commit_avail = true;
+    CHECK(to_verified(CLIENT_A));
+    CHECK_EQ(send_nonce(CLIENT_A, UPDATE_OP_ABORT, session_nonce), UPDATE_OK);
+    update_host_flash[SVAL_UPDATE_BASE + 0x3000] ^= 0x01;
+    CHECK(to_confirm_wait(CLIENT_A));
+    chord();
+    CHECK_EQ(begun(CLIENT_A, UPDATE_BEGIN_REUSE, NULL), len);
+    CHECK_EQ(end_and_verify(CLIENT_A), UPDATE_STATE_ERROR);
+    CHECK_EQ(send(CLIENT_A, UPDATE_OP_STATUS, NULL, 0), UPDATE_OK);
+    CHECK_EQ(rsp[12], UPDATE_BAD_HASH);
+    CHECK(send_commit(CLIENT_A, body_crc()) != UPDATE_ACCEPTED);
+    CHECK_EQ(commit_runs, 0);
+
+    // A pair update of one image for both halves (the same manifest): the half
+    // with USB reuses the image it relayed, on the held approval: one upload.
+    pair_fresh(len);
+    memcpy(self_blob, blob, sizeof(self_blob)); // one manifest for both halves
+    CHECK(pair_armed(CLIENT_A));
+    chord();
+    CHECK(pair_rest(CLIENT_A));
+    // A reinstall: the other half comes back matching this one, and the green
+    // flash goes out on the ping (DONE for 2 s).
+    slave_id.fw_version    = master_id.fw_version;
+    slave_id.git_hash      = master_id.git_hash;
+    slave_id.updater_proto = master_id.updater_proto;
+    for (int i = 0; i < 3000 && led_now != UPDATE_LED_DONE; i++)
+        pass();
+    CHECK_EQ(led_now, UPDATE_LED_DONE);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_DONE);
+    uint64_t done_us = sim_us;
+    CHECK_EQ(self_armed(CLIENT_A, self_blob), UPDATE_OK);
+    CHECK_EQ(arm_rsp[13], UPDATE_ARM_PRE_APPROVED | UPDATE_ARM_BY_PAIR);
+    CHECK_EQ(begun(CLIENT_A, UPDATE_BEGIN_REUSE, &erases), len);
+    CHECK_EQ(erases, 0);
+    CHECK_EQ(end_and_verify(CLIENT_A), UPDATE_STATE_VERIFIED);
+    // This half's install, still inside the flash's 2 s: the ping carries the
+    // rainbow, not DONE (the other half would go dark, then blink amber at the
+    // restart).
+    CHECK(sim_us - done_us < 2000000);
+    CHECK_EQ(updater_split_light(), UPDATE_LIGHT_UPDATING);
+    master_commit_resets = true;
+    master_stop_pings    = 0;
+    CHECK_EQ(send_commit(CLIENT_A, body_crc()), UPDATE_ACCEPTED);
+    for (int i = 0; i < 300 && master_reboots == 0; i++)
+        pass();
+    CHECK_EQ(commit_runs, 1);
+    // Its last ping says it restarts on purpose, before the commit runs: the
+    // other half stops instead of blinking amber (docs/link-light.md).
+    CHECK_EQ(master_stop_pings, 1);
+    CHECK_EQ(stop_ping_commits, 0);
+
+    // Per-hand images (two manifests): this half's image is sent as before.
+    pair_fresh(len);
+    CHECK(pair_armed(CLIENT_A));
+    chord();
+    CHECK(pair_rest(CLIENT_A));
+    CHECK_EQ(self_armed(CLIENT_A, self_blob), UPDATE_OK);
+    CHECK_EQ(begun(CLIENT_A, UPDATE_BEGIN_REUSE, NULL), 0);
+}
+
 static void test_pair(void) {
     int before_failures = failures;
     test_p4_single();
@@ -761,6 +931,7 @@ static void test_pair(void) {
     test_p4_settings_reset();
     test_p4_blank_reset();
     test_p4_image_build_check();
+    test_fast_upload();
     printf("protocol 4 tests: %s\n", failures == before_failures ? "pass" : "FAIL");
 }
 
