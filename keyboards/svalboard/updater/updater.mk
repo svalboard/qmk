@@ -45,6 +45,8 @@ ifeq ($(strip $(SVAL_UPDATER)), yes)
   # The boot relay of a pair UF2 (docs/pair-uf2.md).
   SRC += updater/update_pair.c
   SRC += updater/vendor/sha512.c
+  # The hardware watchdog while the updater is active (session_watchdog.h).
+  SRC += session_watchdog.c
   EXTRAINCDIRS += keyboards/svalboard/updater/vendor
   # The commit's RAM code must not branch into flash (R2): no jump tables, no
   # loops turned into memcpy/memset calls. -fstack-usage writes
@@ -75,6 +77,13 @@ ifeq ($(strip $(SVAL_UPDATER)), yes)
       $(error SVAL_UPDATE_NO_CHORD cannot be part of a release build)
     endif
     OPT_DEFS += -DSVAL_UPDATE_NO_CHORD
+  endif
+  # Relay fault injection for the test boards (docs/updater.md, "Relay faults").
+  ifeq ($(strip $(SVAL_RELAY_FAULTS)), yes)
+    ifneq ($(strip $(SVAL_UPDATE_TEST_HOOKS)), yes)
+      $(error SVAL_RELAY_FAULTS needs SVAL_UPDATE_TEST_HOOKS=yes)
+    endif
+    OPT_DEFS += -DSVAL_RELAY_FAULTS
   endif
   ifeq ($(strip $(SVAL_UPDATE_RELEASE)), yes)
     OPT_DEFS += -DSVAL_UPDATE_RELEASE

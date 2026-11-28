@@ -90,6 +90,78 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('OK', result.stdout)
 
+    def test_pad_scroll_math(self):
+        # pad_scroll.c: two-finger scroll pixels as wheel counts, Windows and Mac.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'pad_scroll'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'pad_scroll_test.c'), str(ROOT / 'keyboards/svalboard/pad_scroll.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn('pad_scroll OK', result.stdout)
+
+    def test_axis_lock(self):
+        # axis_lock.c: a trackball's Axis Scroll Lock, and its return to free after a rest.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'axis_lock'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'axis_lock_test.c'), str(ROOT / 'keyboards/svalboard/axis_lock.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn('axis_lock OK', result.stdout)
+
+    def test_wheel_pace(self):
+        # wheel_pace.c: at most one detent per axis per report, totals kept, backlog bounded, a Mac untouched.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'wheel_pace'
+            subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'keyboards/svalboard'), str(HERE / 'wheel_pace_test.c'), str(ROOT / 'keyboards/svalboard/wheel_pace.c'), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('wheel_pace OK', result.stdout)
+
+    def test_scroll_speed_math(self):
+        # scroll_speed.c: the trackball scaler, the saved record, the migration that keeps every hand's output, pad DPI normalization.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'scroll_speed'
+            subprocess.run([
+                'gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I',
+                str(ROOT / 'keyboards/svalboard'),
+                str(HERE / 'scroll_speed_test.c'),
+                str(ROOT / 'keyboards/svalboard/scroll_speed.c'),
+                str(ROOT / 'keyboards/svalboard/pad_scroll.c'), '-o',
+                str(binary)
+            ],
+                           check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('scroll_speed OK', result.stdout)
+
+    def test_pointer_speed(self):
+        # pointer_speed.c: the TrackPoint's software speed (default 1:1, remainders carry, scroll independent) and each module's DPI maximum.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'pointer_speed'
+            subprocess.run([
+                'gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-I',
+                str(ROOT / 'keyboards/svalboard'),
+                str(HERE / 'pointer_speed_test.c'),
+                str(ROOT / 'keyboards/svalboard/pointer_speed.c'),
+                str(ROOT / 'keyboards/svalboard/scroll_speed.c'),
+                str(ROOT / 'keyboards/svalboard/pad_scroll.c'), '-o',
+                str(binary)
+            ],
+                           check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('pointer_speed OK', result.stdout)
+
+    def test_dpi_list_only_grows_at_the_end(self):
+        # Saved DPI indexes stay valid: the shipped list keeps its first eleven values and 16000 is last.
+        import re
+        src = (ROOT / 'keyboards/svalboard/svalboard.c').read_text(encoding='utf-8')
+        m = re.search(r'const uint16_t dpi_choices\[\] = \{([^}]*)\}', src)
+        values = [int(v) for v in m.group(1).split(',')]
+        self.assertEqual(values[:11], [200, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 12000])
+        self.assertEqual(values[11:], [16000])
+        self.assertEqual(values[3], 800)  # index 3 is the default and a TrackPoint's 1:1
+
     def test_axis_factor(self):
         # axis_scale.h: sniper and boost factors clamp to 255, never wrap.
         with tempfile.TemporaryDirectory() as directory:
@@ -98,6 +170,34 @@ class VelocityScrollTests(unittest.TestCase):
             result = subprocess.run([str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('OK', result.stdout)
+
+    def _run_c(self, name, sources, includes=()):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / name
+            cmd = ['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror']
+            for inc in (*includes, ROOT / 'keyboards/svalboard'):
+                cmd += ['-I', str(inc)]
+            subprocess.run(cmd + [str(src) for src in sources] + ['-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(f'{name} OK', result.stdout)
+
+    def test_axis_scale(self):
+        # axis_scale.c: Boost saturates instead of wrapping; each hand keeps its own Sniper remainders.
+        self._run_c('axis_scale', [HERE / 'axis_scale_test.c', ROOT / 'keyboards/svalboard/axis_scale.c'])
+
+    def test_automouse_decay(self):
+        # automouse_decay.h: an idle of any length forgets a partial Auto Mouse count.
+        self._run_c('automouse_decay', [HERE / 'automouse_decay_test.c'])
+
+    def test_hand_scroll(self):
+        # scroll_speed.c: Scroll Mode keeps a pad's two-finger scroll, the mm units do not overflow,
+        # and the Scroll speed migration waits for a hand no half reports.
+        self._run_c('hand_scroll', [HERE / 'hand_scroll_test.c', ROOT / 'keyboards/svalboard/scroll_speed.c'])
+
+    def test_scroll_test_motion(self):
+        # scroll_test.c (dev builds): any int32 rate keeps its direction and its total.
+        self._run_c('scroll_test', [HERE / 'scroll_test_test.c', ROOT / 'keyboards/svalboard/scroll_test.c'], [HERE / 'scroll_test_stubs'])
 
     def test_trackball_health_check(self):
         # trackball.c: the once-a-second check is read-only, catches a reset or stuck sensor,
@@ -126,6 +226,14 @@ class VelocityScrollTests(unittest.TestCase):
             self.assertEqual(names.index('SV_VELOCITY_SCROLL_TOGGLE'), 31, keymap)
             self.assertLessEqual(len(names), 32, keymap)  # QK_USER_31 is the last the GUI addresses
 
+    def test_pad_two_finger_scroll_takes_the_scroll_speed(self):
+        # keymap_support.c: the pad's two-finger scroll gets the hand's Scroll speed (a percent), never its DPI.
+        source = (ROOT / 'keyboards/svalboard/keymaps/keymap_support.c').read_text(encoding='utf-8')
+        call = source[source.index('sval_pad_scroll(&pad_scroll_state'):]
+        call = call[:call.index(';')]
+        self.assertIn('sval_scroll_speed(hand)', call)
+        self.assertNotIn('dpi', call)
+
     def test_toggle_key_is_handled_like_the_hold_key(self):
         # keymap_support.c: both keys on press and release, and in the mouse layer's passthrough list.
         source = (ROOT / 'keyboards/svalboard/keymaps/keymap_support.c').read_text(encoding='utf-8')
@@ -133,6 +241,36 @@ class VelocityScrollTests(unittest.TestCase):
         passthrough = source[source.index('#define MOUSE_PASSTHROUGH_KEYCODE'):]
         passthrough = passthrough[:passthrough.index(')\n')]
         self.assertIn('SV_VELOCITY_SCROLL_TOGGLE', passthrough)
+
+
+class PowerMenuTests(unittest.TestCase):
+    """sval.json: scan and idle items live in their own menu, ids unchanged."""
+
+    SCAN_IDS = {
+        'id_scan_prewait_us', 'id_scan_postwait_us', 'id_scan_period_us', 'id_scan_idle_period_ms', 'id_scan_idle_after_ms', 'id_scan_deep_after_s', 'id_scan_deep_period_ms', 'id_idle_pointer_rest', 'id_idle_rgb_dim', 'id_idle_cpu_sleep',
+        'id_idle_low_clock', 'id_idle_long_nap', 'id_scan_deep_clock_idx'
+    }
+
+    @staticmethod
+    def _ids(node):
+        if isinstance(node, dict):
+            c = node.get('content')
+            if isinstance(c, list) and c and isinstance(c[0], str):
+                yield c[0]
+            else:
+                for x in (c or []):
+                    yield from PowerMenuTests._ids(x)
+        elif isinstance(node, list):
+            for x in node:
+                yield from PowerMenuTests._ids(x)
+
+    def test_scan_items_are_in_power_menu_not_pointing(self):
+        for keymap in ('sval', 'blank'):
+            data = json.loads((ROOT / f'keyboards/svalboard/keymaps/{keymap}/sval.json').read_text())
+            menus = {m['label']: set(self._ids(m)) for m in data['menus']}
+            self.assertEqual(menus['Power and scanning'], self.SCAN_IDS, keymap)
+            self.assertFalse(menus['Pointing Device'] & self.SCAN_IDS, keymap)
+            self.assertNotIn('Advanced', [g['label'] for m in data['menus'] for g in m['content'] if 'content' in g and m['label'] == 'Pointing Device'])
 
 
 class PointingSensorTests(unittest.TestCase):
@@ -144,6 +282,45 @@ class PointingSensorTests(unittest.TestCase):
             result = subprocess.run([str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('OK', result.stdout)
+
+
+class TrackballDriverTests(unittest.TestCase):
+    """drivers/sensors/pmw33xx_common.c and svalboard.c: the trackball's SPI from the right place."""
+    def test_burst_stays_entered_while_the_sensor_rests(self):
+        # With rest modes on, OP_MODE reads Rest1-3: not a burst fault, so no Motion_Burst write each poll.
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'pmw33xx_burst'
+            subprocess.run([
+                'gcc', '-std=gnu11', '-Wall', '-Wextra', '-Wno-unused-parameter', '-Werror', '-DPOINTING_DEVICE_DRIVER_pmw3389', '-DPMW33XX_CS_PIN=1', '-I',
+                str(HERE / 'pmw33xx_stubs'), '-I',
+                str(ROOT / 'drivers/sensors'),
+                str(HERE / 'pmw33xx_burst_test.c'),
+                str(ROOT / 'drivers/sensors/pmw33xx_common.c'), '-o',
+                str(binary)
+            ],
+                           check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('OK', result.stdout)
+
+    @staticmethod
+    def _body(source, signature):
+        # From the signature to the function's closing brace at the start of a line.
+        start = source.index(signature)
+        return source[start:source.index('\n}\n', start) + 2]
+
+    def test_ping_handler_leaves_the_sensor_to_the_main_loop(self):
+        # kb_sync_listener runs in the split link's thread on the half without USB: a Config2 write
+        # from there can land inside the main loop's burst read or firmware upload. It only marks
+        # the rest mode due; housekeeping (the main loop) writes it.
+        source = (ROOT / 'keyboards/svalboard/svalboard.c').read_text(encoding='utf-8')
+        listener = self._body(source, 'void kb_sync_listener(')
+        self.assertNotIn('sval_pointer_rest_apply', listener)
+        self.assertIn('pointer_rest_due', listener)
+        housekeeping = self._body(source, 'void housekeeping_task_kb(void)')
+        due = housekeeping[housekeeping.index('if (pointer_rest_due)'):]
+        due = due[:due.index('}')]
+        self.assertIn('sval_pointer_rest_apply();', due)
 
 
 if __name__ == '__main__':

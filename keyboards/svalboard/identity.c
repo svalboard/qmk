@@ -249,10 +249,16 @@ identity_status_t identity_set_name(const char *name, uint8_t len) {
     if (!region_ok) return IDENTITY_UNAVAILABLE;
     if (len > IDENTITY_NAME_MAX_BYTES || !utf8_valid((const uint8_t *)name, len)) return IDENTITY_INVALID;
     if (len == current.name_len && memcmp(name, current.name, len) == 0) return IDENTITY_OK;
+    // save() writes current, so set the name there, and put the old record back
+    // when the write fails: a retry of the same name then writes it again.
+    identity_record_t before = current;
     memset(current.name, 0, sizeof(current.name));
     memcpy(current.name, name, len);
     current.name_len = len;
-    if (!save()) return IDENTITY_WRITE_FAILED;
+    if (!save()) {
+        current = before;
+        return IDENTITY_WRITE_FAILED;
+    }
     memcpy(name_z, current.name, len);
     name_z[len] = 0;
     return IDENTITY_OK;

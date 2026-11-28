@@ -16,6 +16,7 @@ python3 -I "$tests/test_make_update.py" "$out/cross" "$@"
 python3 -I "$tests/test_release_version.py" "$out/release_version"
 python3 -I "$tests/test_release_artifacts.py" "$out/release_artifacts"
 python3 -I "$tests/test_either_hand.py"
+python3 -I "$tests/test_check_ram_funcs.py"
 
 # Debounce (kb/debounce_sval.c): optical keys off (same scan) and on
 # (sym_defer_g), the thumb Double Down debounced in both, mode changes, split sync.
@@ -28,6 +29,17 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
     -I"$kb" "$root/tests/sval_timing/test_timing.c" "$kb/sval_timing.c" -o "$out/test_timing"
 "$out/test_timing"
 "$out/test_debounce"
+
+# Idle power (kb/power_policy.h): the scan period while a key is held, the PIO
+# dividers across a deep-idle clock switch, LED writes at a clock too low for
+# the WS2812 timing.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$kb" "$root/tests/sval_power_idle/test_power_policy.c" -o "$out/test_power_policy"
+"$out/test_power_policy"
+
+# RGB at rest (kb/rgb_idle.c): the idle dimming kept out of the saved lighting
+# (keys, VIA), and RGBLIGHT_SLEEP while the host sleeps.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$root/tests/sval_rgb_idle/stub" -I"$kb" "$root/tests/sval_rgb_idle/test_rgb_idle.c" -o "$out/test_rgb_idle"
+"$out/test_rgb_idle"
 
 # Touchpad tap setting (kb/pad_gestures.c): defaults are today's behavior, each
 # switch, the hold time table, the stored record, the chip's gesture register
@@ -43,6 +55,22 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 "$out/test_pad_touch"
 "$out/test_pad_gestures"
 
+# The touchpad tap setting write (kb/azoteq/azoteq.c, mouse path): a write
+# that fails twice stays pending and is tried again after a growing wait, up
+# to about 25 s; a new change goes out at once.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -I"$root/tests/sval_azoteq_gestures/stub" -I"$kb" -I"$kb/azoteq" \
+    "$root/tests/sval_azoteq_gestures/test_azoteq_gestures.c" "$kb/pad_gestures.c" -o "$out/test_azoteq_gestures"
+"$out/test_azoteq_gestures"
+
+# The touch page (kb/azoteq/touch_stream.c): the first finger is the first
+# slot with a touch strength, so the page follows the finger left in slot 1
+# when the finger in slot 0 lifts.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -I"$root/tests/sval_touch_stream/stub" -I"$kb" -I"$kb/azoteq" \
+    "$root/tests/sval_touch_stream/test_touch_stream.c" "$kb/pad_touch.c" "$kb/pad_gestures.c" -o "$out/test_touch_stream"
+"$out/test_touch_stream"
+
 # The key-event line on the debug console (kb/key_log.c): nothing while debug
 # is off, the KL: line while it is on; DEBUG_CONSOLE (Sval 0x3E,
 # kb/debug_console.c) with and without the console in the build.
@@ -50,6 +78,11 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -DCONSOLE_ENABLE     -I"$root/tests/sval_key_log/stub" -I"$kb" "$root/tests/sval_key_log/test_key_log.c" -o "$out/test_key_log_console"
 "$out/test_key_log_console"
 "$out/test_key_log"
+
+# Double-tap RESET (kb/double_tap_reset.h): only RUN-pin resets count, a
+# software reboot never enters the bootloader, two quick taps do.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$kb" "$root/tests/sval_double_tap/test_double_tap.c" -o "$out/test_double_tap"
+"$out/test_double_tap"
 
 # Settings reset on the first boot of a different firmware build (kb/build_reset.c).
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
@@ -60,6 +93,17 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -DSVAL_SIDE_HOST_TEST -DBUILD_RESET_HOST_TEST -I"$kb" "$tests/test_side.c" "$kb/side.c" "$kb/build_reset.c" -o "$out/test_side"
 "$out/test_side"
 "$out/test_build_reset"
+# Side writes during a firmware update (kb/side.c, its firmware part, against
+# the mocks in tests/sval_side/stub): refused for both halves, and a write or
+# restart the other half took waits for the end of its session. side.c is
+# copied out first, so that its includes find the stubs, not kb/'s headers.
+mkdir -p "$out/side_rt"
+cp "$kb/side.c" "$out/side_rt/side.c"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -DSVAL_EITHER_HAND -DSERIAL_USART_PINS_RUNTIME -DSERIAL_USART_FULL_DUPLEX -DSVAL_UPDATER \
+    -I"$root/tests/sval_side/stub" -I"$kb" \
+    "$root/tests/sval_side/test_side_update.c" "$out/side_rt/side.c" -o "$out/test_side_update"
+"$out/test_side_update"
 
 # Raw HID framing (tmk_core/protocol/chibios/usb_packet.h) against ChibiOS's
 # real input buffers queue: a short packet never misframes the next report.
@@ -72,6 +116,11 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined
 # Flicker latch (Sval 0x3D, keyboards/svalboard/flicker_latch.c): one-scan
 # bounces latch and count on the raw rows, reads clear them, both halves answer.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -I"$root/tests/sval_flicker_latch/stub" -I"$kb"     "$root/tests/sval_flicker_latch/test_flicker_latch.c" -o "$out/test_flicker_latch"
+# Scan Lab's settle probe (keyboards/svalboard/scanlab.c) across the split link:
+# the half without USB runs it from housekeeping, never in the link's thread.
+# Built from a copy in its own directory, so its "svalboard.h" is the mock.
+mkdir -p "$out/scanlab" && cp "$kb/scanlab.c" "$out/scanlab/scanlab.c"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -DVIA_ENABLE=1 -I"$out/scanlab" -I"$root/tests/sval_scanlab/stub" -I"$kb"     "$root/tests/sval_scanlab/test_scanlab.c" -o "$out/test_scanlab"
 # The client ID lease (modules/svalboard/core/client_wrapper.c) across the
 # 32-bit timer wrap: the typing pause is tied to one ID.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -I"$root/tests/sval_client_id/stub" -I"$root/modules/svalboard/core"     "$root/tests/sval_client_id/test_client_id.c" -o "$out/test_client_id"
@@ -79,11 +128,19 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined
 # a time on top of the error count, so short receive deadlines never disconnect early.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -I"$root/quantum/split_common"     "$root/tests/sval_split/test_connection.c" -o "$out/test_split_connection"
 "$out/test_split_connection"
+# The other half's EXECUTE_RPC (quantum/split_common/split_rpc_id.h): every
+# transaction id byte from the wire, only the RPC ids index the table.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+    -DSPLIT_TRANSACTION_IDS_KB="KEYBOARD_SYNC_A, KEYBOARD_SYNC_B, KEYBOARD_UPDATE" \
+    -I"$root/quantum" -I"$root/quantum/split_common" \
+    "$root/tests/sval_split/test_rpc_id.c" -o "$out/test_rpc_id"
+"$out/test_rpc_id"
 # The link light's rules (keyboards/svalboard/link_light.c): armed by a pairing,
 # shown on a loss, cleared when it comes back, dark in USB suspend.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g     -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer     -DSVAL_LINK_HOST_TEST -I"$root/tests/sval_link" -I"$root/keyboards/svalboard"     "$root/tests/sval_link/test_link_light.c" -o "$out/test_link_light"
 "$out/test_link_light"
 "$out/test_flicker_latch"
+"$out/test_scanlab"
 "$out/test_typing_pause"
 "$out/test_client_id"
 "$out/test_packet"

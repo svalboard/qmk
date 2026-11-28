@@ -36,7 +36,8 @@ void updater_task(void);
 void updater_via_command(uint8_t *data, uint8_t length);
 
 // Any state but IDLE: the keyboard keeps full clock and no idle dimming, and
-// skips its identity task.
+// skips its identity task. A latched ERROR counts only while its red light
+// shows (SVAL_UPDATE_RED_MS); the error itself stays for STATUS and ABORT.
 bool           updater_active(void);
 update_state_t updater_state(void);
 

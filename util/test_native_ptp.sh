@@ -35,6 +35,10 @@ tail -n 1 "$work/multitouch-os.txt" | sed 's/^/(OS surface) /'
 "${cc[@]}" $t/test_schedule.c -o "$work/test_schedule"
 "$work/test_schedule"
 
+# The touchpad gesture guard (pad_gesture_guard.h), with the ticket 0729 reads.
+"${cc[@]}" $t/test_gesture_guard.c -o "$work/test_gesture_guard"
+"$work/test_gesture_guard"
+
 py=${PTP_TEST_PYTHON:-python3}
 # The descriptor, and every report the C tests sent, decoded with it.
 "$py" $t/test_descriptor.py "$work/descriptor.hex" "$work/trace.txt" "$work/trace-os.txt"

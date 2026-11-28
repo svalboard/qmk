@@ -47,17 +47,6 @@ extern inline void clear_keys(void);
 #ifndef NO_ACTION_ONESHOT
 static uint8_t oneshot_mods        = 0;
 static uint8_t oneshot_locked_mods = 0;
-
-// Runtime oneshot timeout - weak function for Sval override
-#    if defined(ONESHOT_TIMEOUT)
-#        define ONESHOT_TIMEOUT_DEFAULT ONESHOT_TIMEOUT
-#    else
-#        define ONESHOT_TIMEOUT_DEFAULT 0
-#    endif
-__attribute__((weak)) uint16_t get_oneshot_timeout(void) {
-    return ONESHOT_TIMEOUT_DEFAULT;
-}
-
 /**
  * @brief Retrieve current state of locked oneshot modifiers.
  *
@@ -96,11 +85,10 @@ void del_oneshot_locked_mods(uint8_t mods) {
         oneshot_locked_mods_changed_kb(oneshot_locked_mods);
     }
 }
-#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
 static uint16_t oneshot_time = 0;
 bool            has_oneshot_mods_timed_out(void) {
-    uint16_t timeout = get_oneshot_timeout();
-    return timeout > 0 && TIMER_DIFF_16(timer_read(), oneshot_time) >= timeout;
+               return GET_ONESHOT_TIMEOUT() > 0 && TIMER_DIFF_16(timer_read(), oneshot_time) >= GET_ONESHOT_TIMEOUT();
 }
 #    else
 bool has_oneshot_mods_timed_out(void) {
@@ -135,17 +123,15 @@ enum {
 } swap_hands_oneshot = SHO_OFF;
 #    endif
 
-#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
 static uint16_t oneshot_layer_time = 0;
 inline bool     has_oneshot_layer_timed_out(void) {
-    uint16_t timeout = get_oneshot_timeout();
-    return timeout > 0 && TIMER_DIFF_16(timer_read(), oneshot_layer_time) >= timeout && !(get_oneshot_layer_state() & ONESHOT_TOGGLED);
+        return GET_ONESHOT_TIMEOUT() > 0 && TIMER_DIFF_16(timer_read(), oneshot_layer_time) >= GET_ONESHOT_TIMEOUT() && !(get_oneshot_layer_state() & ONESHOT_TOGGLED);
 }
 #        ifdef SWAP_HANDS_ENABLE
 static uint16_t oneshot_swaphands_time = 0;
 inline bool     has_oneshot_swaphands_timed_out(void) {
-    uint16_t timeout = get_oneshot_timeout();
-    return timeout > 0 && TIMER_DIFF_16(timer_read(), oneshot_swaphands_time) >= timeout && (swap_hands_oneshot == SHO_ACTIVE);
+        return GET_ONESHOT_TIMEOUT() > 0 && TIMER_DIFF_16(timer_read(), oneshot_swaphands_time) >= GET_ONESHOT_TIMEOUT() && (swap_hands_oneshot == SHO_ACTIVE);
 }
 #        endif
 #    endif
@@ -155,7 +141,7 @@ inline bool     has_oneshot_swaphands_timed_out(void) {
 void set_oneshot_swaphands(void) {
     swap_hands_oneshot = SHO_PRESSED;
     swap_hands         = true;
-#        if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#        if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
     oneshot_swaphands_time = timer_read();
     if (oneshot_layer_time != 0) {
         oneshot_layer_time = oneshot_swaphands_time;
@@ -184,7 +170,7 @@ void use_oneshot_swaphands(void) {
 void clear_oneshot_swaphands(void) {
     swap_hands_oneshot = SHO_OFF;
     swap_hands         = false;
-#        if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#        if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
     oneshot_swaphands_time = 0;
 #        endif
 }
@@ -199,7 +185,7 @@ void set_oneshot_layer(uint8_t layer, uint8_t state) {
     if (keymap_config.oneshot_enable) {
         oneshot_layer_data = layer << 3 | state;
         layer_on(layer);
-#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
         oneshot_layer_time = timer_read();
 #    endif
         oneshot_layer_changed_kb(get_oneshot_layer());
@@ -213,7 +199,7 @@ void set_oneshot_layer(uint8_t layer, uint8_t state) {
  */
 void reset_oneshot_layer(void) {
     oneshot_layer_data = 0;
-#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
     oneshot_layer_time = 0;
 #    endif
     oneshot_layer_changed_kb(get_oneshot_layer());
@@ -286,7 +272,7 @@ static uint8_t get_mods_for_report(void) {
 
 #ifndef NO_ACTION_ONESHOT
     if (oneshot_mods) {
-#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
         if (has_oneshot_mods_timed_out()) {
             dprintf("Oneshot: timeout\n");
             clear_oneshot_mods();
@@ -485,7 +471,7 @@ mod_t get_oneshot_mod_state(void) {
 
 void add_oneshot_mods(uint8_t mods) {
     if ((oneshot_mods & mods) != mods) {
-#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
         oneshot_time = timer_read();
 #    endif
         oneshot_mods |= mods;
@@ -496,7 +482,7 @@ void add_oneshot_mods(uint8_t mods) {
 void del_oneshot_mods(uint8_t mods) {
     if (oneshot_mods & mods) {
         oneshot_mods &= ~mods;
-#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
         oneshot_time = oneshot_mods ? timer_read() : 0;
 #    endif
         oneshot_mods_changed_kb(oneshot_mods);
@@ -510,7 +496,7 @@ void del_oneshot_mods(uint8_t mods) {
 void set_oneshot_mods(uint8_t mods) {
     if (keymap_config.oneshot_enable) {
         if (oneshot_mods != mods) {
-#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
             oneshot_time = timer_read();
 #    endif
             oneshot_mods = mods;
@@ -526,7 +512,7 @@ void set_oneshot_mods(uint8_t mods) {
 void clear_oneshot_mods(void) {
     if (oneshot_mods) {
         oneshot_mods = 0;
-#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0)) || defined(SVAL_ENABLE)
+#    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
         oneshot_time = 0;
 #    endif
         oneshot_mods_changed_kb(oneshot_mods);

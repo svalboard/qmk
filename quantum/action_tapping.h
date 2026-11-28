@@ -32,19 +32,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #    define TAPPING_TOGGLE 5
 #endif
 
-#ifdef SVAL_ENABLE
-// Svalboard: the toggle count is a runtime QMK Setting; the define above is
-// only the reset default.
-uint8_t               sval_tapping_toggle(void);
-static inline uint8_t get_tapping_toggle(void) {
-    return sval_tapping_toggle();
-}
-#else
-static inline uint8_t get_tapping_toggle(void) {
-    return TAPPING_TOGGLE;
-}
-#endif
-
 #define WAITING_BUFFER_SIZE 8
 
 #ifndef NO_ACTION_TAPPING

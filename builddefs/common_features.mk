@@ -32,6 +32,8 @@ QUANTUM_SRC += \
     $(QUANTUM_DIR)/process_keycode/process_oneshot.c \
     $(QUANTUM_DIR)/process_keycode/process_quantum.c \
 
+QUANTUM_SRC += $(QUANTUM_DIR)/sval_hooks.c
+
 include $(QUANTUM_DIR)/nvm/rules.mk
 
 VPATH += $(QUANTUM_DIR)/logging

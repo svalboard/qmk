@@ -43,15 +43,32 @@ void set_mult_axis(axis_scale_t *as, uint8_t val) {
     }
 }
 
+// In 32 bits, saturated to AXIS_TYPE: val * mult reaches 255 times a count,
+// past what the remainder holds. Motion past the limit is dropped, not kept
+// for later reports, so a fast flick under boost stops at full speed
+// instead of wrapping to the other direction.
 AXIS_TYPE add_to_axis(axis_scale_t *as, AXIS_TYPE val) {
-    AXIS_TYPE ret_val;
+    int32_t total   = (int32_t)as->remainder + (int32_t)val * as->mult;
+    int32_t ret_val = total / as->div;
 
-    as->remainder += val * as->mult;
+    if (ret_val > AXIS_TYPE_MAX) {
+        ret_val       = AXIS_TYPE_MAX;
+        as->remainder = 0;
+    } else if (ret_val < AXIS_TYPE_MIN) {
+        ret_val       = AXIS_TYPE_MIN;
+        as->remainder = 0;
+    } else {
+        as->remainder = (AXIS_TYPE)(total - ret_val * as->div);
+    }
 
-    ret_val = as->remainder / as->div;
-    as->remainder -= ret_val * as->div;
+    return (AXIS_TYPE)ret_val;
+}
 
-    return ret_val;
+void set_div_axes(axis_scale_set_t *s, uint8_t val) {
+    set_div_axis(&s->x, val);
+    set_div_axis(&s->y, val);
+    set_div_axis(&s->h, val);
+    set_div_axis(&s->v, val);
 }
 
 void mult_div_axis(axis_scale_t *as, uint8_t mul) {

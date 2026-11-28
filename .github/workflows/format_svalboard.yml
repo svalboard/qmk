@@ -1,16 +1,14 @@
 name: Format Svalboard sources
 
 # Manual tool: push any commit to the tools/format-svalboard branch to format
-# every Svalboard file with the same formatters the PR lint uses, committed
+# every Svalboard file with the formatters svalboard-lint.yml checks, committed
 # back to that branch. Nothing else triggers it.
 
 permissions:
   contents: write
 
 on:
-  push:
-    branches:
-    - 'tools/format-svalboard'
+  workflow_dispatch:
 
 jobs:
   format:

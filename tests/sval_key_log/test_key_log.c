@@ -11,7 +11,7 @@
 #include "../../keyboards/svalboard/key_log.c"
 #include "../../keyboards/svalboard/debug_console.c"
 
-bool        debug_enable;
+bool debug_enable;
 
 const char *get_keycode_string(uint16_t keycode) {
     return keycode == 0x0004 ? "KC_A" : "KC_?";

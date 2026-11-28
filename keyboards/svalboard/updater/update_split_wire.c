@@ -110,11 +110,18 @@ int usplit_rsp_payload_len(uint8_t op) {
             return 3;
         case USPLIT_OP_STATUS:
             return USPLIT_STATUS_PAYLOAD;
+        case USPLIT_OP_PAGE2:
+            return 3;
         case USPLIT_OP_END:
         case USPLIT_OP_COMMIT:
         case USPLIT_OP_ABORT:
         case USPLIT_OP_SETTINGS_RESET:
+        case USPLIT_OP_FAST:
             return 0;
+#ifdef SVAL_UPDATE_TEST_HOOKS
+        case USPLIT_OP_TEST_RESET:
+            return 0;
+#endif
         default:
             return -1;
     }
@@ -148,6 +155,20 @@ static bool payload_ok(uint8_t op, const uint8_t *pl, uint8_t len, usplit_req_t 
             r->n    = pl[3];
             r->data = pl + 4;
             return r->n >= 1 && r->n <= USPLIT_PAGE_DATA_MAX && len == 4 + r->n && (r->off % USPLIT_PAGE_BYTES) + r->n <= USPLIT_PAGE_BYTES;
+        case USPLIT_OP_PAGE2:
+            if (len < 4) return false;
+            r->off  = get24(pl);
+            r->n    = pl[3];
+            r->data = pl + 4;
+            return r->n >= 1 && r->n <= USPLIT_PAGE2_DATA_MAX && len == 4 + r->n;
+        case USPLIT_OP_FAST:
+            if (len != 1) return false;
+            r->mode = pl[0];
+            return r->mode == 1;
+#ifdef SVAL_UPDATE_TEST_HOOKS
+        case USPLIT_OP_TEST_RESET:
+            return len == 0;
+#endif
         case USPLIT_OP_COMMIT:
             if (len != 2) return false;
             r->crc_lo16 = get16(pl);
@@ -165,7 +186,7 @@ static bool payload_ok(uint8_t op, const uint8_t *pl, uint8_t len, usplit_req_t 
 uint8_t usplit_req_build(uint8_t *buf, uint8_t op, uint8_t seq, const uint8_t *payload, uint8_t payload_len) {
     usplit_req_t r;
     memset(&r, 0, sizeof(r));
-    if (USPLIT_REQ_HDR + payload_len + USPLIT_CRC_BYTES > USPLIT_MSG_MAX) return 0;
+    if (USPLIT_REQ_HDR + payload_len + USPLIT_CRC_BYTES > (op == USPLIT_OP_PAGE2 ? USPLIT_MSG2_MAX : USPLIT_MSG_MAX)) return 0;
     if (!payload_ok(op, payload, payload_len, &r)) return 0;
     buf[0] = op;
     buf[1] = seq;
@@ -193,6 +214,15 @@ uint8_t usplit_req_page(uint8_t *buf, uint8_t seq, uint32_t off, const uint8_t *
     return usplit_req_build(buf, USPLIT_OP_PAGE, seq, pl, (uint8_t)(4 + n));
 }
 
+uint8_t usplit_req_page2(uint8_t *buf, uint8_t seq, uint32_t off, const uint8_t *data, uint8_t n) {
+    uint8_t pl[4 + USPLIT_PAGE2_DATA_MAX];
+    if (n > USPLIT_PAGE2_DATA_MAX || off > 0xFFFFFF) return 0;
+    put24(pl, off);
+    pl[3] = n;
+    if (n) memcpy(pl + 4, data, n);
+    return usplit_req_build(buf, USPLIT_OP_PAGE2, seq, pl, (uint8_t)(4 + n));
+}
+
 uint8_t usplit_req_commit(uint8_t *buf, uint8_t seq, uint16_t crc_lo16) {
     uint8_t pl[2];
     put16(pl, crc_lo16);
@@ -201,7 +231,8 @@ uint8_t usplit_req_commit(uint8_t *buf, uint8_t seq, uint16_t crc_lo16) {
 
 update_status_t usplit_req_parse(const uint8_t *buf, uint8_t len, usplit_req_t *r) {
     memset(r, 0, sizeof(*r));
-    if (len < USPLIT_REQ_HDR + USPLIT_CRC_BYTES || len > USPLIT_MSG_MAX) {
+    // Only PAGE2 may be longer than USPLIT_MSG_MAX.
+    if (len < USPLIT_REQ_HDR + USPLIT_CRC_BYTES || len > USPLIT_MSG2_MAX || (len > USPLIT_MSG_MAX && buf[0] != USPLIT_OP_PAGE2)) {
         if (len >= 1) r->op = buf[0];
         if (len >= 2) r->seq = buf[1];
         return UPDATE_INVALID;
@@ -265,5 +296,23 @@ update_status_t usplit_pages_accept(usplit_pages_t *a, uint32_t off, const uint8
     memcpy(a->page + off % USPLIT_PAGE_BYTES, data, n);
     a->next = off + n;
     if (a->next % USPLIT_PAGE_BYTES == 0) *page_done = a->next - USPLIT_PAGE_BYTES;
+    return UPDATE_OK;
+}
+
+update_status_t usplit_pages_accept2(usplit_pages_t *a, uint32_t off, const uint8_t *data, uint8_t n, usplit_program_t program) {
+    if (n == 0 || n > USPLIT_PAGE2_DATA_MAX) return UPDATE_INVALID;
+    if (off + n <= a->next) return UPDATE_OK; // a repeat: acknowledged, not written again
+    if (off != a->next) return UPDATE_OUT_OF_ORDER;
+    if (n > a->image_len || off > a->image_len - n) return UPDATE_OVERRUN;
+    uint32_t at    = off % USPLIT_PAGE_BYTES;
+    uint32_t first = USPLIT_PAGE_BYTES - at < n ? USPLIT_PAGE_BYTES - at : n;
+    memcpy(a->page + at, data, first);
+    if ((at + first) % USPLIT_PAGE_BYTES == 0) {
+        // The page is complete (n is under a page: at most one per fragment).
+        update_status_t st = program(off - at, a->page);
+        if (st != UPDATE_OK) return st; // nothing taken; the bytes before off are as they were
+        memcpy(a->page, data + first, n - first);
+    }
+    a->next = off + n;
     return UPDATE_OK;
 }

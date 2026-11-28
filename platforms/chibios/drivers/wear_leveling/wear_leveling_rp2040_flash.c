@@ -201,6 +201,10 @@ static bool block_erased(uint32_t block) {
     return true;
 }
 
+// After each unit erased and read back: a board whose hardware watchdog runs
+// may feed it here (a consolidation erases the whole store, several seconds).
+__attribute__((weak)) void wear_leveling_rp2040_erased_unit(void) {}
+
 // Erases one unit at a time, skipping units already erased, with interrupts
 // restored in between: USB keeps being serviced, and a fresh board's first-boot
 // format erases nothing. Fails if a unit doesn't read back erased.
@@ -211,6 +215,7 @@ static bool erase_blocks(uint32_t flash_address, uint32_t length) {
         pico_erase(block, ERASE_UNIT);
         restore_interrupts(interrupts);
         if (!block_erased(block)) return false;
+        wear_leveling_rp2040_erased_unit();
     }
     return true;
 }

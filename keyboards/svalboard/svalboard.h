@@ -21,6 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "quantum.h"
 #include "pointing_motion_vs.h"
 #include "sval_timing.h"
+#include "automouse_layers.h"
 
 struct layer_hsv {
     uint8_t hue;
@@ -46,7 +47,7 @@ struct __attribute__((__packed__)) saved_values {
     // in 10 ms units (10-200), or 0 for "use mh_timer_index".
     uint8_t  automouse_10ms;
     uint16_t automouse_threshold; // Movement distance required for layer activation (0=disabled)
-    uint8_t  automouse_decay;     // Accumulator decay time in 10ms units (0=no decay)
+    uint8_t  automouse_decay;     // Accumulator decay time in 10ms units (at least 1; 0 reads as the default, 70 ms)
     uint16_t scan_prewait_us;     // Row-on settle time before reading (never 0 after the boot migration)
     uint16_t scan_postwait_us;    // Row-off recovery time after reading (never 0 after the boot migration)
     uint16_t scan_period_us;      // Frame period while active (0 = unpaced, scan back to back)
@@ -57,6 +58,10 @@ struct __attribute__((__packed__)) saved_values {
     uint8_t  idle_flags;          // SVAL_IDLE_* bits: pointer rest, RGB dim, CPU sleep, low clock, long naps
     uint8_t  scan_deep_clock_idx; // deep-idle clock when SVAL_IDLE_LOW_CLOCK: 0 = 48 MHz, 1 = 24 MHz, 2 = 12 MHz
 };
+
+// Auto Mouse layers (automouse_layers.h), saved in their own record.
+extern uint8_t  sval_automouse_layers_mode;
+extern uint16_t sval_automouse_layer_mask;
 
 // RPC structure for split keyboard sync
 typedef struct __attribute__((__packed__)) _presence_rpc_t {
@@ -216,6 +221,13 @@ bool     sval_pad_palm_supported(void);
 // for a touchpad. Native touchpad builds (azoteq/ptp.c) apply it.
 bool     sval_pad_builtin_gestures(void);
 uint8_t  sval_pad_hands(void);                                                  // hands whose pointing module is an Azoteq pad (bit 0 left, bit 1 right)
+// Scroll speed (scroll_speed.h): a hand's multiplier in percent (hand 0 left, 1 right), and its
+// module's kind (enum sval_scroll_kind: trackball, pad, TrackPoint).
+uint16_t sval_scroll_speed(uint8_t hand);
+uint8_t  sval_hand_scroll_kind(uint8_t hand);
+// The highest DPI index a hand's module reaches, and an index held to it (pointer_speed.h).
+uint8_t  sval_hand_dpi_limit(uint8_t hand);
+uint8_t  sval_hand_dpi_clamp(uint8_t hand, uint8_t index);
 void     sval_scan_timing(uint16_t *pre, uint16_t *post);                       // matrix.c
 uint8_t  sval_pushed_mask(bool thumbs);                                         // matrix.c
 void     sval_row_drive_raw(uint8_t row, bool on);                              // matrix.c: no critical section
@@ -268,6 +280,10 @@ uint32_t sval_host_idle_ms(void);      // ms since the last host packet (UINT32_
 void    sval_pointer_rest_apply(void); // push SVAL_IDLE_POINTER_REST into the sensor (weak no-op without one)
 void    sval_rgb_idle_task(void);      // master: dim/restore the RGB by idle stage
 uint8_t sval_rgb_awake_val(void);      // RGB brightness as it was before any idle dimming
+uint8_t sval_rgb_idle_stage(void);     // 0 awake, 1 dimmed, 2 off (rgb_idle.c)
+uint8_t sval_rgb_shown_val(void);      // brightness the idle dimming shows: the dimmed value in light idle, else the awake one
+void    sval_rgb_idle_input(void);     // master: a key event, before any keycode runs: undo the idle dimming
+void    sval_rgb_host_sleep_task(void); // master: RGBLIGHT_SLEEP, dark while the host sleeps
 void    recalibrate_pointer(void);
 void    sval_set_active_layer(uint32_t layer, bool save);
 void    sval_on_reconnect(void);

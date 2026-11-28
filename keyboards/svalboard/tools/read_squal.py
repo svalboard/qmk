@@ -35,8 +35,7 @@ def request(dev, op, hand, arg=0):
 
 def decode_bin(b):
     squal, smin, smax, rawsum, rawmax, rawmin, shutter, moving = struct.unpack("<BBBBBBHB", b)
-    return {"squal": squal, "squal_min": smin, "squal_max": smax, "rawsum": rawsum, "rawmax": rawmax,
-            "rawmin": rawmin, "shutter": shutter, "moving": moving & 0x7F, "lifted": bool(moving & 0x80)}
+    return {"squal": squal, "squal_min": smin, "squal_max": smax, "rawsum": rawsum, "rawmax": rawmax, "rawmin": rawmin, "shutter": shutter, "moving": moving & 0x7F, "lifted": bool(moving & 0x80)}
 
 
 def decode_samples(r):
@@ -53,19 +52,35 @@ def decode_stats(r):
     if r[0] != 1:
         return None
     u16 = lambda o: struct.unpack_from("<H", r, o)[0]
-    return {"flags": r[1], "head": u16(2), "bins": u16(4), "squal_min": r[6], "squal_max": r[7],
-            "squal_mean": u16(8) / 256.0, "rawsum_min": r[10], "rawsum_max": r[11], "rawsum_mean": r[12],
-            "rawmax": r[13], "rawmin": r[14], "shutter_min": u16(15), "shutter_max": u16(17),
-            "shutter_mean": u16(19), "moving_pct": r[21], "reads_per_s": u16(22)}
+    return {
+        "flags": r[1],
+        "head": u16(2),
+        "bins": u16(4),
+        "squal_min": r[6],
+        "squal_max": r[7],
+        "squal_mean": u16(8) / 256.0,
+        "rawsum_min": r[10],
+        "rawsum_max": r[11],
+        "rawsum_mean": r[12],
+        "rawmax": r[13],
+        "rawmin": r[14],
+        "shutter_min": u16(15),
+        "shutter_max": u16(17),
+        "shutter_mean": u16(19),
+        "moving_pct": r[21],
+        "reads_per_s": u16(22)
+    }
 
 
 def stats_line(hand, st):
     sensor = "3389" if st["flags"] & F_3389 else "3360"
     lift = " LIFTED" if st["flags"] & F_LIFTED else ""
-    return (f"{hand:5} PMW{sensor} bins {st['bins']:3}  SQUAL {st['squal_min']:3}/{st['squal_mean']:6.1f}/{st['squal_max']:3}"
-            f"  rawsum {st['rawsum_min']:3}/{st['rawsum_mean']:3}/{st['rawsum_max']:3}  raw max {st['rawmax']:3} min {st['rawmin']:3}"
-            f"  shutter {st['shutter_min']}/{st['shutter_mean']}/{st['shutter_max']}"
-            f"  moving {st['moving_pct']:3}%  reads/s {st['reads_per_s']}{lift}")
+    return (
+        f"{hand:5} PMW{sensor} bins {st['bins']:3}  SQUAL {st['squal_min']:3}/{st['squal_mean']:6.1f}/{st['squal_max']:3}"
+        f"  rawsum {st['rawsum_min']:3}/{st['rawsum_mean']:3}/{st['rawsum_max']:3}  raw max {st['rawmax']:3} min {st['rawmin']:3}"
+        f"  shutter {st['shutter_min']}/{st['shutter_mean']}/{st['shutter_max']}"
+        f"  moving {st['moving_pct']:3}%  reads/s {st['reads_per_s']}{lift}"
+    )
 
 
 def main():
@@ -148,8 +163,7 @@ def main():
                 w = csv.writer(f)
                 w.writerow(["t_s", "hand", "seq", "squal", "squal_min", "squal_max", "rawsum", "rawmax", "rawmin", "shutter", "moving", "lifted"])
                 for t, hand, b in rows:
-                    w.writerow([f"{t:.3f}", HANDS[hand], b["seq"], b["squal"], b["squal_min"], b["squal_max"], b["rawsum"],
-                                b["rawmax"], b["rawmin"], b["shutter"], b["moving"], int(b["lifted"])])
+                    w.writerow([f"{t:.3f}", HANDS[hand], b["seq"], b["squal"], b["squal_min"], b["squal_max"], b["rawsum"], b["rawmax"], b["rawmin"], b["shutter"], b["moving"], int(b["lifted"])])
             print(f"wrote {args.csv}")
     finally:
         dev.close()

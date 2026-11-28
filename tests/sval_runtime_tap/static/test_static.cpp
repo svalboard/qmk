@@ -6,16 +6,16 @@ extern "C" {
 #include "action_tapping.h"
 #include "process_grave_esc.h"
 }
-#ifdef SVAL_ENABLE
-#    error Static fixture must not use Svalboard runtime getters
+#ifdef RUNTIME_QMK_SETTINGS
+#    error Static fixture must not use the runtime getters
 #endif
 static_assert(std::is_same<send_string_interval_t, uint8_t>::value, "Preserve the non-Sval send-string API");
 class StaticTapSettings : public TestFixture {};
 TEST_F(StaticTapSettings, CompileTimeGettersAndSendString) {
     TestDriver driver;
-    EXPECT_EQ(get_tapping_toggle(), 3);
-    EXPECT_EQ(get_tap_code_delay(), 11);
-    EXPECT_EQ(get_tap_hold_caps_delay(), 83);
+    EXPECT_EQ(GET_TAPPING_TOGGLE(), 3);
+    EXPECT_EQ(GET_TAP_CODE_DELAY(), 11);
+    EXPECT_EQ(GET_TAP_HOLD_CAPS_DELAY(), 83);
     uint32_t            down = 0;
     testing::InSequence order;
     EXPECT_REPORT(driver, (KC_A)).WillOnce([&](report_keyboard_t &) { down = timer_read32(); });

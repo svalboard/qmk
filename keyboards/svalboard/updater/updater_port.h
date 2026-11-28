@@ -51,6 +51,11 @@ uint16_t updater_port_stack_free(uint16_t *size);
 // or BUILD_RESET_TO_BLANK, which then sets every key to KC_NO (D44).
 bool updater_port_settings_invalidate(uint8_t mode);
 void updater_port_reboot(void);
+// This half's own commit is about to run: it resets from RAM, without QMK's
+// shutdown, so tell the other half now, as shutdown_kb does (sval_link_stopping:
+// the link light's last ping). Without it the other half sees the restart as a
+// broken cable and blinks amber until this half is back.
+void updater_port_restarting(void);
 
 // This half has USB (the split master). The boot relay of a pair UF2 runs
 // there only (update_pair.c).
@@ -64,3 +69,12 @@ bool updater_port_is_master(void);
 // commit's watchdog reset, not a power cut.
 void updater_port_commit_mark(bool on);
 bool updater_port_commit_mark_take(void);
+
+// The updater is making progress: called first thing in every updater_task()
+// pass, in every host request (updater_via_command), on every well-formed
+// request from the other half (update_split_slave_rpc, the half without USB),
+// and between sectors of the commit's slot check. The board's session
+// watchdog (kb/session_watchdog.c) runs while updater_active() and is fed
+// here; a session that stops calling this resets the half. Weak and empty in
+// updater.c.
+void updater_port_alive(void);

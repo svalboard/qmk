@@ -102,7 +102,7 @@ enum sval_qsid {
 #define LEADER_PER_KEY_TIMING_BIT 0
 
 // auto_shift bit positions (QSID 3)
-#define AUTO_SHIFT_ENABLE_BIT 0
+#define AUTO_SHIFT_ENABLE_BIT 0 // the other bits: sval_qmk_settings.h, read in sval_auto_shift.c
 
 // migrations bits
 #define SVAL_QS_MIGRATED_WHEEL_BIT 0 // the wheel delay and interval are applied (see sval_qmk_settings_migrate)
@@ -670,21 +670,22 @@ bool sval_get_leader_per_key_timing(void) {
     return settings.leader_options & (1 << LEADER_PER_KEY_TIMING_BIT);
 }
 
-// Runtime values for the QMK constants of the same names. quantum/ reads these
-// through inline helpers in action.h, action_tapping.h and process_grave_esc.c
-// when SVAL_ENABLE is defined.
-uint16_t sval_tap_code_delay(void) {
+// Runtime values for the QMK constants of the same names. These override the
+// weak defaults in quantum/sval_hooks.c; core QMK reads them through the
+// GET_*() macros in quantum/sval_hooks.h (RUNTIME_QMK_SETTINGS, set in
+// sval_runtime_settings.h).
+uint16_t get_tap_code_delay(void) {
     return settings.tap_code_delay;
 }
 
-uint16_t sval_tap_hold_caps_delay(void) {
+uint16_t get_tap_hold_caps_delay(void) {
     return settings.tap_hold_caps_delay;
 }
 
 // A toggle count of 0 would leave a held TT() layer on after release, so 0 is
 // read as 1: one tap toggles, while a held key still releases its layer. A
 // count above 15 is read as 15, the most taps QMK counts.
-uint8_t sval_tapping_toggle(void) {
+uint8_t get_tapping_toggle(void) {
     return settings.tapping_toggle ? SVAL_AT_MOST(settings.tapping_toggle, SVAL_TAP_COUNT_MAX) : 1;
 }
 
@@ -694,7 +695,7 @@ uint16_t get_oneshot_timeout(void) {
     return settings.osk_timeout;
 }
 
-uint8_t sval_oneshot_tap_toggle(void) {
+uint8_t get_oneshot_tap_toggle(void) {
     return SVAL_AT_MOST(settings.osk_tap_toggle, SVAL_TAP_COUNT_MAX);
 }
 
@@ -704,13 +705,15 @@ void sval_qmk_settings_set_one_shot(uint16_t timeout, uint8_t tap_toggle) {
     sval_qmk_settings_save();
 }
 
-// Bits as Keybard writes them: 0 Alt, 1 Control, 2 GUI, 3 Shift.
-uint8_t sval_grave_esc_override(void) {
+// Bits as Keybard writes them: 0 Alt, 1 Control, 2 GUI, 3 Shift (the
+// GRAVE_ESC_*_OVERRIDE_BIT values in quantum/sval_hooks.h).
+uint8_t get_grave_esc_overrides(void) {
     return settings.grave_esc_override;
 }
 
-// Bits as Keybard writes them: 0 enable, 1 modifiers, 2 no-special,
-// 3 no-numeric, 4 no-alpha, 5 repeat, 6 no-auto-repeat.
+// Auto Shift, QSID 3 (bits in sval_qmk_settings.h). Bit 0 is applied through
+// autoshift_enable() and autoshift_disable(), and the timeout (QSID 4) through
+// set_autoshift_timeout(); sval_auto_shift.c reads the rest.
 uint8_t sval_auto_shift(void) {
     return settings.auto_shift;
 }

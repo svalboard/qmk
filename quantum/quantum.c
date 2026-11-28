@@ -162,7 +162,7 @@ __attribute__((weak)) void tap_code16_delay(uint16_t code, uint16_t delay) {
  * \param code The modded keycode to tap. If `code` is `KC_CAPS_LOCK`, the delay will be `TAP_HOLD_CAPS_DELAY`, otherwise `TAP_CODE_DELAY`, if defined.
  */
 __attribute__((weak)) void tap_code16(uint16_t code) {
-    tap_code16_delay(code, code == KC_CAPS_LOCK ? get_tap_hold_caps_delay() : get_tap_code_delay());
+    tap_code16_delay(code, code == KC_CAPS_LOCK ? GET_TAP_HOLD_CAPS_DELAY() : GET_TAP_CODE_DELAY());
 }
 
 __attribute__((weak)) bool pre_process_record_modules(uint16_t keycode, keyrecord_t *record) {

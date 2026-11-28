@@ -40,9 +40,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // debug console prints every key event (key_log.c) to any program on the
 // host. Dev builds only.
 //#define DEBUG_MATRIX_SCAN_RATE
-// Svalboard stores its config in VIA custom config area
-// saved_values_t (~54 bytes) + 3 bytes magic = ~60 bytes, round to 100
+// Retired: keyboard settings used to live in these 100 bytes, and nothing
+// reads or writes them now. The size stays so the keymap and macros keep their
+// addresses (VIA's stored layout stamp includes it).
 #define VIA_EEPROM_CUSTOM_CONFIG_SIZE 100
+// Every keyboard setting: labeled records (settings_area.h, settings_ids.h) in
+// a fixed block below the combo names, taken from the end of the macro buffer
+// (modules/svalboard/core/post_config.h). Changing the size moves the block,
+// so every setting in it reads as default once.
+#define SVAL_SETTINGS_AREA_SIZE 8192
 
 // The raw HID interface (VIA, the Sval protocol and the client wrapper) uses
 // 64-byte reports, the full-speed interrupt maximum, both ways. Hosts size their
@@ -80,6 +86,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // Downgrade floors (D19): an image whose manifest is below either is refused.
 // Raise SVAL_UPDATE_SECURITY_EPOCH in a release that fixes a security problem,
 // and SVAL_UPDATE_STORAGE_FORMAT when stored settings change incompatibly.
+// Raise SECURITY_EPOCH and STORAGE_FORMAT in tools/make_update.py with them:
+// the release manifests carry the tool's values (tests/sval_updater checks).
 #ifndef SVAL_UPDATE_SECURITY_EPOCH
 #    define SVAL_UPDATE_SECURITY_EPOCH 0
 #endif
@@ -113,15 +121,49 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // from the master since the last one, and this long after it: the master
 // gets an answer between every two sectors.
 #define SVAL_UPDATE_SPLIT_ERASE_GAP_MS 5
-// The half with USB: relay work per main-loop pass while the link runs (its
-// own keys keep scanning between passes), how long it retries a request with
-// no valid answer before the relay fails, how often it polls the other half
-// while that half erases or verifies, and how often it pings a verified other
-// half (so its timeout does not fire while the host decides to commit).
+// The half with USB: relay work per main-loop pass (its own keys keep
+// scanning between passes), and while the pages stream with the link paused;
+// how long it retries a request with no valid answer before the relay fails
+// (under the other half's 5 s session timeout, so a shorter dropout resumes
+// where it stopped); how often it polls the other half while that half checks
+// the manifest or verifies, and after an answer while it erases (one poll per
+// sector); and how often it pings a verified other half (so its timeout does
+// not fire while the host decides to commit). The stream's budget plus one
+// failed RPC (20 ms) stays inside Keybard's 50 ms (R13).
 #define SVAL_UPDATE_RELAY_PASS_MS 4
-#define SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS 2000
+#define SVAL_UPDATE_RELAY_STREAM_MS 15
+#define SVAL_UPDATE_RELAY_LINK_TIMEOUT_MS 4000
 #define SVAL_UPDATE_RELAY_POLL_MS 20
+#define SVAL_UPDATE_RELAY_ERASE_POLL_MS 50
+// The fast path (both halves have it: updater/update_split_wire.h): the half
+// with USB uses it when the other half's INFO says so (0 turns it off on this
+// half as the sender), and polls a block erase (about 150 ms) this long after
+// an answer. The other half takes FAST for a session that BEGIN opens within
+// SVAL_UPDATE_SPLIT_FAST_WINDOW_MS.
+#ifndef SVAL_UPDATE_RELAY_FAST
+#    define SVAL_UPDATE_RELAY_FAST 1
+#endif
+#define SVAL_UPDATE_RELAY_BLOCK_POLL_MS 150
+#define SVAL_UPDATE_SPLIT_FAST_WINDOW_MS 1000
 #define SVAL_UPDATE_RELAY_KEEPALIVE_MS 1000
+// A run of requests with no valid answer this long, then an answer again,
+// counts as a dropout the relay survived (the RELAY op's resumes).
+#define SVAL_UPDATE_RELAY_DROPOUT_MS 500
+// After a request without a valid answer, the split line stays quiet this long
+// before the next one. The half without USB drops a transaction it is part way
+// through only after SERIAL_USART_SHORT_TIMEOUT (3 ms) without a byte; the
+// relay's next pass comes about every 2.6 ms, so retries sent back to back can
+// keep it reading the master's 248-byte PAGE2 frames out of step (a byte in
+// one taken for a transaction ID, its answer colliding with the master's next
+// frame), and every PAGE2 fails at once until the link timeout. Seen on the
+// test pair in 3 of 36 Keybard installs (about 1 in 12): 1440 retries,
+// 1.4 ms each, then UNAVAILABLE ("The other half stopped answering").
+// Later traces showed that failure was the other half resetting, not this
+// desync: its split watchdog fired on a stray 0x07, 0x00 read while out of
+// step (fixed in transactions.c and serial_protocol.c; the relay now starts
+// over after such a reset, update_split.c relay_restart). The gap stays: it
+// still lets the other half drop a half-read frame before the next request.
+#define SVAL_UPDATE_RELAY_RESYNC_US 5000
 // After the other half accepts COMMIT, the link stays paused for its commit
 // (M1 #13: about 1-2 s from COMMIT to the reset) plus 2.5 s for its reboot
 // (R18: the 500 ms double-tap window and the 2 s USB detect).
@@ -215,7 +257,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #define SVAL_FLIPFET_DEFAULT_IDLE_PERIOD_MS 1     // light idle: same as active by default
 #endif
 #ifndef SVAL_FLIPFET_DEFAULT_IDLE_AFTER_MS
-    #define SVAL_FLIPFET_DEFAULT_IDLE_AFTER_MS 10000   // light idle also dims the RGB, so not during typing pauses
+    #define SVAL_FLIPFET_DEFAULT_IDLE_AFTER_MS 0       // light idle off by default (opt-in; it also dims the RGB)
 #endif
 #ifndef SVAL_FLIPFET_DEFAULT_DEEP_AFTER_S
     #define SVAL_FLIPFET_DEFAULT_DEEP_AFTER_S 0       // deep idle off by default
@@ -224,15 +266,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #define SVAL_FLIPFET_DEFAULT_DEEP_PERIOD_MS 0
 #endif
 
-// Idle power features (saved_values.idle_flags). Each is a runtime toggle (VIA ids 25-27) so
-// their effect can be measured one at a time from the Scan Lab panel.
+// Idle power features (saved_values.idle_flags). Each is a runtime toggle (VIA ids 25-29) so
+// their effect can be measured one at a time from the Scan Lab panel. Every power-saving
+// mode is off by default: nothing saves power unless the user turns it on.
 #define SVAL_IDLE_POINTER_REST 0x01   // let the trackball sensor use its own rest modes
 #define SVAL_IDLE_RGB_DIM      0x02   // dim the RGB in light idle, off in deep idle
 #define SVAL_IDLE_CPU_SLEEP    0x04   // sleep the core between paced frames instead of spinning
 #define SVAL_IDLE_LOW_CLOCK    0x08   // deep idle: clk_sys from the USB PLL at 48 MHz, system PLL off
 #define SVAL_IDLE_LONG_NAP     0x10   // deep idle: naps of SVAL_DEEP_NAP_*_US instead of 1 ms
 #ifndef SVAL_IDLE_FLAGS_DEFAULT
-    #define SVAL_IDLE_FLAGS_DEFAULT (SVAL_IDLE_POINTER_REST | SVAL_IDLE_RGB_DIM | SVAL_IDLE_CPU_SLEEP | SVAL_IDLE_LOW_CLOCK | SVAL_IDLE_LONG_NAP)
+    #define SVAL_IDLE_FLAGS_DEFAULT 0 // opt-in: any of the SVAL_IDLE_* bits above
 #endif
 #ifndef SVAL_DEEP_NAP_MASTER_US
     #define SVAL_DEEP_NAP_MASTER_US 20000 // the sensor only reports every 100-500 ms in rest; USB replies wait at most this
@@ -265,8 +308,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #endif
 
 #define SERIAL_DEBUG
-#define RP2040_BOOTLOADER_DOUBLE_TAP_RESET
-#define RP2040_BOOTLOADER_DOUBLE_TAP_RESET_TIMEOUT 500 // Timeout window in ms in which the double tap can occur.
+// Double-tap RESET into the bootloader is double_tap_reset.c, which arms
+// earlier than QMK's RP2040_BOOTLOADER_DOUBLE_TAP_RESET; leave that one off.
+#undef RP2040_BOOTLOADER_DOUBLE_TAP_RESET
+#undef RP2040_BOOTLOADER_DOUBLE_TAP_RESET_TIMEOUT
 
 // Macro count (Sval entry counts are now in each keymap's sval.json)
 // 256 macros: QMK's macro keycodes (0x7700-0x777F) reach macro 127; the Sval
@@ -277,6 +322,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define SVAL_DEFAULT_NKRO 1
 #define SVAL_DEFAULT_PERMISSIVE_HOLD 1
 #define SVAL_DEFAULT_CHORDAL_HOLD 1
+
+// Tap dance keys held at once. QMK shares a pool of states (3 by default) and
+// ignores a dance pressed while the pool is full; Vial kept one per dance.
+// Each state is 8 bytes of RAM.
+#define TAP_DANCE_MAX_SIMULTANEOUS 16
 
 #define USB_MAX_POWER_CONSUMPTION 500
 #define USB_SUSPEND_WAKEUP_DELAY 500
@@ -329,6 +379,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // SVAL_UPDATER half and a half without it cannot talk at all (P1:
 // keyboards/svalboard/tools/check_split_tables.py).
 #    define SPLIT_TRANSACTION_IDS_KB KEYBOARD_SYNC_A, KEYBOARD_SYNC_B, KEYBOARD_UPDATE
+// The relay's fast path sends PAGE2 frames of up to 248 bytes (USPLIT_MSG2_MAX,
+// updater/update_split_wire.h) to the half without USB. These buffers are each
+// half's own RAM and never go on the wire whole; QMK's RPC lengths are
+// uint8_t, so 255 at most. Answers stay within 32 bytes.
+#    define RPC_M2S_BUFFER_SIZE 248
 #else
 #    define SPLIT_TRANSACTION_IDS_KB KEYBOARD_SYNC_A, KEYBOARD_SYNC_B
 #endif

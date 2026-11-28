@@ -14,8 +14,9 @@ colors in between) until the pairing comes back. Code: `keyboards/svalboard/link
 - A half on its own from power-up never pairs, so it never blinks.
 - A power cycle or restart starts unarmed.
 - A restart on purpose is a stop, not a loss. When the half with USB restarts
-  or goes to its bootloader from firmware (`shutdown_kb`), its last ping says
-  so (`link_quiet` 2) and the sub stops. When it restarts the sub on purpose
+  or goes to its bootloader from firmware (`shutdown_kb`), or installs an
+  update (its commit resets from RAM, so the updater sends the same ping just
+  before it), its last ping says so (`link_quiet` 2) and the sub stops. When it restarts the sub on purpose
   (a side write with the restart flag, Scan Lab's reboot), it stops itself
   first. It pairs again once the link has gone down and up, or after 5 s
   (`SVAL_LINK_REARM_MS`) if it never went down.

@@ -147,7 +147,7 @@ __attribute__((weak)) const uint8_t ascii_to_keycode_lut[128] PROGMEM = {
 #define PGM_LOADBIT(mem, pos) ((pgm_read_byte(&((mem)[(pos) / 8])) >> ((pos) % 8)) & 0x01)
 
 void send_string(const char *string) {
-    send_string_with_delay(string, get_tap_code_delay());
+    send_string_with_delay(string, GET_TAP_CODE_DELAY());
 }
 
 void send_string_with_delay_impl(char (*getter)(void *), void *arg, send_string_interval_t interval) {
@@ -210,10 +210,13 @@ void send_string_with_delay(const char *string, send_string_interval_t interval)
 }
 
 void send_char(char ascii_code) {
-    send_char_with_delay(ascii_code, get_tap_code_delay());
+    send_char_with_delay(ascii_code, GET_TAP_CODE_DELAY());
 }
 
 void send_char_with_delay(char ascii_code, send_string_interval_t interval) {
+    // The lookup tables cover ASCII only; skip other bytes (such as UTF-8 in a macro).
+    if ((uint8_t)ascii_code >= 128) return;
+
 #if defined(AUDIO_ENABLE) && defined(SENDSTRING_BELL)
     if (ascii_code == '\a') { // BEL
         PLAY_SONG(bell_song);
@@ -315,7 +318,7 @@ void tap_random_base64(void) {
 
 #if defined(__AVR__)
 void send_string_P(const char *string) {
-    send_string_with_delay_P(string, get_tap_code_delay());
+    send_string_with_delay_P(string, GET_TAP_CODE_DELAY());
 }
 
 char send_string_get_next_progmem(void *arg) {
