@@ -129,7 +129,8 @@
 // Settings reset (protocol 4, D42). SETTINGS_RESET, only in IDLE with no held
 // approval and no relay (else BUSY), invalidates the build reset record
 // (kb/build_reset.c, D39) of the other half first (scope 1: over
-// KEYBOARD_UPDATE; UNAVAILABLE and nothing changed if it does not answer),
+// KEYBOARD_UPDATE; UNAVAILABLE and nothing changed if it refuses, TIMEOUT if
+// it does not answer: it may have taken it, and this half changes nothing),
 // then of this half, replies, and resets this half
 // SVAL_UPDATE_SETTINGS_RESET_MS later (the other half resets itself). Each
 // half's next boot then resets every stored setting as for a different build,
@@ -922,7 +923,7 @@ static update_status_t op_settings_reset(const uint8_t *req, uint8_t *rsp, bool 
     if (s.state != UPDATE_STATE_IDLE || held.state != HELD_NONE || reset_due || update_relay_busy() || update_split_slave_active()) return UPDATE_BUSY;
     if (!update_flash_available()) return UPDATE_UNAVAILABLE; // no build reset record on a smaller die
     if (req[5] == 1) {
-        // The other half first: with no answer from it, nothing changes.
+        // The other half first: unless it answers OK, this half changes nothing.
         update_presence_t p;
         uint8_t           pr = update_split_other(&p);
         if (pr != UPDATE_PRESENCE_MATCH && pr != UPDATE_PRESENCE_VERSION) return UPDATE_UNAVAILABLE;
@@ -1220,10 +1221,16 @@ static struct {
 // The half without USB: written by the presence ping's callback (the split
 // SlaveThread), read by housekeeping. A torn read costs one pass of light.
 static volatile uint8_t rx_light = LIGHT_NO_BYTE, rx_n;
+static volatile bool    rx_seen; // a ping came since this half booted
 
 void updater_split_light_seen(bool has_light, uint8_t light) {
     rx_light = has_light ? light : LIGHT_NO_BYTE;
     rx_n     = rx_n + 1;
+    rx_seen  = true;
+}
+
+bool updater_split_pinged(void) {
+    return rx_seen;
 }
 
 // Work on this half outranks the green flash it just showed: a pair update's
@@ -1549,6 +1556,7 @@ void updater_host_reset(void) {
     memset(&lt, 0, sizeof(lt));
     rx_light = LIGHT_NO_BYTE;
     rx_n     = 0;
+    rx_seen  = false;
     reset_session();
     held_clear();
     memset(&kept, 0, sizeof(kept)); // RAM: gone with a reset

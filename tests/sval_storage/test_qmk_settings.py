@@ -8,6 +8,8 @@ leader timeout: the reset stored 0, because LEADER_TIMEOUT is the live variable
 It also covers the mouse key values: the wheel delay and interval are applied,
 every value is held at the limit of the 8-bit variable it is applied to (a
 stored 256 used to wrap to 0), and the one-time wheel interval migration.
+It also covers a one-shot tap toggle of 0 or 1 releasing locked one-shot mods,
+and Auto Shift state set by the AS_* keycodes surviving unrelated writes.
 """
 import pathlib
 import re
@@ -75,6 +77,18 @@ void set_autoshift_timeout(uint16_t t) { autoshift_timeout = t; }
 void autoshift_enable(void) { autoshift_on = true; }
 void autoshift_disable(void) { autoshift_on = false; }
 bool get_autoshift_state(void) { return autoshift_on; }
+uint16_t get_generic_autoshift_timeout(void) { return autoshift_timeout; }
+/* One-shot state as action.c and action_util.c keep it. */
+typedef enum { ONESHOT_PRESSED = 0b01, ONESHOT_OTHER_KEY_PRESSED = 0b10, ONESHOT_START = 0b11, ONESHOT_TOGGLED = 0b100 } oneshot_fullfillment_t;
+static uint8_t real_mods, locked_mods, oneshot_layer_data;
+static uint32_t layers;
+uint8_t get_oneshot_locked_mods(void) { return locked_mods; }
+void clear_oneshot_locked_mods(void) { locked_mods = 0; }
+void unregister_mods(uint8_t mods) { real_mods &= ~mods; }
+uint8_t get_oneshot_layer(void) { return oneshot_layer_data >> 3; }
+uint8_t get_oneshot_layer_state(void) { return oneshot_layer_data & 0b111; }
+void reset_oneshot_layer(void) { oneshot_layer_data = 0; }
+void layer_off(uint8_t layer) { layers &= ~(1u << layer); }
 '''
 
 TESTS = r'''
@@ -217,6 +231,71 @@ static void wheel_migration(void) {
     assert(eeprom_writes == 1 && STORED.mousekey_wheel_interval == 120 && mk_wheel_interval == 120 && (STORED.migrations & 1));
 }
 
+/* One-shot tap toggle 0 or 1 (no locking) with a one-shot mod locked: QMK only
+   unlocks on a tap while the toggle is above 1, so the lock is released when
+   the toggle drops, or the mod stays registered. A toggled one-shot layer goes
+   too; anything else is left alone. */
+static void one_shot_locks(void) {
+    sval_qmk_settings_reset();
+    assert(STORED.osk_tap_toggle == 5);
+    real_mods = locked_mods = 0x02; /* Shift locked by five taps */
+    set16(6, 3000);                 /* another setting: still locked */
+    assert(locked_mods == 0x02 && real_mods == 0x02);
+    set8(5, 3);                     /* still locking: a tap unlocks it */
+    assert(locked_mods == 0x02 && real_mods == 0x02);
+    set8(5, 1);
+    assert(locked_mods == 0 && real_mods == 0);
+
+    /* Sval 0x0A with 0: locked Control and GUI go, a held Shift stays. */
+    set8(5, 5);
+    locked_mods = 0x0C;
+    real_mods   = 0x0E;
+    layers      = 1u << 3;
+    oneshot_layer_data = 3 << 3 | ONESHOT_TOGGLED;
+    sval_qmk_settings_set_one_shot(5000, 0);
+    assert(locked_mods == 0 && real_mods == 0x02);
+    assert(layers == 0 && oneshot_layer_data == 0);
+
+    /* A one-shot layer waiting for its key is not a lock: kept. */
+    layers = 1u << 2;
+    oneshot_layer_data = 2 << 3 | ONESHOT_START;
+    set8(5, 0);
+    assert(layers == 1u << 2 && oneshot_layer_data == (2 << 3 | ONESHOT_START));
+    oneshot_layer_data = 0;
+    real_mods = 0;
+}
+
+/* AS_TOGG, AS_ON, AS_OFF, AS_UP and AS_DOWN change Auto Shift in RAM only.
+   A write to another setting keeps what they did, QSID 3 and 4 read back what
+   the board is doing, and each of those two writes applies only itself. */
+static void auto_shift_keycodes(void) {
+    sval_qmk_settings_reset();
+    assert(!autoshift_on && autoshift_timeout == 175);
+    autoshift_on      = true; /* AS_TOGG */
+    autoshift_timeout = 185;  /* AS_UP twice */
+    set16(7, 222);
+    set16(28, 400);
+    set8(5, 4);
+    sval_qmk_settings_set_one_shot(5000, 5);
+    assert(autoshift_on && autoshift_timeout == 185);
+    assert(get8(3) == 0x01 && get16(4) == 185);
+    assert(STORED.auto_shift == 0 && STORED.auto_shift_timeout == 175); /* not saved */
+
+    set8(3, 0x11); /* QSID 3: on, no alpha; the timeout is left */
+    assert(autoshift_on && autoshift_timeout == 185 && get8(3) == 0x11);
+    autoshift_on = false; /* AS_OFF */
+    assert(get8(3) == 0x10 && STORED.auto_shift == 0x11);
+    set16(4, 200);        /* QSID 4: the timeout only */
+    assert(!autoshift_on && autoshift_timeout == 200 && get16(4) == 200);
+
+    /* A boot and a reset apply what is stored. */
+    sval_qmk_settings_t old = STORED;
+    boot_with(old);
+    assert(autoshift_on && autoshift_timeout == 200);
+    sval_qmk_settings_reset();
+    assert(!autoshift_on && autoshift_timeout == 175 && get8(3) == 0 && get16(4) == 175);
+}
+
 int main(void) {
     /* A settings reset writes the default leader timing, not the live variable (0 here). */
     sval_qmk_settings_reset();
@@ -281,6 +360,8 @@ int main(void) {
     mouse_keys();
     tap_counts();
     wheel_migration();
+    one_shot_locks();
+    auto_shift_keycodes();
     printf("qmk settings: ok\n");
     return 0;
 }

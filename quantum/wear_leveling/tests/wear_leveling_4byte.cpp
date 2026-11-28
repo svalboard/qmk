@@ -89,7 +89,7 @@ TEST_F(WearLeveling4Byte, ConsolidationOverflow) {
     EXPECT_EQ(test_write(0x04, &dummy, sizeof(dummy)), WEAR_LEVELING_SUCCESS) << "Write returned incorrect status";
 
     // Expected log:
-    // [0,1]:   multibyte, 5 bytes, backing address 0x18, logical address 0x00
+    // [0,1]:   multibyte, 5 bytes, backing address 0x18, logical address 0x00 (each entry's words programmed in reverse)
     // [2,3]:   multibyte, 5 bytes, backing address 0x20, logical address 0x05
     // [4,5]:   multibyte, 5 bytes, backing address 0x28, logical address 0x0A, triggers consolidation
     // [6]:     erase
@@ -102,12 +102,13 @@ TEST_F(WearLeveling4Byte, ConsolidationOverflow) {
     // Verify the backing store writes for the write log
     std::size_t       index;
     write_log_entry_t e;
+    // Each entry's second word is programmed first, and its first word, holding the type, last (Svalboard)
     for (index = 0; index < 6; ++index) {
         auto write_iter = inst.log_begin() + index;
-        EXPECT_EQ(write_iter->address, WEAR_LEVELING_LOGICAL_SIZE + 8 + (index * BACKING_STORE_WRITE_SIZE)) << "Invalid write log address";
+        EXPECT_EQ(write_iter->address, WEAR_LEVELING_LOGICAL_SIZE + 8 + ((index ^ 1) * BACKING_STORE_WRITE_SIZE)) << "Invalid write log address";
 
         // If this is the backing store write that contains the metadata, verify it
-        if (index % 2 == 0) {
+        if (index % 2 == 1) {
             write_log_entry_t e;
             e.raw64 = write_iter->value;
             EXPECT_EQ(LOG_ENTRY_GET_TYPE(e), LOG_ENTRY_TYPE_MULTIBYTE) << "Invalid write log entry type";

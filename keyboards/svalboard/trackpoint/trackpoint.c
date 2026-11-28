@@ -72,19 +72,34 @@ report_mouse_t pointing_device_driver_get_report(report_mouse_t mouse_report) {
 }
 
 void pointing_device_init_kb(void) {
-    // TrackPoint-specific initialization
-    // Disable Z-tap
+    // TrackPoint-specific initialization. The Sprintek commands below are the IBM
+    // TrackPoint set: E2 47 <addr> <mask> toggles RAM bits and E2 81 <addr> <value> writes
+    // one; the stick ACKs each byte and sends nothing else, so nothing waits for a reply
+    // (a wait would time out, 100 ms each). Only E2 80 <addr> (read) answers with a byte.
     ps2_mouse_disable_data_reporting();
 
-    // Get Device ID: a PS/2 device ACKs (0xFA) and sends its ID.
-    tp_found = ps2_host_send(0xF2) == 0xFA;
-    tp_id    = tp_found ? ps2_host_recv_response() : 0;
+    // Get Device ID: a PS/2 device ACKs (0xFA) and sends its ID. The stream has been on
+    // since the PS/2 module started it, so motion bytes can sit in the receive queue ahead
+    // of the ACK, and ps2_host_send() takes the next queued byte as its ACK. Empty the queue
+    // first (the short wait lets a byte already on the wire land; one takes ~1.1 ms), and
+    // try again if a byte other than the ACK came back. No answer at all ends it.
+    tp_found = false;
+    for (uint8_t tries = 0; tries < 3 && !tp_found; tries++) {
+        wait_ms(2);
+        while (pbuf_has_data()) {
+            ps2_host_recv();
+        }
+        ps2_error = PS2_ERR_NONE;
+        tp_found  = ps2_host_send(0xF2) == PS2_ACK;
+        if (ps2_error == PS2_ERR_NODATA) break;
+    }
+    tp_id = tp_found ? ps2_host_recv_response() : 0;
 
+    // Disable Z-tap
     PS2_MOUSE_SEND(0xE2, "pts: 0xE2");
     PS2_MOUSE_SEND(0x47, "pts: 0x47");
     PS2_MOUSE_SEND(0x2C, "pts: 0x2C");
     PS2_MOUSE_SEND(0x00, "pts: 0x00");  // 01 turns on Z tap, 00 turns off
-    PS2_MOUSE_RECEIVE("ztap - disable");
 
     // Disable drift correction (Sprintek command)
     uint8_t val;
@@ -98,7 +113,6 @@ void pointing_device_init_kb(void) {
         PS2_MOUSE_SEND(0x47, "pts: 0x47");
         PS2_MOUSE_SEND(0xFA, "pts: 0xFA");
         PS2_MOUSE_SEND(0x10, "pts: 0x10");
-        PS2_MOUSE_RECEIVE("drift correction - disable");
     }
 
     // Set deadzone (increase to reduce tail drift)
@@ -112,7 +126,6 @@ void pointing_device_init_kb(void) {
     PS2_MOUSE_SEND(0x81, "pts: 0x81");
     PS2_MOUSE_SEND(0x5E, "pts: 0x5E");
     PS2_MOUSE_SEND(0x00, "pts: 0x00");
-    PS2_MOUSE_RECEIVE("double Z tap - disable");
 
     ps2_mouse_enable_data_reporting();
 

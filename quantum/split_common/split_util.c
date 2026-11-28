@@ -243,6 +243,12 @@ bool is_transport_connected(void) {
 #endif
 }
 
+void transport_connection_restart(void) {
+#if SPLIT_MAX_CONNECTION_ERRORS > 0
+    split_connection_restart(&connection);
+#endif
+}
+
 bool transport_master_if_connected(matrix_row_t master_matrix[], matrix_row_t slave_matrix[]) {
 #if SPLIT_MAX_CONNECTION_ERRORS > 0 && SPLIT_CONNECTION_CHECK_TIMEOUT > 0
     // Throttle transaction attempts if target doesn't seem to be connected

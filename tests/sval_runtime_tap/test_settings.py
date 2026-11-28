@@ -74,6 +74,15 @@ static void set_autoshift_timeout(uint16_t timeout) { autoshift_timeout_val = ti
 static void autoshift_enable(void) { autoshift_enabled = true; }
 static void autoshift_disable(void) { autoshift_enabled = false; }
 static bool get_autoshift_state(void) { return autoshift_enabled; }
+static uint16_t get_generic_autoshift_timeout(void) { return autoshift_timeout_val; }
+#define ONESHOT_TOGGLED 0b100
+static uint8_t get_oneshot_locked_mods(void) { return 0; }
+static void clear_oneshot_locked_mods(void) {}
+static void unregister_mods(uint8_t mods) { (void)mods; }
+static uint8_t get_oneshot_layer(void) { return 0; }
+static uint8_t get_oneshot_layer_state(void) { return 0; }
+static void reset_oneshot_layer(void) {}
+static void layer_off(uint8_t layer) { (void)layer; }
 static void clear_keyboard(void) {}
 static void eeconfig_update_keymap(void *p) { (void)p; }
 static void eeconfig_read_kb_datablock(void *p, size_t off, size_t n) { assert(off==0 && n==44); memcpy(p, storage, n); }

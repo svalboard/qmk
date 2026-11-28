@@ -20,13 +20,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // regardless; the ChibiOS system timer and wait_us run from the 1 MHz TIMER
 // tick (clk_ref), so scan timing is unaffected. PIO state machines (split
 // serial, WS2812) derive their rate from clk_sys, so their dividers are
-// rescaled on every switch to keep the baud and LED timing identical.
+// rescaled on every switch to keep the baud and LED timing identical, right
+// at the clk_sys switch (pio_reclock).
 
 #include "quantum.h"
 #include "svalboard.h"
 #include "hardware/clocks.h"
 #include "hardware/pll.h"
 #include "hardware/pio.h"
+#include "hardware/sync.h"
 #include "hardware/structs/clocks.h"
 #include "power_policy.h"
 
@@ -72,7 +74,14 @@ static void pio_write(const uint32_t clkdiv[SVAL_PIO_SMS], uint8_t enabled) {
 // constant across a clock change; restore the exact saved values on the way back.
 // A state machine started while the clock was low (a pointer driver the search
 // started) has nothing saved and is scaled up instead.
-static void pio_reclock(uint32_t from_hz, uint32_t to_hz, bool restore) {
+//
+// The new dividers are worked out first, and written straight after the
+// clk_sys switch with interrupts off, before the slow steps (the system PLL,
+// clk_peri): the split serial (1 Mbaud) is wrong only for the few register
+// writes between the switch and the dividers, not for the whole switch, and
+// no interrupt or SlaveThread runs in between. switch_clk_sys does the switch.
+static void pio_reclock(uint32_t from_hz, uint32_t to_hz, bool restore, void (*switch_clk_sys)(uint32_t hz)) {
+    uint32_t irq = save_and_disable_interrupts();
     uint32_t clkdiv[SVAL_PIO_SMS];
     uint8_t  enabled = pio_read(clkdiv);
     if (restore) {
@@ -80,7 +89,23 @@ static void pio_reclock(uint32_t from_hz, uint32_t to_hz, bool restore) {
     } else {
         sval_pio_reclock_down(&pio_reclock_state, clkdiv, enabled, from_hz, to_hz);
     }
+    switch_clk_sys(to_hz);
     pio_write(clkdiv, enabled);
+    restore_interrupts(irq);
+}
+
+// 48 and 24 MHz come from the USB PLL (the pico-sdk's set_sys_clock_48mhz sequence,
+// with the clk_sys divider for 24); 12 MHz is the crystal directly.
+static void clk_sys_low(uint32_t hz) {
+    if (hz == SVAL_CLK_XOSC_HZ) {
+        clock_configure(clk_sys, CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX, CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_XOSC_CLKSRC, SVAL_CLK_XOSC_HZ, SVAL_CLK_XOSC_HZ);
+    } else {
+        clock_configure(clk_sys, CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX, CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB, SVAL_CLK_USB_HZ, hz);
+    }
+}
+
+static void clk_sys_full(uint32_t hz) {
+    clock_configure(clk_sys, CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX, CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS, hz, hz);
 }
 
 bool    sval_clock_is_low(void) { return clock_low; }
@@ -94,17 +119,10 @@ void sval_clock_low(void) {
     uint32_t clkdiv[SVAL_PIO_SMS];
     uint8_t  enabled = pio_read(clkdiv);
     if (!sval_clock_low_allowed(sval_pio_would_clamp(clkdiv, enabled, SVAL_CLK_FULL_HZ, hz), led_written, timer_elapsed32(led_write_ms))) return;
-    // 48 and 24 MHz come from the USB PLL (the pico-sdk's set_sys_clock_48mhz sequence,
-    // with the clk_sys divider for 24); 12 MHz is the crystal directly. The USB PLL stays
-    // up in every case because USB needs it.
-    if (hz == SVAL_CLK_XOSC_HZ) {
-        clock_configure(clk_sys, CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX, CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_XOSC_CLKSRC, SVAL_CLK_XOSC_HZ, SVAL_CLK_XOSC_HZ);
-    } else {
-        clock_configure(clk_sys, CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX, CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB, SVAL_CLK_USB_HZ, hz);
-    }
+    // The USB PLL stays up in every case because USB needs it.
+    pio_reclock(SVAL_CLK_FULL_HZ, hz, false, clk_sys_low);
     pll_deinit(pll_sys);
     clock_configure(clk_peri, 0, CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS, hz, hz);
-    pio_reclock(SVAL_CLK_FULL_HZ, hz, false);
     low_hz    = hz;
     clock_low = true;
 }
@@ -112,10 +130,10 @@ void sval_clock_low(void) {
 void sval_clock_full(void) {
     if (!clock_low) return;
     // Same PLL settings as the pico-sdk's clocks_init(): 1500 MHz VCO / 6 / 2 = 125 MHz.
+    // It locks while the state machines still run at the low clock.
     pll_init(pll_sys, 1, 1500000000u, 6, 2);
-    clock_configure(clk_sys, CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX, CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS, SVAL_CLK_FULL_HZ, SVAL_CLK_FULL_HZ);
+    pio_reclock(low_hz, SVAL_CLK_FULL_HZ, true, clk_sys_full);
     clock_configure(clk_peri, 0, CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS, SVAL_CLK_FULL_HZ, SVAL_CLK_FULL_HZ);
-    pio_reclock(low_hz, SVAL_CLK_FULL_HZ, true);
     clock_low = false;
 }
 

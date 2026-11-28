@@ -236,9 +236,15 @@ static bool utf8_valid(const uint8_t *s, uint8_t len) {
         uint8_t c = s[i], extra = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : 0xFF;
         if (extra == 0xFF || c == 0 || (c < 0x20 && c != '\t')) return false;
         if (i + extra >= len) return false; // sequence runs past the end
+        uint32_t cp = extra ? c & (0x3F >> extra) : c;
         for (uint8_t k = 1; k <= extra; k++) {
             if ((s[i + k] & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (s[i + k] & 0x3F);
         }
+        // Only what UTF-16 can carry: no overlong forms, surrogates or code
+        // points past U+10FFFF (the USB product string is UTF-16).
+        static const uint32_t min_cp[4] = {0, 0x80, 0x800, 0x10000};
+        if (cp < min_cp[extra] || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return false;
         i += extra + 1;
     }
     return true;

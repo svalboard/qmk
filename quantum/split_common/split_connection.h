@@ -36,3 +36,13 @@ static inline bool split_connection_update(split_connection_t *c, bool ok, uint1
     if (min_ms ? (uint16_t)(now - c->since) >= min_ms : c->errors >= max_errors) c->disconnected = true;
     return !c->disconnected;
 }
+
+// Svalboard: the exchange stopped on purpose for a while (the split pause). A
+// run of failures from before the stop is not continued by the first failure
+// after it, which would otherwise find the run already min_ms old and
+// disconnect at once. A disconnect that already fired holds, as above, until a
+// good scan.
+static inline void split_connection_restart(split_connection_t *c) {
+    c->errors  = 0;
+    c->failing = false;
+}

@@ -86,7 +86,7 @@ uint8_t ps2_host_recv_response(void) {
         if (pop(&b)) return b;
         advance(1);
     }
-    ps2_error = 0x20;
+    ps2_error = PS2_ERR_NODATA;
     return 0;
 }
 

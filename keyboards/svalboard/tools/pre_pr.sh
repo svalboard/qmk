@@ -19,6 +19,7 @@
 #      (sval_storage, sval_pointing, sval_keytest, sval_layers,
 #      sval_runtime_tap, ...);
 #    - make test:<folder> for every folder with a test.mk, subfolders too,
+#      and every wear_leveling_* suite (the settings store);
 #      and tests/sval_runtime_tap/build_non_sval.py (in the qmk_cli image);
 #    - a check that fails if a tests/sval_* folder is run by none of these.
 #
@@ -121,6 +122,10 @@ for d in tests/sval_*/; do
     compgen -G "$d/test_*.py" > /dev/null && py_suites+=("$d")
 done
 mapfile -t gtests < <(find tests -path 'tests/sval_*' -name test.mk -printf '%h\n' | sed 's|^tests/||' | sort)
+# The wear-leveling suites (quantum/wear_leveling/tests): the settings store
+# runs on them, with Svalboard patches (docs/settings-storage.md).
+gtests+=(wear_leveling_general wear_leveling_2byte wear_leveling_2byte_optimized_writes)
+gtests+=(wear_leveling_4byte wear_leveling_8byte wear_leveling_mirror wear_leveling_mirror_large)
 
 step "Python host tests (python3 -m unittest, ${#py_suites[@]} folders)"
 py=0

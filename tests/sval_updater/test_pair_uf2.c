@@ -365,13 +365,40 @@ static void test_pair_uf2_staleness(void) {
     CHECK_EQ(update_pair_outcome(), PAIR_OUT_DONE);
     CHECK_EQ(slave_commit_runs, 1);
 
-    // This half boots without USB (the cable moved): the record is dropped.
+    // This half boots without USB and the half with USB pings it (the cable
+    // moved): the record is dropped.
     pb_fresh(0x2000);
     port_master = false;
+    pb_run(100);
+    CHECK_EQ(update_pair_phase(), PAIR_BOOT_SUB);
+    CHECK(!pair_sector_erased());
+    updater_split_light_seen(false, 0); // the half with USB's presence ping
     pb_run(100);
     CHECK_EQ(update_pair_outcome(), PAIR_OUT_ABANDONED);
     CHECK(pair_sector_erased());
     CHECK_EQ(pause_calls, 0);
+
+    // USB slower than SPLIT_USB_TIMEOUT: this half boots without it, and no
+    // half pings it (the other half has no USB either). The record stays,
+    // with no light; the split watchdog restarts this half, which then has
+    // USB and installs it on the other half.
+    pb_fresh(0x2000);
+    port_master = false;
+    led_seen    = 0;
+    for (int i = 0; i < 5000; i++)
+        pass();
+    CHECK_EQ(update_pair_phase(), PAIR_BOOT_SUB);
+    CHECK_EQ(update_pair_outcome(), PAIR_OUT_KEPT);
+    CHECK(!pair_sector_erased());
+    CHECK(!update_pair_busy());
+    CHECK_EQ(led_seen & LED_BIT(UPDATE_LED_ERROR), 0);
+    CHECK_EQ(slave_commit_runs, 0);
+    pb_boot(); // the split watchdog
+    port_master = true;
+    pb_run(120000);
+    CHECK_EQ(update_pair_outcome(), PAIR_OUT_DONE);
+    CHECK_EQ(slave_commit_runs, 1);
+    CHECK(pair_sector_erased());
 }
 
 // The same image with the other half's side unknown or the same as this
