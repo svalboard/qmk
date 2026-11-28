@@ -315,9 +315,15 @@ sval_probe_result_t sval_probe_pointers(uint8_t skip_buses) {
     bool                i2c     = !(skip & SVAL_BUS_I2C);
     bool                ps2_spi = !(skip & SVAL_BUS_PS2) || !(skip & SVAL_BUS_SPI);
     release_all(i2c, ps2_spi); // GP25 pulled up: trackball deselected, TrackPoint reset left as its module sets it
-    if (!(skip & SVAL_BUS_PS2) && probe_ps2(&found, 2)) goto done;
+    bool spi = !(skip & SVAL_BUS_SPI);
+    if (spi && probe_spi(&found)) goto done;
+    release_all(i2c, ps2_spi);
+    // The trackpad straight after: its pins (GP16/17) aren't the trackball's or the TrackPoint's.
     if (i2c && probe_i2c(&found)) goto done;
-    if (!(skip & SVAL_BUS_SPI)) probe_spi(&found);
+    if (!(skip & SVAL_BUS_PS2)) {
+        if (spi) det_wait_us(SVAL_DETECT_TP_SETTLE_MS * 1000u); // a TrackPoint the chip select reset
+        probe_ps2(&found, 2);
+    }
 done:
     release_all(i2c, ps2_spi);
     return found;

@@ -8,10 +8,14 @@
 //
 // The probes toggle the pins directly instead of using the chip's SPI/I2C/PIO
 // peripherals, so they work in any build. They take each pin from whatever peripheral
-// had it, so only run them when the build's own module didn't answer. GP25 is the
-// trackball's chip select and the TrackPoint's (undriven) reset line: it's only pulled
-// up, never driven, until the last probe (SPI), which runs only when PS/2 and I2C found
-// nothing.
+// had it, so only run them when the build's own module didn't answer.
+//
+// The trackball goes first and the trackpad straight after, with no wait between: nearly
+// every board has one of the two, most a PMW3389. Their pins don't overlap (SPI on
+// GP24-27, I2C on GP16/17). A module that answers ends the search. The TrackPoint goes
+// last: GP25 is the trackball's chip select and the TrackPoint's reset line, so the SPI
+// probe also pulses a TrackPoint's reset, and PS/2 is asked only SVAL_DETECT_TP_SETTLE_MS
+// after the SPI probe, once a TrackPoint that it reset has finished its self-test.
 #pragma once
 
 #include <stdbool.h>
@@ -21,6 +25,12 @@
 #define SVAL_BUS_PS2 0x01
 #define SVAL_BUS_I2C 0x02
 #define SVAL_BUS_SPI 0x04
+
+// After the SPI probe, how long a TrackPoint gets to finish the self-test the probe's chip
+// select may have started, before PS/2 asks for it. The boot search's 1.5 s
+// (pointer_reprobe.h) already allows for a TrackPoint's power-on self-test; this is that
+// test again after a reset.
+#define SVAL_DETECT_TP_SETTLE_MS 1000u
 
 typedef struct {
     uint8_t detected; // enum sval_pointer_sensor: a module, or SVAL_SENSOR_NO_RESPONSE
@@ -37,7 +47,10 @@ static inline uint8_t sval_probe_skip_buses(uint8_t own_buses) {
     return (own_buses & SVAL_BUS_PS2) ? own_buses | SVAL_BUS_SPI : own_buses;
 }
 
-// Probes the buses not in sval_probe_skip_buses(skip_buses), PS/2 then I2C then SPI, stopping at the first module.
+// Probes the buses not in sval_probe_skip_buses(skip_buses), SPI then I2C then PS/2, stopping
+// at the first module. Blocking, with the SVAL_DETECT_TP_SETTLE_MS wait before PS/2 after a
+// silent SPI probe: the host test uses it; the firmware's searches go one bus per main loop pass
+// (pointer_reprobe.c).
 // The I2C pins are left alone when I2C is skipped, so a hardware I2C driver keeps them.
 sval_probe_result_t sval_probe_pointers(uint8_t skip_buses);
 

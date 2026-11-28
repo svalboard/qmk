@@ -1,9 +1,10 @@
-// One firmware for every pointing module. The trackpad is looked for at boot with its own
-// driver over the I2C hardware, as the trackpad-only build does; the bit-banged I2C probe
-// missed it. Otherwise nothing runs until svalboard.c's search (pointing_detect.h, first
-// ~1.5 s after boot, then up to 30 s while nothing is found: pointer_reprobe.h) says what's
-// attached on the other buses; then that module's driver starts and handles everything.
-// Changing modules takes a reset.
+// One firmware for every pointing module. At boot the trackball is looked for first (most
+// boards have one): a PMW3360 or PMW3389 that answers starts right away. Then the trackpad,
+// with its own driver over the I2C hardware, as the trackpad-only build does; the
+// bit-banged I2C probe missed it. Otherwise nothing runs until svalboard.c's search
+// (pointing_detect.h, first ~1.5 s after boot, then up to 30 s while nothing is found:
+// pointer_reprobe.h) says what's attached; then that module's driver starts and handles
+// everything. Changing modules takes a reset.
 #include "quantum.h"
 #include "pointing_device.h"
 #include "pointing_detect.h"
@@ -60,6 +61,13 @@ uint8_t sval_pointer_retry_own(void) {
 }
 
 bool pointing_device_driver_init(void) {
+    // The trackball first. A silent sensor gets the power-up reset (pointing_detect.c), and
+    // the 1.5 s search finds it.
+    sval_probe_result_t ball = sval_probe_bus(SVAL_BUS_SPI, true);
+    if (ball.detected == SVAL_SENSOR_PMW3360 || ball.detected == SVAL_SENSOR_PMW3389) {
+        sval_pointer_select(&ball);
+        if (driver) return true;
+    }
     sval_pointer_identity_t id = {0};
     sval_driver_azoteq.init();
     sval_driver_azoteq.identity(&id);
