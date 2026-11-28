@@ -3,8 +3,8 @@
 // the build's own module again (sval_pointer_retry_own), then probes the other buses one per main loop pass,
 // so no pass waits on more than one bus; whatever answers is started with
 // sval_pointer_select. Never runs while the half's module works. The trackball (SPI) goes
-// first, since most boards have one; PS/2 waits SVAL_DETECT_TP_SETTLE_MS after it
-// (pointing_detect.h), and I2C comes last.
+// first and the trackpad (I2C) next, since nearly every board has one of the two; PS/2
+// comes last, SVAL_DETECT_TP_SETTLE_MS after the SPI probe (pointing_detect.h).
 #ifdef SVAL_REPROBE_HOST_TEST
 #    include "reprobe_test_hal.h" // tests/sval_pointing: identity, clock and bus mocks
 #else
@@ -40,7 +40,7 @@ static void sval_pointer_search_end(void) {
 }
 
 void sval_pointer_probe_task(void) {
-    static const uint8_t buses[] = {SVAL_BUS_SPI, SVAL_BUS_PS2, SVAL_BUS_I2C}; // the trackball first
+    static const uint8_t buses[] = {SVAL_BUS_SPI, SVAL_BUS_I2C, SVAL_BUS_PS2}; // the trackball, then the trackpad
     if (pointer_search_done) return;
     if (pointer_search_step == 0) {
         uint32_t due = sval_reprobe_due_ms(pointer_searches);

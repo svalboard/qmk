@@ -305,8 +305,23 @@ static void per_module_build_stops_on_other_module(void) {
     attached      = SVAL_SENSOR_TRACKPOINT;
     attached_bus  = SVAL_BUS_PS2;
     run_until(60UL * 60 * 1000);
-    CHECK(probe_calls == 1 && select_calls == 1 && retry_calls == 0);
+    CHECK(probe_calls == 2 && select_calls == 1 && retry_calls == 0); // the trackpad's I2C, then PS/2
+    CHECK(probe_calls_by_bus[bus_index(SVAL_BUS_I2C)] == 1 && probe_calls_by_bus[bus_index(SVAL_BUS_PS2)] == 1);
     CHECK(sval_pointer_found()->detected == SVAL_SENSOR_TRACKPOINT);
+}
+
+// The trackpad comes straight after the trackball, before PS/2 and its wait: a per-module
+// trackball build whose other bus has a trackpad finds it in the boot search's first probe.
+static void trackpad_found_before_ps2(void) {
+    reset();
+    own.built_for = SVAL_SENSOR_PMW3389;
+    own.detected  = SVAL_SENSOR_NO_RESPONSE;
+    own_bus       = SVAL_BUS_SPI;
+    attached      = SVAL_SENSOR_AZOTEQ;
+    attached_bus  = SVAL_BUS_I2C;
+    run_until(1510);
+    CHECK(probe_calls == 1 && probe_calls_by_bus[bus_index(SVAL_BUS_PS2)] == 0);
+    CHECK(sval_pointer_searched() && sval_pointer_found()->detected == SVAL_SENSOR_AZOTEQ);
 }
 
 static void per_module_build_stops_on_wrong_sensor(void) {
@@ -360,7 +375,7 @@ static void late_boot_searches_spaced(void) {
     now_ms = 3500;
     run_until(3503); // the first search: its start, then SPI
     CHECK(probe_calls == 1 && retry_calls == 0);
-    const uint32_t ended = 3502 + SVAL_DETECT_TP_SETTLE_MS; // PS/2 after the wait; the next pass ends it
+    const uint32_t ended = 3501 + SVAL_DETECT_TP_SETTLE_MS; // PS/2, last, after the wait ends it
     run_until(ended + 1);
     CHECK(probe_calls == 2 && retry_calls == 0);
     run_until(ended + SVAL_REPROBE_GAP_MS);
@@ -379,7 +394,7 @@ static void gap_keeps_the_schedule(void) {
 
 typedef void (*test_fn)(void);
 int main(void) {
-    static const test_fn tests[] = {schedule, nothing_attached_stops_at_30_s, trackball_found_first, trackpoint_found_after_the_wait, never_probes_after_30_s, plugged_in_at_10_s_starts_at_12_s, plugged_in_at_20_s_starts_at_30_s, plugged_in_at_40_s_never_found, own_module_retry_starts_it, working_module_never_probed, working_auto_trackpad_never_probed, failing_start_gives_up, failing_own_start_gives_up, per_module_build_stops_on_other_module, per_module_build_stops_on_wrong_sensor, retry_own_stop_ends_it, found_only_changes_at_search_end, late_boot_searches_spaced, gap_keeps_the_schedule};
+    static const test_fn tests[] = {schedule, nothing_attached_stops_at_30_s, trackball_found_first, trackpoint_found_after_the_wait, never_probes_after_30_s, plugged_in_at_10_s_starts_at_12_s, plugged_in_at_20_s_starts_at_30_s, plugged_in_at_40_s_never_found, own_module_retry_starts_it, working_module_never_probed, working_auto_trackpad_never_probed, failing_start_gives_up, failing_own_start_gives_up, per_module_build_stops_on_other_module, trackpad_found_before_ps2, per_module_build_stops_on_wrong_sensor, retry_own_stop_ends_it, found_only_changes_at_search_end, late_boot_searches_spaced, gap_keeps_the_schedule};
     int                  failed  = 0;
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
         fflush(stdout);

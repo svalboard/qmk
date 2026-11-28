@@ -10,11 +10,12 @@
 // peripherals, so they work in any build. They take each pin from whatever peripheral
 // had it, so only run them when the build's own module didn't answer.
 //
-// The trackball goes first: most boards have one, a PMW3389. A trackball that answers
-// ends the search before any other bus is touched. GP25 is the trackball's chip select
-// and the TrackPoint's reset line, so the SPI probe also pulses a TrackPoint's reset:
-// PS/2 is asked only SVAL_DETECT_TP_SETTLE_MS later, once a TrackPoint that it reset
-// has finished its self-test. I2C goes last.
+// The trackball goes first and the trackpad straight after, with no wait between: nearly
+// every board has one of the two, most a PMW3389. Their pins don't overlap (SPI on
+// GP24-27, I2C on GP16/17). A module that answers ends the search. The TrackPoint goes
+// last: GP25 is the trackball's chip select and the TrackPoint's reset line, so the SPI
+// probe also pulses a TrackPoint's reset, and PS/2 is asked only SVAL_DETECT_TP_SETTLE_MS
+// after the SPI probe, once a TrackPoint that it reset has finished its self-test.
 #pragma once
 
 #include <stdbool.h>
@@ -46,9 +47,9 @@ static inline uint8_t sval_probe_skip_buses(uint8_t own_buses) {
     return (own_buses & SVAL_BUS_PS2) ? own_buses | SVAL_BUS_SPI : own_buses;
 }
 
-// Probes the buses not in sval_probe_skip_buses(skip_buses), SPI then PS/2 then I2C, stopping
-// at the first module. Blocking, with the SVAL_DETECT_TP_SETTLE_MS wait after a silent SPI
-// probe: the host test uses it; the firmware's searches go one bus per main loop pass
+// Probes the buses not in sval_probe_skip_buses(skip_buses), SPI then I2C then PS/2, stopping
+// at the first module. Blocking, with the SVAL_DETECT_TP_SETTLE_MS wait before PS/2 after a
+// silent SPI probe: the host test uses it; the firmware's searches go one bus per main loop pass
 // (pointer_reprobe.c).
 // The I2C pins are left alone when I2C is skipped, so a hardware I2C driver keeps them.
 sval_probe_result_t sval_probe_pointers(uint8_t skip_buses);

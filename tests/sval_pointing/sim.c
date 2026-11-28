@@ -393,6 +393,7 @@ static void trackpad(void) {
     CHECK(r.detected == SVAL_SENSOR_AZOTEQ && r.id0 == 0 && r.id1 == 40);
     CHECK(azo.ended);         // closed the comms window
     CHECK(cs_driven_low > 0); // the trackball was looked for first
+    CHECK(now_us < 20000);    // straight after it: no TrackPoint wait before the trackpad
     all_released();
 }
 
@@ -410,7 +411,8 @@ static void trackpad_low_power(long cycle_us) {
     all_released();
 }
 
-// The SPI probe pulses GP25, a TrackPoint's reset: PS/2 asks only after its self-test.
+// The SPI probe pulses GP25, a TrackPoint's reset: PS/2 asks only after its self-test, and
+// after the trackpad's I2C.
 static void trackpoint(void) {
     reset();
     ps2.on                = true;
