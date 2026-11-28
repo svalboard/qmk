@@ -148,7 +148,7 @@ static void nothing_attached_stops_at_30_s(void) {
     CHECK(probe_calls == 0);
     run_until(1510);
     CHECK(!sval_pointer_searched());
-    CHECK(retry_calls == 0); // the boot search follows the driver's own start
+    CHECK(retry_calls == 0);                               // the boot search follows the driver's own start
     CHECK(probe_calls == 1 && probe_calls_by_bus[2] == 1); // the trackball first
     run_until(1501 + SVAL_DETECT_TP_SETTLE_MS - 1);
     CHECK(probe_calls == 1); // PS/2 waits for a TrackPoint the chip select may have reset

@@ -391,7 +391,7 @@ static void trackpad(void) {
     azo.product           = 40; // IQS550
     sval_probe_result_t r = sval_probe_pointers(0);
     CHECK(r.detected == SVAL_SENSOR_AZOTEQ && r.id0 == 0 && r.id1 == 40);
-    CHECK(azo.ended); // closed the comms window
+    CHECK(azo.ended);         // closed the comms window
     CHECK(cs_driven_low > 0); // the trackball was looked for first
     all_released();
 }
