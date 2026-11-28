@@ -55,22 +55,6 @@ wear_leveling_status_t wear_leveling_write(uint32_t address, const void* value, 
 wear_leveling_status_t wear_leveling_read(uint32_t address, void* value, size_t length);
 
 /**
- * Bytes left in the write log of each copy before a write has to consolidate. 0 while a consolidation that failed is
- * waiting to be retried.
- *
- * @return free bytes in the write log
- */
-uint32_t wear_leveling_log_free(void);
-
-/**
- * Consolidates now: rewrites every copy from the cache and empties the write log. Lets a keyboard do this while idle,
- * so that the pause doesn't fall inside a burst of host writes.
- *
- * @return Status of the request
- */
-wear_leveling_status_t wear_leveling_consolidate(void);
-
-/**
  * Whether the last initialization found stored data that could not be read on any attempt, and erased it.
  *
  * @return true if stored data was lost

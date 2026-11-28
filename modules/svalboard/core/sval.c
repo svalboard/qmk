@@ -1316,17 +1316,8 @@ __attribute__((weak)) void sval_pointing_contacts_kb(uint8_t *out, uint8_t lengt
 __attribute__((weak)) void sval_pointing_touch_kb(uint8_t *out, uint8_t length) {}
 __attribute__((weak)) void sval_pointing_fingers_kb(uint8_t *out, uint8_t length) {}
 
-static uint32_t raw_hid_last_ms;
-static bool     raw_hid_seen;
-
-uint32_t sval_raw_hid_idle_ms(void) {
-    return raw_hid_seen ? timer_elapsed32(raw_hid_last_ms) : UINT32_MAX;
-}
-
 // Override via_command_kb to intercept wrapper and Sval protocol
 bool via_command_kb(uint8_t *data, uint8_t length) {
-    raw_hid_last_ms = timer_read32();
-    raw_hid_seen    = true;
     // Every host packet reaches this hook, including the ones VIA handles below. The live
     // pointer polls (wrapped 0x2D and 0x2F) don't count: a host app showing the pointer polls for as
     // long as it's open, which would keep the board out of deep idle the whole time.

@@ -36,12 +36,6 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fn
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$kb" "$root/tests/sval_power_idle/test_power_policy.c" -o "$out/test_power_policy"
 "$out/test_power_policy"
 
-# Early settings consolidation (kb/storage_idle.h): only once the log is past
-# the low mark, after a quiet spell with no raw HID packet (polls included) and
-# no input, never while a key is held or the updater runs, once per spell.
-${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$kb" "$root/tests/sval_storage_idle/test_storage_idle.c" -o "$out/test_storage_idle"
-"$out/test_storage_idle"
-
 # RGB at rest (kb/rgb_idle.c): the idle dimming kept out of the saved lighting
 # (keys, VIA), and RGBLIGHT_SLEEP while the host sleeps.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all     -I"$root/tests/sval_rgb_idle/stub" -I"$kb" "$root/tests/sval_rgb_idle/test_rgb_idle.c" -o "$out/test_rgb_idle"

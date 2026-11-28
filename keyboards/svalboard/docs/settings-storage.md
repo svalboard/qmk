@@ -75,7 +75,7 @@ Each copy wears at QMK's normal rate: a small change appends a few bytes to the 
 
 A consolidation happens when the log fills, about once per 98,000 key changes. It erases each copy one 64 KB block at a time, skipping blocks that are already erased and servicing USB between blocks, then rewrites both copies. The keyboard pauses for a few seconds while it does; on a test board the whole pause, including the host noticing it, measured about 4.5 s. A fresh board's first-boot format erases nothing, since its region is already blank.
 
-A pause inside a burst of host writes (a layout import) holds back the reply past the host's 1 s timeout. So the half with USB consolidates early, once the log is past half full, after 10 s with no raw HID packet of any kind and no input, with no key held and no update running (`storage_idle.h`, `SVAL_STORAGE_IDLE_MS`, `SVAL_STORAGE_LOG_LOW`). The next burst then rarely fills the log. A host that polls the board all the time never lets it count as idle, and the log fills inside a write as before. This at most doubles how often a copy is erased.
+A pause inside a burst of host writes (a layout import) holds back the reply to the write that started it, past the host's 1 s timeout. Keybard matches every reply to its request, so the late reply is dropped instead of being taken as the answer to the next command.
 
 ## Tests
 
@@ -84,4 +84,4 @@ make test:wear_leveling_general test:wear_leveling_2byte test:wear_leveling_2byt
      test:wear_leveling_4byte test:wear_leveling_8byte test:wear_leveling_mirror test:wear_leveling_mirror_large
 ```
 
-`wear_leveling_mirror` covers a damaged or erased copy, a copy missing the last entry, both copies damaged, a retried bad read, power loss at every write and erase of a consolidating write, of a single-entry write and of the boot's repair, a log entry or consolidation that fails to program or erase, and the early consolidation. `wear_leveling_mirror_large` runs the same tests with a store large enough for multi-word log entries, plus an entry cut off at the end of a copy, copies whose logs stop at an invalid entry, invalid multi-byte lengths, and words left after the end of the log. `tests/sval_storage_idle` covers when the early consolidation runs. `tools/pre_pr.sh` runs all of these.
+`wear_leveling_mirror` covers a damaged or erased copy, a copy missing the last entry, both copies damaged, a retried bad read, power loss at every write and erase of a consolidating write, of a single-entry write and of the boot's repair, and a log entry or consolidation that fails to program or erase. `wear_leveling_mirror_large` runs the same tests with a store large enough for multi-word log entries, plus an entry cut off at the end of a copy, copies whose logs stop at an invalid entry, invalid multi-byte lengths, and words left after the end of the log. `tools/pre_pr.sh` runs all of these.

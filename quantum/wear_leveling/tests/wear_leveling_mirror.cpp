@@ -486,30 +486,6 @@ TEST_F(WearLevelingMirror, RetriedConsolidation_KeepsRewrittenCopy) {
     }
 }
 
-/**
- * This test verifies the early consolidation a keyboard can run while idle: the free log space shrinks with each
- * write, a consolidation empties the log and keeps the data, and a failed one leaves 0 free until it is retried. (S2)
- */
-TEST_F(WearLevelingMirror, EarlyConsolidation) {
-    auto&    inst  = MockBackingStore::Instance();
-    auto     data  = seed();
-    uint32_t empty = WEAR_LEVELING_BACKING_SIZE - WEAR_LEVELING_LOGICAL_SIZE - 8;
-    EXPECT_LT(wear_leveling_log_free(), empty) << "The seed's log entry should use space";
-    EXPECT_EQ(wear_leveling_consolidate(), WEAR_LEVELING_CONSOLIDATED) << "Consolidation failed";
-    EXPECT_EQ(wear_leveling_log_free(), empty) << "The log should be empty";
-    expect_recovered(data);
-
-    inst.set_erase_callback([](std::uint64_t) { return false; });
-    EXPECT_EQ(wear_leveling_consolidate(), WEAR_LEVELING_FAILED) << "Consolidation should have failed";
-    EXPECT_EQ(wear_leveling_log_free(), 0u) << "A failed consolidation leaves no log to append to";
-    EXPECT_TRUE(wear_leveling_write_failed()) << "The failure should be reported";
-    inst.set_erase_callback(nullptr);
-    data[4] ^= 0xFF;
-    EXPECT_EQ(wear_leveling_write(4, &data[4], 1), WEAR_LEVELING_CONSOLIDATED) << "The next write should retry";
-    EXPECT_EQ(wear_leveling_log_free(), empty) << "The log should be empty";
-    expect_recovered(data);
-}
-
 #if WEAR_LEVELING_LOGICAL_SIZE > 64
 
 /**

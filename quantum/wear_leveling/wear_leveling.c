@@ -897,36 +897,6 @@ wear_leveling_status_t wear_leveling_write(const uint32_t address, const void *v
 }
 
 /**
- * Bytes left in the write log of each copy.
- */
-uint32_t wear_leveling_log_free(void) {
-    if (wear_leveling.consolidate_pending || wear_leveling.write_address >= (WEAR_LEVELING_BACKING_SIZE)) {
-        return 0;
-    }
-    return (WEAR_LEVELING_BACKING_SIZE)-wear_leveling.write_address;
-}
-
-/**
- * Consolidates now, emptying the write log, so that a later burst of writes doesn't have to.
- */
-wear_leveling_status_t wear_leveling_consolidate(void) {
-    backing_store_lock_status_t lock_status = wear_leveling_unlock();
-    if (lock_status == STATUS_FAILURE) {
-        wear_leveling_lock();
-        wear_leveling.write_failed = true;
-        return WEAR_LEVELING_FAILED;
-    }
-    wear_leveling_status_t status = wear_leveling_consolidate_force();
-    if (lock_status == STATUS_SUCCESS && wear_leveling_lock() == STATUS_FAILURE) {
-        status = WEAR_LEVELING_FAILED;
-    }
-    if (status == WEAR_LEVELING_FAILED) {
-        wear_leveling.write_failed = true;
-    }
-    return status;
-}
-
-/**
  * Reads logical data from the cache.
  */
 wear_leveling_status_t wear_leveling_read(const uint32_t address, void *value, size_t length) {
