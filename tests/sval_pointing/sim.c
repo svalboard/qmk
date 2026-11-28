@@ -469,6 +469,36 @@ static void skipped_i2c_pins_untouched(void) {
     CHECK(host[GP16] == H_HIGH && host[GP17] == H_HIGH);
 }
 
+// An I2C probe leaves the PS/2 and SPI pins with whatever holds them: in a TrackPoint build,
+// the PS/2 driver's PIO keeps GP23/GP24 and GP25 (its reset) is never driven (S24).
+static void i2c_probe_leaves_ps2_pins(void) {
+    reset();
+    pin_t held[] = {GP23, GP24, GP25, GP26, GP27};
+    for (unsigned i = 0; i < sizeof(held); i++)
+        host[held[i]] = H_HIGH; // stand-in for the PIO's and SPI hardware's hold
+    sval_probe_bus(SVAL_BUS_I2C, false);
+    for (unsigned i = 0; i < sizeof(held); i++)
+        CHECK(host[held[i]] == H_HIGH);
+    CHECK(cs_driven_low == 0);
+}
+
+// A build whose own bus is PS/2 doesn't probe SPI, even with a trackball attached: the probe
+// would drive GP25 and take GP24 from the PS/2 driver (S24).
+static void ps2_build_skips_spi(void) {
+    reset();
+    pmw.on     = true;
+    pmw.pid    = 0x47;
+    pmw.inv    = 0xB8;
+    host[GP23] = H_HIGH;
+    host[GP24] = H_HIGH;
+    CHECK(sval_probe_skip_buses(SVAL_BUS_PS2) == (SVAL_BUS_PS2 | SVAL_BUS_SPI));
+    CHECK(sval_probe_skip_buses(SVAL_BUS_I2C) == SVAL_BUS_I2C);
+    CHECK(sval_probe_skip_buses(SVAL_BUS_SPI) == SVAL_BUS_SPI);
+    CHECK(sval_probe_pointers(SVAL_BUS_PS2).detected == SVAL_SENSOR_NO_RESPONSE);
+    CHECK(cs_driven_low == 0);
+    CHECK(host[GP23] == H_HIGH && host[GP24] == H_HIGH);
+}
+
 // A sensor stuck through an MCU restart (answers 0x00): the first search sends the power-up
 // reset and still finds nothing, the next one finds it. A healthy one is never reset.
 static void stuck_sensor(void) {
@@ -555,6 +585,8 @@ int main(void) {
     one_bus_costs();
     one_bus_finds_its_module();
     skipped_i2c_pins_untouched();
+    i2c_probe_leaves_ps2_pins();
+    ps2_build_skips_spi();
     printf(failures ? "%d FAILED\n" : "OK\n", failures);
     return failures != 0;
 }
