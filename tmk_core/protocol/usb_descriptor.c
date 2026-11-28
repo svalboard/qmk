@@ -1259,7 +1259,9 @@ __attribute__((weak)) const char* usb_product_string(void) {
 #    ifndef USB_PRODUCT_STRING_MAX_UNITS
 #        define USB_PRODUCT_STRING_MAX_UNITS 126 // a string descriptor holds at most 126 UTF-16 units
 #    endif
-static uint8_t ProductStringRuntime[sizeof(USB_Descriptor_Header_t) + USB_PRODUCT_STRING_MAX_UNITS * 2];
+// Aligned: the UTF-16 units are stored as uint16_t, and a Cortex-M0+ faults on
+// an unaligned halfword store (Svalboard patch to QMK core).
+static _Alignas(4) uint8_t ProductStringRuntime[sizeof(USB_Descriptor_Header_t) + USB_PRODUCT_STRING_MAX_UNITS * 2];
 
 // UTF-8 to UTF-16, surrogate pairs above the BMP; malformed bytes, overlong
 // forms, surrogates and code points past U+10FFFF become U+FFFD.

@@ -188,9 +188,11 @@ update_status_t update_split_other_info(uint8_t payload[USPLIT_INFO_PAYLOAD], ui
 // invalidates its build reset record and resets itself
 // SVAL_UPDATE_SETTINGS_RESET_SLAVE_MS later. UPDATE_OK once it said so;
 // UPDATE_BUSY while a relay runs here or a session runs there; else
-// UPDATE_UNAVAILABLE (no valid answer: unplugged, or a protocol 2-3 half,
-// which does not know the op; or a protocol 4 half from before D44 asked
-// for mode 1, which it does not know) or its refusal (FLASH_ERR). mode 0
+// UPDATE_UNAVAILABLE (nothing changed there: a protocol 2-3 half, which
+// does not know the op, or a protocol 4 half from before D44 asked for mode
+// 1, which it does not know); UPDATE_TIMEOUT (no answer, or only damaged
+// ones: it may have taken the request and reset, so not "nothing changed")
+// or its refusal (FLASH_ERR). mode 0
 // sends protocol 4's 4-byte payload, mode 1 (blank, D44) one byte more.
 update_status_t update_split_other_settings_reset(uint8_t mode);
 

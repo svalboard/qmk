@@ -332,11 +332,19 @@ static void sval_qmk_settings_save(void) {
 // values and undo the keycodes. Each write applies only its own value.
 static void sval_qmk_settings_apply_auto_shift_enable(void) {
 #ifdef AUTO_SHIFT_ENABLE
+    // The Auto Shift byte last applied (-1: none yet, at boot).
+    static int16_t applied_auto_shift = -1;
     if (settings.auto_shift & (1 << AUTO_SHIFT_ENABLE_BIT)) {
+        // A key pending under the old bits would finish under the new ones: a
+        // key no longer auto-shifted skips Auto Shift on release, so it was
+        // typed shifted after the release, or held repeating. Finish it now,
+        // as switching Auto Shift off does, then switch it back on.
+        if (applied_auto_shift >= 0 && settings.auto_shift != applied_auto_shift && get_autoshift_state()) autoshift_disable();
         autoshift_enable();
     } else if (get_autoshift_state()) {
         autoshift_disable();
     }
+    applied_auto_shift = settings.auto_shift;
 #endif
 }
 
