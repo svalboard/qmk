@@ -277,7 +277,9 @@ bool backing_store_write(uint32_t address, backing_store_int_t value) {
 }
 
 bool backing_store_write_bulk(uint32_t address, backing_store_int_t *values, size_t item_count) {
-    if (!flash_present) return false;
+    // Never program outside the store: past its end lies other flash (the updater's staging slot).
+    const uint32_t store_size = (WEAR_LEVELING_BACKING_SIZE) * (WEAR_LEVELING_COPIES);
+    if (!flash_present || address > store_size || item_count > (store_size - address) / sizeof(backing_store_int_t)) return false;
     uint32_t offset = (WEAR_LEVELING_RP2040_FLASH_BASE) + address;
     bs_dprintf("Write ");
     wl_dump(offset, values, sizeof(backing_store_int_t) * item_count);

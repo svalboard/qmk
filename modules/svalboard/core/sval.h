@@ -413,6 +413,9 @@ void sval_host_packet_kb(void);
 // Called with the client ID of every wrapped packet (0xDD) before it is
 // dispatched, so a handler can bind a session to one client. Weak no-op.
 void sval_client_packet_kb(uint32_t client_id);
+// ms since the last raw HID packet of any kind, the live pointer polls
+// included (UINT32_MAX until the first one).
+uint32_t sval_raw_hid_idle_ms(void);
 
 // GET_INFO byte 20 (sval_feature_flags3). Weak, returns 0.
 uint8_t sval_get_feature_flags3_kb(void);

@@ -173,6 +173,11 @@ static struct __attribute__((__aligned__(BACKING_STORE_WRITE_SIZE))) {
     bool                                                           unlocked;
     bool                                                           data_lost;
     bool                                                           write_failed;
+    // A consolidation started and did not finish, or a log entry failed to program: the copies may differ from the
+    // cache and write_address may not point at an erased slot, so nothing is appended until a consolidation succeeds.
+    bool consolidate_pending;
+    // The copy whose rewrite failed: a retry rewrites it first, while the copies rewritten before it stay intact.
+    uint8_t retry_first;
 } wear_leveling;
 
 /**
@@ -312,10 +317,17 @@ static wear_leveling_status_t wear_leveling_write_consolidated(uint8_t copy) {
  * Forces a write of the current cache.
  * Erases the backing store, including the write log.
  * During this operation, there is the potential for data loss if a power loss occurs.
+ *
+ * Copies are rewritten in the order first, first + 1, ...: a copy that holds the only good data must come last, so
+ * that it stays intact until every other copy is complete.
  */
-static wear_leveling_status_t wear_leveling_consolidate_force(void) {
+static wear_leveling_status_t wear_leveling_consolidate_first(uint8_t first) {
     wear_leveling_status_t status = WEAR_LEVELING_FAILED;
-    for (uint8_t copy = 0; copy < (WEAR_LEVELING_COPIES); ++copy) {
+    // Until every copy is rewritten, no append may follow: the next write retries the consolidation instead.
+    wear_leveling.consolidate_pending = true;
+    for (uint8_t i = 0; i < (WEAR_LEVELING_COPIES); ++i) {
+        uint8_t copy              = (uint8_t)((first + i) % (WEAR_LEVELING_COPIES));
+        wear_leveling.retry_first = copy; // if this copy fails, a retry rewrites it first
         wl_dprintf("Erasing backing store\n");
 
         // Erase the backing store. Expectation is that any un-written values that are read back after this call come back as zero.
@@ -334,14 +346,23 @@ static wear_leveling_status_t wear_leveling_consolidate_force(void) {
         status = wear_leveling_write_consolidated(copy);
         if (status == WEAR_LEVELING_FAILED) {
             wl_dprintf("Failed to write consolidated data\n");
-            break;
+            return WEAR_LEVELING_FAILED;
         }
     }
 
     // Next write of the log occurs after the consolidated values at the start of the backing store.
-    wear_leveling.write_address = (WEAR_LEVELING_LOGICAL_SIZE) + 8; // +8 due to the FNV1a_64 of the consolidated area
+    wear_leveling.write_address       = (WEAR_LEVELING_LOGICAL_SIZE) + 8; // +8 due to the FNV1a_64 of the consolidated area
+    wear_leveling.consolidate_pending = false;
 
     return status;
+}
+
+/**
+ * Consolidates in the usual order or, retrying one that failed, starting with the copy whose rewrite failed: the
+ * copies rewritten before it are complete.
+ */
+static wear_leveling_status_t wear_leveling_consolidate_force(void) {
+    return wear_leveling_consolidate_first(wear_leveling.consolidate_pending ? wear_leveling.retry_first : 0);
 }
 
 /**
@@ -360,21 +381,41 @@ static wear_leveling_status_t wear_leveling_consolidate_if_needed(void) {
 }
 
 /**
- * Appends the supplied fixed-width entry to the write log, optionally consolidating if the log is full.
+ * Appends one log entry of `count` backing store words to the write log of every copy, consolidating instead if the
+ * entry does not fit, and consolidating afterwards if the log is then full.
  *
- * @return true if consolidation occurred
+ * The first word holds the entry's type, and is programmed last: until it lands the slot reads as the end of the log,
+ * so power lost part way through an entry leaves no entry, never one completed with erased words that read as zeros.
+ * Playback treats words programmed after the end of the log as such a cut-off entry.
+ *
+ * A word that fails to program is never programmed again, which would leave the OR of two entries: the cache, which
+ * already holds the new value, is consolidated instead.
+ *
+ * @return the status; WEAR_LEVELING_CONSOLIDATED if consolidation occurred
  */
-static wear_leveling_status_t wear_leveling_append_raw(backing_store_int_t value) {
+static wear_leveling_status_t wear_leveling_append_entry(const backing_store_int_t *words, size_t count) {
+    if (wear_leveling.write_address + count * (BACKING_STORE_WRITE_SIZE) > (WEAR_LEVELING_BACKING_SIZE)) {
+        return wear_leveling_consolidate_force();
+    }
     for (uint8_t copy = 0; copy < (WEAR_LEVELING_COPIES); ++copy) {
-        bool ok = backing_store_write(copy_base(copy) + wear_leveling.write_address, value);
-        if (!ok) {
-            wl_dprintf("Failed to write to backing store\n");
-            return WEAR_LEVELING_FAILED;
+        for (size_t n = 1; n <= count; ++n) {
+            size_t i  = n % count; // words 1, 2, ..., then word 0
+            bool   ok = backing_store_write(copy_base(copy) + wear_leveling.write_address + i * (BACKING_STORE_WRITE_SIZE), words[i]);
+            if (!ok) {
+                wl_dprintf("Failed to write to backing store\n");
+                return wear_leveling_consolidate_first(copy); // the copies before it hold the entry: they go last
+            }
         }
     }
-    wear_leveling.write_address += (BACKING_STORE_WRITE_SIZE);
+    wear_leveling.write_address += count * (BACKING_STORE_WRITE_SIZE);
     return wear_leveling_consolidate_if_needed();
 }
+
+#if BACKING_STORE_WRITE_SIZE == 2
+static wear_leveling_status_t wear_leveling_append_raw(backing_store_int_t value) {
+    return wear_leveling_append_entry(&value, 1);
+}
+#endif
 
 /**
  * Handles writing multi_byte-encoded data to the backing store.
@@ -388,51 +429,15 @@ static wear_leveling_status_t wear_leveling_write_raw_multibyte(uint32_t address
         log.raw8[3 + i] = p[i];
     }
 
-    // Write to the backing store. See the multi-byte log format in the documentation header at the top of the file.
-    wear_leveling_status_t status;
+    // Write to the backing store as one entry. See the multi-byte log format in the documentation header at the top of
+    // the file.
 #if BACKING_STORE_WRITE_SIZE == 2
-    status = wear_leveling_append_raw(log.raw16[0]);
-    if (status != WEAR_LEVELING_SUCCESS) {
-        return status;
-    }
-
-    status = wear_leveling_append_raw(log.raw16[1]);
-    if (status != WEAR_LEVELING_SUCCESS) {
-        return status;
-    }
-
-    if (length > 1) {
-        status = wear_leveling_append_raw(log.raw16[2]);
-        if (status != WEAR_LEVELING_SUCCESS) {
-            return status;
-        }
-    }
-
-    if (length > 3) {
-        status = wear_leveling_append_raw(log.raw16[3]);
-        if (status != WEAR_LEVELING_SUCCESS) {
-            return status;
-        }
-    }
+    return wear_leveling_append_entry(log.raw16, length > 3 ? 4 : length > 1 ? 3 : 2);
 #elif BACKING_STORE_WRITE_SIZE == 4
-    status = wear_leveling_append_raw(log.raw32[0]);
-    if (status != WEAR_LEVELING_SUCCESS) {
-        return status;
-    }
-
-    if (length > 1) {
-        status = wear_leveling_append_raw(log.raw32[1]);
-        if (status != WEAR_LEVELING_SUCCESS) {
-            return status;
-        }
-    }
+    return wear_leveling_append_entry(log.raw32, length > 1 ? 2 : 1);
 #elif BACKING_STORE_WRITE_SIZE == 8
-    status = wear_leveling_append_raw(log.raw64);
-    if (status != WEAR_LEVELING_SUCCESS) {
-        return status;
-    }
+    return wear_leveling_append_entry(&log.raw64, 1);
 #endif
-    return status;
 }
 
 /**
@@ -515,6 +520,16 @@ static wear_leveling_status_t wear_leveling_playback_log(uint8_t copy) {
         if (value == 0) {
             wl_dprintf("Found empty slot, no more log entries\n");
             cancel_playback = true;
+            // An entry's first word is programmed last, so words programmed just after the end of the log are an entry
+            // cut off by power loss: the log must be rewritten before anything is appended over them.
+            for (uint32_t next = address + (BACKING_STORE_WRITE_SIZE); next < address + 8 && next < (WEAR_LEVELING_BACKING_SIZE); next += (BACKING_STORE_WRITE_SIZE)) {
+                backing_store_int_t rest;
+                if (!backing_store_read(copy_base(copy) + next, &rest) || rest != 0) {
+                    wl_dprintf("Found a cut-off log entry\n");
+                    status = WEAR_LEVELING_FAILED;
+                    break;
+                }
+            }
             break;
         }
 
@@ -551,7 +566,8 @@ static wear_leveling_status_t wear_leveling_playback_log(uint8_t copy) {
                 const uint32_t a = LOG_ENTRY_MULTIBYTE_GET_ADDRESS(log);
                 const uint8_t  l = LOG_ENTRY_MULTIBYTE_GET_LENGTH(log);
 
-                if (a + l > (WEAR_LEVELING_LOGICAL_SIZE)) {
+                // Writers produce lengths 1 to LOG_ENTRY_MULTIBYTE_MAX_BYTES only; more would copy past the entry.
+                if (l == 0 || l > LOG_ENTRY_MULTIBYTE_MAX_BYTES || a + l > (WEAR_LEVELING_LOGICAL_SIZE)) {
                     cancel_playback = true;
                     status          = WEAR_LEVELING_FAILED;
                     break;
@@ -704,7 +720,7 @@ static bool wear_leveling_copies_match(void) {
 #if (WEAR_LEVELING_COPIES) > 1
     backing_store_int_t first[64], other[64];
     for (uint32_t address = 0; address < (WEAR_LEVELING_BACKING_SIZE); address += sizeof(first)) {
-        size_t remaining = (WEAR_LEVELING_BACKING_SIZE) - address;
+        size_t remaining = (WEAR_LEVELING_BACKING_SIZE)-address;
         size_t count     = (remaining < sizeof(first) ? remaining : sizeof(first)) / sizeof(backing_store_int_t);
         if (!backing_store_read_bulk(address, first, count)) {
             return false;
@@ -724,8 +740,9 @@ static bool wear_leveling_copies_match(void) {
  */
 wear_leveling_status_t wear_leveling_init(void) {
     wl_dprintf("Init\n");
-    wear_leveling.data_lost    = false;
-    wear_leveling.write_failed = false;
+    wear_leveling.data_lost           = false;
+    wear_leveling.write_failed        = false;
+    wear_leveling.consolidate_pending = false;
 
     // Reset the cache
     wear_leveling_clear_cache();
@@ -756,8 +773,9 @@ wear_leveling_status_t wear_leveling_init(void) {
         wear_leveling_clear_cache();
     }
 
-    // Rewrite every copy from the cache: repairs a damaged or lagging copy, or drops an invalid log entry.
-    wear_leveling_status_t status = wear_leveling_consolidate_force();
+    // Rewrite every copy from the cache: repairs a damaged or lagging copy, or drops an invalid log entry. The copy the
+    // cache came from is rewritten last, so that power lost during the repair still leaves it intact.
+    wear_leveling_status_t status = wear_leveling_consolidate_first(copy < 0 ? 0 : (uint8_t)((copy + 1) % (WEAR_LEVELING_COPIES)));
     if (status == WEAR_LEVELING_FAILED) {
         wear_leveling.write_failed = true;
     }
@@ -802,6 +820,9 @@ wear_leveling_status_t wear_leveling_erase(void) {
     bool ret = backing_store_erase();
 #endif
     wear_leveling_clear_cache();
+    // A partly erased store can't take appends: the next write consolidates instead.
+    wear_leveling.consolidate_pending = !ret;
+    wear_leveling.retry_first         = 0;
 
     // Lock the backing store if we acquired the lock successfully
     if (lock_status == STATUS_SUCCESS) {
@@ -842,8 +863,9 @@ wear_leveling_status_t wear_leveling_write(const uint32_t address, const void *v
         return WEAR_LEVELING_FAILED;
     }
 
-    // Perform the actual write
-    wear_leveling_status_t status = wear_leveling_write_raw(address, value, length);
+    // Perform the actual write. After a consolidation that didn't finish, the log can't be appended to: retry the
+    // consolidation, which saves this write with the rest of the cache.
+    wear_leveling_status_t status = wear_leveling.consolidate_pending ? wear_leveling_consolidate_force() : wear_leveling_write_raw(address, value, length);
     switch (status) {
         case WEAR_LEVELING_CONSOLIDATED:
         case WEAR_LEVELING_FAILED:
@@ -868,6 +890,36 @@ wear_leveling_status_t wear_leveling_write(const uint32_t address, const void *v
     }
 
     // The cache already holds the new value, so reads return it either way; remember that it may not have been saved.
+    if (status == WEAR_LEVELING_FAILED) {
+        wear_leveling.write_failed = true;
+    }
+    return status;
+}
+
+/**
+ * Bytes left in the write log of each copy.
+ */
+uint32_t wear_leveling_log_free(void) {
+    if (wear_leveling.consolidate_pending || wear_leveling.write_address >= (WEAR_LEVELING_BACKING_SIZE)) {
+        return 0;
+    }
+    return (WEAR_LEVELING_BACKING_SIZE)-wear_leveling.write_address;
+}
+
+/**
+ * Consolidates now, emptying the write log, so that a later burst of writes doesn't have to.
+ */
+wear_leveling_status_t wear_leveling_consolidate(void) {
+    backing_store_lock_status_t lock_status = wear_leveling_unlock();
+    if (lock_status == STATUS_FAILURE) {
+        wear_leveling_lock();
+        wear_leveling.write_failed = true;
+        return WEAR_LEVELING_FAILED;
+    }
+    wear_leveling_status_t status = wear_leveling_consolidate_force();
+    if (lock_status == STATUS_SUCCESS && wear_leveling_lock() == STATUS_FAILURE) {
+        status = WEAR_LEVELING_FAILED;
+    }
     if (status == WEAR_LEVELING_FAILED) {
         wear_leveling.write_failed = true;
     }

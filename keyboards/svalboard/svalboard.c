@@ -1339,6 +1339,34 @@ void sval_dev_command(uint8_t *data, uint8_t length) {
 }
 #endif
 
+#ifdef EEPROM_WEAR_LEVELING
+#    include "wear_leveling.h"
+#    include "storage_idle.h"
+// Early settings consolidation (storage_idle.h): after this long with no raw
+// HID packet and no input, once the log is past half full.
+#    ifndef SVAL_STORAGE_IDLE_MS
+#        define SVAL_STORAGE_IDLE_MS 10000
+#    endif
+#    ifndef SVAL_STORAGE_LOG_LOW
+#        define SVAL_STORAGE_LOG_LOW (((WEAR_LEVELING_BACKING_SIZE) - (WEAR_LEVELING_LOGICAL_SIZE) - 8) / 2)
+#    endif
+static void sval_storage_idle_task(void) {
+    static sval_storage_idle_t st;
+    // Not while a key is held (its release would wait out the pause, and the
+    // host would repeat it), nor while the updater owns the flash.
+    bool busy = false;
+    for (uint8_t r = 0; r < MATRIX_ROWS; r++) {
+        if (matrix_get_row(r)) busy = true;
+    }
+#    ifdef SVAL_UPDATER
+    busy = busy || updater_active();
+#    endif
+    if (sval_storage_idle_due(&st, wear_leveling_log_free(), SVAL_STORAGE_LOG_LOW, sval_raw_hid_idle_ms(), last_input_activity_elapsed(), SVAL_STORAGE_IDLE_MS, busy)) {
+        wear_leveling_consolidate();
+    }
+}
+#endif
+
 void housekeeping_task_kb(void) {
 #ifdef SVAL_PERF_STATS
     sval_perf_loop();
@@ -1387,6 +1415,9 @@ void housekeeping_task_kb(void) {
 #endif
 
     if (is_keyboard_master()) {
+#ifdef EEPROM_WEAR_LEVELING
+        sval_storage_idle_task();
+#endif
 #ifdef SVAL_UPDATER
         if (!updater_active())
 #endif
