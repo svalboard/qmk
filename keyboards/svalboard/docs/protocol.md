@@ -345,6 +345,46 @@ STATS (`op 1`), over the newest bins:
 
 - While on, each key event prints one line, `KL: kc: 0x<keycode> (<name>), col: <c>, row: <r>, pressed: <0|1>, time: <ms>, int: <0|1>, count: <n>`, as do the firmware's other debug lines.
 
+## Status report
+
+`STATUS_REPORT` (`0x3F`) returns the report the Output Status key (`SV_OUTPUT_STATUS`) types, as data, so a host app can show it whatever keyboard layout the computer uses. It is a snapshot of what the board runs now, read when asked: settings changed on the board (a DPI key, Scroll Mode) show at once.
+
+- Discovery: GET_INFO byte 22 (the fifth feature byte), bit 1 (`sval_flag5_status_report`, `0x02`). Bit 0 is app rules (`sval_flag5_app_rules`). Older firmware leaves byte 22 zero, and answers `0x3F` with the command byte `0xFF` (unknown command).
+- Request: `DF 3F <page> <arg>`. Response: `DF 3F <page> <format> ...`. `format` is `1`; `0` means an unknown page.
+
+**Page 0, the state** (offsets from the page byte, 40 bytes; little-endian):
+
+| off | size | field |
+|---|---|---|
+| 0 | 1 | page, `0` |
+| 1 | 1 | format, `1` |
+| 2 | 1 | bit 0 left Scroll Mode, bit 1 right Scroll Mode, bit 2 the Axis Scroll Lock setting, bit 3 Natural Scroll, bit 4 Auto Mouse on, bit 5 the left pointer turns Auto Mouse on, bit 6 the right one does, bit 7 the board handles the computer as a Mac (no axis lock, Mac scroll units) |
+| 3 | 1 | bit 0 hardware revision B (flipfet; else A), bit 1 the optical keys are debounced now, bit 2 settings were reset because storage could not be read, bit 3 a change could not be saved since this boot, bit 4 Auto Mouse has no timeout |
+| 4 | 1 | the computer's OS, as detected (QMK `os_variant_t`): `0` not known, `1` Linux, `2` Windows, `3` macOS, `4` iOS |
+| 5 | 2 | left CPI |
+| 7 | 2 | right CPI |
+| 9 | 2 | Auto Mouse timeout, ms (`0` with byte 3 bit 4) |
+| 11 | 3 | Boost 2x, 3x and 5x keys held now |
+| 14 | 1 | bit 0 Boost 2x toggled on, bit 1 3x, bit 2 5x |
+| 15 | 1 | the Boost multiplier in force (`1`: off) |
+| 16 | 2 | scan wait before reading, us |
+| 18 | 2 | scan wait after reading, us |
+| 20 | 2 | scan period, us (`0`: unpaced) |
+| 22 | 2 | light idle period, ms |
+| 24 | 2 | light idle after, ms (`0`: never) |
+| 26 | 2 | deep idle period, ms |
+| 28 | 2 | deep idle after, s (`0`: never) |
+| 30 | 4 | measured frame, us |
+| 34 | 2 | measured LED on time, us |
+| 36 | 1 | idle stage now: `0` active, `1` light idle, `2` deep idle (a host reading keeps the board active) |
+| 37 | 1 | idle power settings: bit 0 pointer rest, bit 1 RGB dim, bit 2 CPU sleep, bit 3 low clock in deep idle, bit 4 long naps |
+| 38 | 1 | the deep idle clock, MHz |
+| 39 | 1 | the clock now, MHz |
+
+**Page 1, the build:** `QMK_KEYBOARD:QMK_KEYMAP @ QMK_VERSION`, from byte `<arg>`: `DF 3F 01 <format> <total> <offset> <n> <n bytes>`. A host reads from offset 0, adding `n`, until it has `total` bytes; `n` is `0` past the end.
+
+The typed report has the same content, in standard units: ms, s, MHz and CPI, with "us" for microseconds because `send_string()` can't type the micro sign. Its first line names it "Svalboard status report", as Keybard does. `send_string()` types US key positions, so on other keyboard layouts some characters come out as others; the typed report is the fallback, and this command is the way to read the report on any layout.
+
 ## Debounce mode
 
 The optical keys have a saved debounce mode; Keybard's Scan Lab switches it. The thumb Double Down, the one mechanical switch, is debounced in both modes: 5 ms per key, deferred (a change is reported once it has held for 5 ms).

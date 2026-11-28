@@ -31,6 +31,7 @@
 #include "build_reset.h"
 #include "app_rules_kb.h"
 #include "link_light.h"
+#include "status_report.h"
 #include "usb_wake.h"
 #include "nvm_via.h"
 #ifdef SVAL_EITHER_HAND
@@ -585,50 +586,69 @@ void read_eeprom_kb(void) {
     sval_active_layer = 0;
 }
 
-static const char YES[] = "yes";
-static const char NO[]  = "no";
-
-const char *yes_or_no(int flag) {
-    if (flag) {
-        return YES;
-    } else {
-        return NO;
-    }
-}
-
 extern bool is_mac;
 
-// Boost state lives in keymaps/keymap_support.c; surfaced here for output_keyboard_info.
+// Boost state lives in keymaps/keymap_support.c; surfaced here for the status report.
 #include "axis_scale.h"
 extern uint8_t      boost_hold_2, boost_hold_3, boost_hold_5;
 extern bool         boost_toggle_2, boost_toggle_3, boost_toggle_5;
 extern axis_scale_t boost_x;
 
-void output_keyboard_info(void) {
-    char output_buffer[256];
+// The status report (status_report.h): what SV_OUTPUT_STATUS types and
+// STATUS_REPORT (Sval 0x3F) returns, gathered in one place.
+static const char status_build[] = QMK_KEYBOARD ":" QMK_KEYMAP " @ " QMK_VERSION;
 
-    sprintf(output_buffer, "%s:%s @ %s\n", QMK_KEYBOARD, QMK_KEYMAP, QMK_VERSION);
-    send_string(output_buffer);
-    if (sval_storage_was_reset()) send_string("Settings were reset: storage could not be read. Reload your layout file.\n");
-    if (sval_storage_write_failed()) send_string("Settings can't be saved right now: changes will be lost on restart. Unplug and reconnect, then check again.\n");
-    sprintf(output_buffer, "Left Ptr: Scroll %s, cpi: %d, Right Ptr: Scroll %s, cpi: %d\n", yes_or_no(global_saved_values.left_scroll), dpi_choices[global_saved_values.left_dpi_index], yes_or_no(global_saved_values.right_scroll), dpi_choices[global_saved_values.right_dpi_index]);
-    send_string(output_buffer);
-    sprintf(output_buffer, "Axis Scroll Lock: %s (is Mac: %d), Natural Scroll: %s, Mouse Layer: %s (left: %s, right: %s), Mouse Layer Timeout: %ld ms (-1 = none)\n", yes_or_no(global_saved_values.axis_scroll_lock), is_mac, yes_or_no(global_saved_values.natural_scroll), yes_or_no(global_saved_values.auto_mouse), yes_or_no(global_saved_values.left_automouse), yes_or_no(global_saved_values.right_automouse), (long)sval_automouse_timeout(global_saved_values.mh_timer_index, global_saved_values.automouse_10ms));
-    send_string(output_buffer);
-    sprintf(output_buffer, "BOOST: hold[2,3,5]=%d,%d,%d  tg[2,3,5]=%d,%d,%d  mult=%d\n", boost_hold_2, boost_hold_3, boost_hold_5, boost_toggle_2, boost_toggle_3, boost_toggle_5, boost_x.mult);
-    send_string(output_buffer);
-    uint16_t pre, post;
-    sval_scan_timing(&pre, &post);
-    sprintf(output_buffer, "HW rev: %s, Scan timing: pre %d us, post %d us, Optical debounce: %s\n", sval_hw_rev_is_flipfet() ? "B (flipfet)" : "A", pre, post, sval_optical_debounce_on() ? "on" : "off");
-    send_string(output_buffer);
-    uint32_t frame_us;
-    uint16_t led_us;
-    uint8_t  stage;
-    sval_scan_stats(&frame_us, &led_us, &stage);
-    sprintf(output_buffer, "Scan period: %d us; light idle %d ms after %d ms; deep idle %d ms after %d s; measured frame %lu us, LED on %d us, stage %d\n", global_saved_values.scan_period_us, global_saved_values.scan_idle_period_ms, global_saved_values.scan_idle_after_ms, global_saved_values.scan_deep_period_ms, global_saved_values.scan_deep_after_s, (unsigned long)frame_us, led_us, stage);
-    send_string(output_buffer);
-    sprintf(output_buffer, "Idle power: pointer rest %s, RGB dim %s, CPU sleep %s, low clock in deep idle %s (%d MHz), long naps %s; clock now %d MHz\n", (global_saved_values.idle_flags & SVAL_IDLE_POINTER_REST) ? "on" : "off", (global_saved_values.idle_flags & SVAL_IDLE_RGB_DIM) ? "on" : "off", (global_saved_values.idle_flags & SVAL_IDLE_CPU_SLEEP) ? "on" : "off", (global_saved_values.idle_flags & SVAL_IDLE_LOW_CLOCK) ? "on" : "off", sval_deep_clock_mhz(), (global_saved_values.idle_flags & SVAL_IDLE_LONG_NAP) ? "on" : "off", sval_clock_mhz());
-    send_string(output_buffer);
+static void sval_status_collect(sval_status_t *st) {
+    memset(st, 0, sizeof *st);
+    const saved_values_t *v = &global_saved_values;
+    st->flags_a = (v->left_scroll ? SVAL_STATUS_A_LEFT_SCROLL : 0) | (v->right_scroll ? SVAL_STATUS_A_RIGHT_SCROLL : 0) | (v->axis_scroll_lock ? SVAL_STATUS_A_AXIS_LOCK : 0) | (v->natural_scroll ? SVAL_STATUS_A_NATURAL_SCROLL : 0) | (v->auto_mouse ? SVAL_STATUS_A_AUTO_MOUSE : 0) | (v->left_automouse ? SVAL_STATUS_A_LEFT_AUTO_MOUSE : 0) | (v->right_automouse ? SVAL_STATUS_A_RIGHT_AUTO_MOUSE : 0) | (is_mac ? SVAL_STATUS_A_MAC : 0);
+    st->flags_b = (sval_hw_rev_is_flipfet() ? SVAL_STATUS_B_HW_REV_B : 0) | (sval_optical_debounce_on() ? SVAL_STATUS_B_OPTICAL_DEBOUNCE : 0) | (sval_storage_was_reset() ? SVAL_STATUS_B_STORAGE_RESET : 0) | (sval_storage_write_failed() ? SVAL_STATUS_B_WRITE_FAILED : 0);
+#ifdef OS_DETECTION_ENABLE
+    st->host_os = (uint8_t)detected_host_os();
+#endif
+    st->left_cpi      = dpi_choices[v->left_dpi_index];
+    st->right_cpi     = dpi_choices[v->right_dpi_index];
+    st->am_timeout_ms = sval_automouse_timeout(v->mh_timer_index, v->automouse_10ms);
+    st->boost_hold[0] = boost_hold_2;
+    st->boost_hold[1] = boost_hold_3;
+    st->boost_hold[2] = boost_hold_5;
+    st->boost_toggle  = (boost_toggle_2 ? 1 : 0) | (boost_toggle_3 ? 2 : 0) | (boost_toggle_5 ? 4 : 0);
+    st->boost_mult    = boost_x.mult;
+    sval_scan_timing(&st->prewait_us, &st->postwait_us);
+    st->period_us      = v->scan_period_us;
+    st->idle_period_ms = v->scan_idle_period_ms;
+    st->idle_after_ms  = v->scan_idle_after_ms;
+    st->deep_period_ms = v->scan_deep_period_ms;
+    st->deep_after_s   = v->scan_deep_after_s;
+    sval_scan_stats(&st->frame_us, &st->led_us, &st->stage);
+    st->idle_flags = v->idle_flags;
+    st->deep_mhz   = sval_deep_clock_mhz();
+    st->clock_mhz  = sval_clock_mhz();
+}
+
+// SV_OUTPUT_STATUS: types the report, one line at a time (status_report.h).
+void output_keyboard_info(void) {
+    sval_status_t st;
+    sval_status_collect(&st);
+    char line[192];
+    for (uint8_t i = 0; sval_status_text_line(&st, status_build, i, line, sizeof line); i++) {
+        if (line[0]) send_string(line);
+    }
+}
+
+// STATUS_REPORT (Sval 0x3F): data is [page] [arg] in; the page out
+// (status_report.h, docs/protocol.md "Status report"). Unknown page: format 0.
+void sval_status_report_kb(uint8_t *data, uint8_t length) {
+    const uint8_t page = data[0], arg = length > 1 ? data[1] : 0;
+    if (page == SVAL_STATUS_PAGE_STATE) {
+        sval_status_t st;
+        sval_status_collect(&st);
+        if (sval_status_pack(&st, data, length)) return;
+    } else if (page == SVAL_STATUS_PAGE_BUILD) {
+        if (sval_status_pack_build(status_build, arg, data, length)) return;
+    }
+    memset(data, 0, length);
+    data[0] = page;
 }
 
 // SV_TURBO_SCAN: both scan waits to the next faster preset (sval_turbo_us,
@@ -744,9 +764,10 @@ uint8_t sval_get_feature_flags4_kb(void) {
     return flags;
 }
 
-// GET_INFO byte 22 (the fifth feature byte): app rules (0x40, 0x41; app_rules_kb.c).
+// GET_INFO byte 22 (the fifth feature byte): app rules (0x40, 0x41;
+// app_rules_kb.c) and the status report (0x3F).
 uint8_t sval_get_feature_flags5_kb(void) {
-    return sval_flag5_app_rules;
+    return sval_flag5_app_rules | sval_flag5_status_report;
 }
 
 void sval_app_foreground_kb(uint8_t *data, uint8_t length) {

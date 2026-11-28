@@ -915,6 +915,13 @@ bool sval_handle_command(uint8_t *data, uint8_t length) {
             break;
         }
 
+        case sval_cmd_status_report: {
+            // Request:  [0xDF] [0x3F] [page] [arg]
+            // Response: [0xDF] [0x3F] [page] [format] [...] (keyboards/svalboard/docs/protocol.md, "Status report")
+            if (length > 3) sval_status_report_kb(&data[2], length - 2);
+            break;
+        }
+
         case sval_cmd_app_foreground: {
             // Request:  [0xDF] [0x40] [op] ...
             // Response: [0xDF] [0x40] [op] [status] ... (keyboards/svalboard/docs/protocol.md, "App rules")
@@ -1276,11 +1283,16 @@ __attribute__((weak)) uint8_t sval_get_feature_flags4_kb(void) {
     return 0;
 }
 
-// Without the keyboard's handler: status 0xFF after the echoed op.
 __attribute__((weak)) uint8_t sval_get_feature_flags5_kb(void) {
     return 0;
 }
 
+// Without the keyboard's handler: format 0 after the echoed page.
+__attribute__((weak)) void sval_status_report_kb(uint8_t *data, uint8_t length) {
+    data[1] = 0;
+}
+
+// Without the keyboard's handler: status 0xFF after the echoed op.
 __attribute__((weak)) void sval_app_foreground_kb(uint8_t *data, uint8_t length) {
     data[1] = 0xFF;
 }
