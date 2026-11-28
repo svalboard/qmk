@@ -4,6 +4,7 @@
 #include "gpio.h"
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
+#include "hardware/structs/timer.h"
 #include "ps2.h"
 #include "debug.h"
 
@@ -34,6 +35,7 @@
 #endif
 
 static inline void pio_serve_interrupt(void);
+static bool        ps2_frame_is_valid(uint32_t frame);
 
 #if defined(PS2_PIO_USE_PIO1)
 static const PIO pio = pio1;
@@ -90,8 +92,17 @@ static const struct pio_program ps2_program = {
     .origin       = -1,
 };
 
-static int                state_machine = -1;
-static thread_reference_t tx_thread     = NULL;
+static int                state_machine  = -1;
+static uint               program_offset = 0;
+static thread_reference_t tx_thread      = NULL;
+
+// Set when received bits or bytes were lost, so neither the bit framing nor the
+// grouping of bytes into packets can be trusted any more: the queue was full and
+// a frame was dropped, the state machine stalled on a full RX FIFO (interrupts
+// were off for longer than four frames, for example during a flash erase, while
+// the device kept clocking), or a frame had a bad start, parity or stop bit.
+// pbuf_has_data() then resyncs the receiver at the next idle gap on the line.
+static volatile bool rx_resync_needed = false;
 
 #define BUFFER_SIZE 32
 static input_buffers_queue_t               pio_rx_queue;
@@ -104,13 +115,22 @@ void pio_serve_interrupt(void) {
 
     if (irqs & (PIO_IRQ0_INTF_SM0_RXNEMPTY_BITS << state_machine)) {
         osalSysLockFromISR();
+        // Always take the frame out of the FIFO: RXNEMPTY is level-triggered, so
+        // leaving it there would re-enter this handler at once, forever, and no
+        // thread would ever run to drain the queue.
+        uint32_t  frame        = pio_sm_get(pio, state_machine);
         uint32_t* frame_buffer = (uint32_t*)ibqGetEmptyBufferI(&pio_rx_queue);
         if (frame_buffer == NULL) {
-            osalSysUnlockFromISR();
-            return;
+            rx_resync_needed = true; // queue full: the frame is dropped
+        } else {
+            *frame_buffer = frame;
+            ibqPostFullBufferI(&pio_rx_queue, sizeof(uint32_t));
         }
-        *frame_buffer = pio_sm_get(pio, state_machine);
-        ibqPostFullBufferI(&pio_rx_queue, sizeof(uint32_t));
+        const uint32_t rx_stall = 1u << (PIO_FDEBUG_RXSTALL_LSB + state_machine);
+        if ((pio->fdebug & rx_stall) || !ps2_frame_is_valid(frame)) {
+            pio->fdebug      = rx_stall; // write 1 to clear
+            rx_resync_needed = true;
+        }
         osalSysUnlockFromISR();
     }
 
@@ -135,7 +155,8 @@ void ps2_host_init(void) {
         return;
     }
 
-    uint offset = pio_add_program(pio, &ps2_program);
+    uint offset    = pio_add_program(pio, &ps2_program);
+    program_offset = offset;
 
     pio_sm_config c = pio_get_default_sm_config();
     sm_config_set_wrap(&c, offset + PS2_WRAP_TARGET, offset + PS2_WRAP);
@@ -211,6 +232,13 @@ uint8_t ps2_host_send(uint8_t data) {
     return ps2_host_recv_response();
 }
 
+// The start (0), parity and stop (1) bits of a received frame, as
+// ps2_get_data_from_frame() checks them, without touching ps2_error.
+static bool ps2_frame_is_valid(uint32_t frame) {
+    uint8_t data = (frame >> 22) & 0xFF;
+    return !(frame & (1u << 21)) && ((frame >> 30) & 1) == (uint32_t)bit_parity(data) && (frame >> 31);
+}
+
 static uint8_t ps2_get_data_from_frame(uint32_t frame) {
     uint8_t  data       = (frame >> 22) & 0xFF;
     uint32_t start_bit  = (frame & 0b00000000001000000000000000000000) ? 1 : 0;
@@ -250,7 +278,61 @@ uint8_t ps2_host_recv_response(void) {
 
 #ifdef BUFFERED_MODE_ENABLE
 
+// How long the clock must stay high before the line counts as idle. A bit's
+// clock-high time is at most 50 us, and the bytes of a packet follow each other
+// closely, so 2 ms of high clock falls between packets.
+#    ifndef PS2_RESYNC_IDLE_US
+#        define PS2_RESYNC_IDLE_US 2000
+#    endif
+// How long one resync attempt waits for that idle gap before giving up until the
+// next poll. A streaming device leaves one between every two packets.
+#    ifndef PS2_RESYNC_TIMEOUT_US
+#        define PS2_RESYNC_TIMEOUT_US 30000
+#    endif
+
+// Waits for an idle gap, then restarts the state machine at the top of its
+// program, so it counts the next 11 clock edges from a start bit, and drops
+// every frame received so far, so the next byte read starts a packet. Returns
+// false, leaving rx_resync_needed set, if the line was never idle long enough.
+static bool ps2_rx_resync(void) {
+    if (state_machine < 0) {
+        return false;
+    }
+    uint32_t start = timer_hw->timerawl, high_since = start;
+    for (;;) {
+        uint32_t now = timer_hw->timerawl;
+        if (!gpio_get(PS2_CLOCK_PIN)) { // pico-sdk: the pad input, whatever drives the pin
+            high_since = now;
+        } else if (now - high_since >= PS2_RESYNC_IDLE_US) {
+            break;
+        }
+        if (now - start >= PS2_RESYNC_TIMEOUT_US) {
+            return false;
+        }
+    }
+
+    osalSysLock();
+    pio_sm_set_enabled(pio, state_machine, false);
+    pio_sm_clear_fifos(pio, state_machine);
+    pio_sm_restart(pio, state_machine);
+    pio_sm_exec(pio, state_machine, pio_encode_jmp(program_offset));
+    pio->fdebug = 1u << (PIO_FDEBUG_RXSTALL_LSB + state_machine);
+    ibqResetI(&pio_rx_queue);
+    rx_resync_needed = false;
+    pio_sm_set_enabled(pio, state_machine, true);
+    osalOsRescheduleS();
+    osalSysUnlock();
+    return true;
+}
+
 bool pbuf_has_data(void) {
+    if (rx_resync_needed) {
+        // Nothing queued before the resync can be trusted; report no data either
+        // way, and try again on the next poll if the line never went idle.
+        ps2_rx_resync();
+        return false;
+    }
+
     osalSysLock();
     bool has_data = !ibqIsEmptyI(&pio_rx_queue);
     osalSysUnlock();
