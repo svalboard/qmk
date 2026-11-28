@@ -58,3 +58,6 @@ uint8_t updater_split_light(void);
 // The half without USB, from the ping's callback (the split SlaveThread):
 // has_light false for a ping without the byte.
 void updater_split_light_seen(bool has_light, uint8_t light);
+// The half without USB: a ping from the half with USB came since this half
+// booted (the split cable is in the other half). update_pair.c.
+bool updater_split_pinged(void);

@@ -197,7 +197,10 @@ On every boot of a half with the updater (`update_pair_task`, from
 `updater_task`):
 
 1. With no record (the magic), nothing happens: one 4-byte read.
-2. The half without USB erases the record (the cable moved).
+2. The half without USB erases the record once the half with USB pings it
+   (the cable moved). With no ping it keeps the record, with no light: USB
+   that took longer than `SPLIT_USB_TIMEOUT` (2 s) to come up made this half
+   boot without it, and the split watchdog restarts it with USB.
 3. The half with USB checks the record and its manifest against its own
    floors (security epoch, storage format, D19); a refusal erases it and shows
    the red light. It counts the boot in the state page; a record already
@@ -327,15 +330,16 @@ A record relays only the image that is running, by SHA-512 over flash
 does not match. A record kept because the other half did not answer is
 bound to that half: its fingerprint at the first answer must stay the same,
 and a later boot never sends an older release to a half it meets for the
-first time. A boot of this half without USB erases it, and three boots of the
-half with USB use it up.
+first time. A boot of this half without USB erases it once the half with USB
+pings it, and three boots of the half with USB use it up.
 
 Tested (host): a byte of the image changed, its last sector left from another
 image, its last byte changed: never relayed, erased. The other half flashed
 by hand to a newer release between boots: erased, never relayed. A later
 boot meeting a newer other half first: erased. The first boot sending an
-older release (the customer's choice): installed. A boot without USB:
-erased. On the test boards: a copy interrupted after the record sector and
+older release (the customer's choice): installed. A boot without USB, then
+a ping from the half with USB: erased. A boot without USB and no ping (USB
+slow to come up), then a boot with USB: installed. On the test boards: a copy interrupted after the record sector and
 100 image blocks, then a whole plain UF2 of another image: no relay.
 
 ### A damaged or interrupted copy

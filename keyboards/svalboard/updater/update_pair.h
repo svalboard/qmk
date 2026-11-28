@@ -86,6 +86,7 @@ typedef enum {
     PAIR_BOOT_RELAY,    // the relay (update_split.c) runs
     PAIR_BOOT_RETRY,    // a link failure: a pause before the next try in this boot
     PAIR_BOOT_ERROR,    // the red light (refused, damaged, tried too often), for SVAL_UPDATE_PAIR_ERROR_MS, then IDLE
+    PAIR_BOOT_SUB,      // booted without USB: kept until the half with USB pings this one, then erased (ABANDONED)
 } pair_boot_phase_t;
 
 // How the last record ended (the host tests read it).
@@ -94,7 +95,7 @@ typedef enum {
     PAIR_OUT_DONE,      // installed on the other half: erased
     PAIR_OUT_REFUSED,   // the record or the other half refused the image: erased, red light
     PAIR_OUT_STALE,     // not the image this half runs, or the other half changed since: erased, no light
-    PAIR_OUT_ABANDONED, // this half booted without USB: erased
+    PAIR_OUT_ABANDONED, // this half booted without USB and the half with USB pinged it: erased
     PAIR_OUT_EXHAUSTED, // UPDATE_PAIR_BOOT_TRIES boots tried: erased, red light
     PAIR_OUT_KEPT,      // no other half that can take it this boot: kept for the next, no light
 } pair_boot_outcome_t;

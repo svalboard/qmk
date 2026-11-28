@@ -22,12 +22,16 @@
 //     different one erases the record (the other half was flashed meanwhile);
 //   - a later boot that meets the other half for the first time does not send
 //     it an older release than it runs (fw version);
-//   - a boot of this half without USB erases it (the cable moved).
+//   - a boot of this half without USB erases it once the half with USB pings
+//     this one (the cable moved). With no ping, it is kept: USB that took
+//     longer than SPLIT_USB_TIMEOUT to come up made this half boot without
+//     it, and the split watchdog restarts it with USB.
 
 #include <string.h>
 #include "update_pair.h"
 #include "update_flash.h"
 #include "update_split.h"
+#include "updater.h" // updater_split_pinged
 #include "updater_port.h"
 #include "sha512.h" // vendor/: SHA-512 from Monocypher
 
@@ -146,7 +150,11 @@ static void start(void) {
         return;
     }
     if (!updater_port_is_master()) {
-        finish(PAIR_OUT_ABANDONED, UPDATE_OK, true, false); // booted without USB: the cable moved
+        // Booted without USB: erased once the half with USB pings this one
+        // (sub_step). Until then it stays, with no light.
+        pb.outcome = PAIR_OUT_KEPT;
+        pb.error   = UPDATE_UNAVAILABLE;
+        pb.phase   = PAIR_BOOT_SUB;
         return;
     }
     update_device_t dev;
@@ -313,6 +321,10 @@ void update_pair_task(void) {
             break;
         case PAIR_BOOT_ERROR:
             if (due(pb.until_ms)) pb.phase = PAIR_BOOT_IDLE;
+            break;
+        case PAIR_BOOT_SUB:
+            // The half with USB is on the other side of the cable: the cable moved.
+            if (updater_split_pinged()) finish(PAIR_OUT_ABANDONED, UPDATE_OK, true, false);
             break;
         default:
             break;

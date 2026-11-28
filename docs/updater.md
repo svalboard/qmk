@@ -816,8 +816,11 @@ blank board: the same reset, then every key on every layer `KC_NO`.
 - At the next boot, pre-init finds a cleared record with the whole mark. The
   reset runs as for D39; then `build_reset_post_init()` writes `KC_NO` over the
   whole dynamic keymap (after `sval_init()`, which ran in the module post-init),
-  and only then writes the record, which erases the sector and the mark. A
-  power cut in between leaves the mark, and the next boot blanks again.
+  and only then writes the record. That record goes into the next free slot of
+  the sector (`build_reset.h`), with no erase: the mark first, then the record,
+  then both marks zeroed. A power cut at any point leaves a blank request in
+  force, and the next boot blanks again. Only when the slots run out does the
+  record erase the sector first, as for every other record.
 - The other half gets the mode as a fifth payload byte of `KEYBOARD_UPDATE`
   `0x07`. A protocol 4 half from before D44 refuses that payload (INVALID), so
   the request is UNAVAILABLE and nothing changes on either half.
