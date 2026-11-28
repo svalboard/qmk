@@ -104,7 +104,10 @@ the no-chord bit from the half with USB, since that's the half that would skip t
   wrapped. Keybard always sends scope 1. `mode` (D44): 0 the firmware's defaults (a missing
   byte reads as 0), 1 a blank board.
 - Allowed only in IDLE with no held approval (else BUSY). A bad magic, scope or mode gives INVALID.
-  With scope 1 and no answer from the other half, it gives UNAVAILABLE and nothing changes.
+  With scope 1 and the other half absent or refusing, it gives UNAVAILABLE and nothing changes.
+  If the other half was present but its answers were lost, it gives TIMEOUT: the other half
+  may have taken the request and will reset, and this half changed nothing. A host that
+  gets TIMEOUT sends SETTINGS_RESET again once the board is back.
 - Reply: `[status][done u8: bit0 this half, bit1 the other half]`. On OK, each half has
   invalidated its build reset record (D39). The other half is told over the split link first.
   Within 500 ms of the reply, both halves reset. On the next boot of each half, the D39 path
@@ -230,9 +233,11 @@ Additions that keep within the contract, which Keybard may rely on:
 - **SETTINGS_RESET statuses**: OK; INVALID (bad magic, scope above 1, mode above
   1, the other hand, or unwrapped); BUSY (a session, a held approval, a relay, a reset
   already pending, or the other half in a session of its own, or its DMA busy
-  for six tries in a row); UNAVAILABLE (no presence MATCH or VERSION, no answer
+  for six tries in a row); UNAVAILABLE (no presence MATCH or VERSION, a refusal
   from the other half, or a half on protocol 2 or 3 there, which does not know
-  the split op; nothing changed); FLASH_ERR (a record could not be written: the
+  the split op; nothing changed); TIMEOUT (no answer, or only damaged ones, from
+  the other half: it may have taken the request and reset; this half changed
+  nothing); FLASH_ERR (a record could not be written: the
   done mask says which half already took it). The done mask is `0x03` for both
   halves, `0x01` for scope 0.
 - **The other half resets 300 ms after it takes SETTINGS_RESET**, this half

@@ -29,7 +29,7 @@ next free ID, never renumber one.
 | P4-16 | REBIND while the other half commits moves the session and the approval; other ops are still BUSY | `test_p4_held_rules` |
 | P4-17 | SETTINGS_RESET scope 1 in IDLE: the other half first, then this one (done `0x03`); a second one is BUSY; both halves reset within 500 ms | `test_p4_settings_reset`, hardware |
 | P4-18 | SETTINGS_RESET is BUSY in a session, with an approval held, and while a relay runs; nothing changes | `test_p4_settings_reset` |
-| P4-19 | SETTINGS_RESET with the other half silent (no presence, or no answer): UNAVAILABLE, nothing changed, no reset | `test_p4_settings_reset`, hardware |
+| P4-19 | SETTINGS_RESET with no presence: UNAVAILABLE, nothing changed, no reset. With presence but no answer (the link dead, or the other half took it and its answers were lost): TIMEOUT, nothing changed on this half; a lost first answer alone is still OK | `test_p4_settings_reset`, hardware |
 | P4-20 | SETTINGS_RESET INVALID: a bad magic, scope 2, the other hand, unwrapped | `test_p4_settings_reset` |
 | P4-21 | SETTINGS_RESET scope 0: this half only (done `0x01`) | `test_p4_settings_reset`, hardware |
 | P4-22 | SETTINGS_RESET with the other half on protocol 3 (the split op unknown there): UNAVAILABLE, nothing changed. Also: a busy DMA channel there is retried; a record that cannot be written gives FLASH_ERR with the done mask of the halves that took it | `test_p4_settings_reset` |

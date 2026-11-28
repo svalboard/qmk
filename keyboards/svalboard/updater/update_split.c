@@ -1435,6 +1435,12 @@ update_status_t update_split_other_info(uint8_t payload[USPLIT_INFO_PAYLOAD], ui
 #define SETTINGS_RESET_SILENT_TRIES 2
 #define SETTINGS_RESET_DMA_TRIES 6
 
+static bool all_zero(const uint8_t *buf, uint8_t len) {
+    for (uint8_t i = 0; i < len; i++)
+        if (buf[i]) return false;
+    return true;
+}
+
 update_status_t update_split_other_settings_reset(uint8_t mode) {
     if (update_relay_busy()) return UPDATE_BUSY;
     const uint8_t        magic[5] = {'R', 'S', 'E', 'T', mode};
@@ -1444,10 +1450,16 @@ update_status_t update_split_other_settings_reset(uint8_t mode) {
     uint8_t              want = usplit_rsp_len(USPLIT_OP_SETTINGS_RESET);
     uint8_t              len  = usplit_req_build(req, USPLIT_OP_SETTINGS_RESET, ++master_seq, magic, mlen);
     int                  silent = 0, dma = 0, invalids = 0;
+    // The other half takes the request before it answers (it invalidates its
+    // record and resets): with no answer, or a damaged one, it may have taken
+    // it. Only an empty answer (an op unknown there) says it did not.
+    bool maybe_taken = false;
     while (silent < SETTINGS_RESET_SILENT_TRIES && dma < SETTINGS_RESET_DMA_TRIES) {
         memset(buf, 0, sizeof(buf));
-        if (!update_split_port_rpc(req, len, buf, want) || usplit_rsp_parse(buf, want, USPLIT_OP_SETTINGS_RESET, req[1], &r) != UPDATE_OK) {
+        bool answered = update_split_port_rpc(req, len, buf, want);
+        if (!answered || usplit_rsp_parse(buf, want, USPLIT_OP_SETTINGS_RESET, req[1], &r) != UPDATE_OK) {
             silent++; // no answer, or a damaged one: the same frame again (a repeat is not run twice)
+            if (!answered || !all_zero(buf, want)) maybe_taken = true;
             continue;
         }
         if (r.status == UPDATE_BUSY && r.state == UPDATE_STATE_IDLE) {
@@ -1461,7 +1473,10 @@ update_status_t update_split_other_settings_reset(uint8_t mode) {
         if (r.status == UPDATE_OK || r.status == UPDATE_BUSY || r.status == UPDATE_FLASH_ERR) return (update_status_t)r.status;
         return UPDATE_UNAVAILABLE; // refused: nothing changed there
     }
-    return dma >= SETTINGS_RESET_DMA_TRIES ? UPDATE_BUSY : UPDATE_UNAVAILABLE;
+    // A taken request answers OK to every later try (reset_pending), so BUSY
+    // after the DMA tries means nothing was taken.
+    if (dma >= SETTINGS_RESET_DMA_TRIES) return UPDATE_BUSY;
+    return maybe_taken ? UPDATE_TIMEOUT : UPDATE_UNAVAILABLE;
 }
 
 #ifdef SVAL_UPDATER_HOST_TEST
