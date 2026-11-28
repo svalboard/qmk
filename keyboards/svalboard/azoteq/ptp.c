@@ -369,7 +369,7 @@ typedef struct {
     bool     fresh;     // a sample changed this pad since the last frame
     bool     has_valid; // valid_us holds a time
     bool     resume;    // lifted because its samples stopped: arm on the next valid sample, finger down or not
-    bool     handback;  // with resume: the grab let go; its fingers come back as contacts that never tap
+    bool     handback;  // with resume: the grab let go or samples stopped; its fingers come back as contacts that never tap
     uint16_t stale_ms;  // lift after this long without a valid sample (0: SVAL_PTP_STALE_MS)
     uint32_t epoch;
     uint32_t sample_us; // when the sample behind `fresh` was read
@@ -583,7 +583,9 @@ static bool pad_down(uint8_t pad) {
     return false;
 }
 
-// Reset, recalibration, a dead pad or a lost half: lift only that pad.
+// Reset, recalibration, a dead pad or a lost half: lift only that pad. The
+// finger may well still be down, so the lift goes out with Confidence clear:
+// a contact that landed just before is never a tap.
 static void lift_pad(uint8_t pad) {
     for (uint8_t i = 0; pad_used[pad] && i < POOL; i++) {
         contact_t *c = &pool[i];
@@ -591,6 +593,7 @@ static void lift_pad(uint8_t pad) {
         if (c->state == C_ACTIVE && c->sent_down) {
             c->lift = true;
             c->palm = false;
+            c->conf = false;
             dirty   = true;
         } else {
             free_contact(c);
@@ -798,6 +801,7 @@ void sval_ptp_pad_lost(uint8_t pad) {
     pads[pad].has_valid = false;
     pads[pad].fresh     = false;
     pads[pad].resume    = output; // reporting: a finger still down comes back when samples do
+    pads[pad].handback  = output; // ... as a contact that never taps (end_contact)
 }
 
 void sval_ptp_set_stale_ms(uint8_t pad, uint16_t ms) {
