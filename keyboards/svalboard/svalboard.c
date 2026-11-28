@@ -892,11 +892,7 @@ void kb_sync_listener(uint8_t in_buflen, const void *in_data, uint8_t out_buflen
     pad_mode_set(sval_pad_mode_sync_setting(has_mode, has_mode ? in->pad_mode : 0, pad_mode));
     // A ping from the half with USB: the link light's pairing (link_light.h).
     bool    has_quiet = in_buflen >= offsetof(presence_rpc_t, link_quiet) + 1;
-    uint8_t quiet     = has_quiet ? in->link_quiet : 0;
-    if (quiet == SVAL_LINK_QUIET_STOPPING)
-        sval_link_stopped();
-    else
-        sval_link_ping_seen(quiet == SVAL_LINK_QUIET_SUSPEND);
+    sval_link_ping_seen(has_quiet ? in->link_quiet : 0); // noted here, paired from housekeeping
     if (rgb_redraws) rgb_redraw_due = true; // drawn from housekeeping, not from the link's handler
 #ifdef SVAL_UPDATER
     // The master's updater light (D24), when its ping carries it. Measured to
@@ -1024,6 +1020,25 @@ void suspend_power_down_kb(void) {
 static bool is_connected = false;
 bool        sval_other_half_connected(void) {
     return is_connected;
+}
+
+// A settings consolidation erases the whole store, 64 KiB at a time, and this
+// half's main loop (and with it the presence ping) stops for several seconds:
+// before each erase, the half with USB sends the other half a BUSY ping, so it
+// allows a longer silence and shows no link light over a working cable
+// (link_light.h). Called from the wear-leveling driver between erases, with
+// interrupts on (platforms/chibios/drivers/wear_leveling/wear_leveling_rp2040_flash.c).
+// Never from inside a split transaction (the transport's lock is not
+// recursive): a write from there would wait here forever, so it is skipped.
+void wear_leveling_rp2040_erasing_unit(void) {
+    if (!is_keyboard_master() || !is_connected || chMtxGetNextMutexX() != NULL) return;
+#ifdef SVAL_UPDATER
+    if (sval_split_paused()) return; // only the updater's own requests cross a paused link
+#endif
+    presence_rpc_t rpcout;
+    presence_fill(&rpcout, SVAL_LINK_QUIET_BUSY);
+    presence_rsp_t rpcin = {0};
+    transaction_rpc_exec(KEYBOARD_SYNC_A, sizeof(presence_rpc_t), &rpcout, sizeof(presence_rsp_t), &rpcin);
 }
 
 // The other half's pointer identity from its last ping reply (zero = not reported).
@@ -1466,12 +1481,15 @@ void sval_rgb_resync(void) {
 }
 
 // The link light cleared (link_light.h): show the current state at once on both
-// halves, whatever the idle dimming did meanwhile.
+// halves, whatever the idle dimming did meanwhile. From housekeeping (sval_link_task).
 void sval_link_recovered(void) {
     sval_rgb_wake();
     sval_rgb_resync();
     rgb_resyncs = SVAL_RGB_SYNC_PINGS;
     rgb_redraws = SVAL_RGB_SYNC_PINGS;
+    // The other half: the ping that brought the pairing back has been handled
+    // already, so the first redraw is due now, as that ping would have made it.
+    if (!is_keyboard_master()) rgb_redraw_due = true;
 }
 
 void sval_on_reconnect(void) {

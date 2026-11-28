@@ -139,18 +139,24 @@ void via_init(void) {
     via_init_kb();
     via_set_layout_options_kb(via_get_layout_options());
 
-    // If the EEPROM has the magic, the data is good.
-    // OK to load from EEPROM.
-    if (!via_eeprom_is_valid()) {
-        eeconfig_init_via();
-        return;
-    }
-
     // Stored keycodes written under a different keycode numbering are reset,
     // never translated: a value means nothing outside its own numbering, and a
     // wrong translation would silently change what keys do. Users restore from
     // a layout file, which stores keycodes by name.
-    if (nvm_via_read_keycodes_version() != VIA_KEYCODES_VERSION) {
+    bool keycodes_changed = nvm_via_read_keycodes_version() != VIA_KEYCODES_VERSION;
+
+    // If the EEPROM has the magic, the data is good.
+    // OK to load from EEPROM.
+    if (!via_eeprom_is_valid()) {
+        // Svalboard: a new layout stamp resets the VIA region, which records
+        // the new keycode version, but not what the keyboard stores outside
+        // it. When the numbering changed too, that is reset as below.
+        if (keycodes_changed) via_keycodes_reset_kb();
+        eeconfig_init_via();
+        return;
+    }
+
+    if (keycodes_changed) {
         via_keycodes_reset_kb();
         eeconfig_init_via();
     }

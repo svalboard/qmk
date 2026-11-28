@@ -511,18 +511,46 @@ static void test_p4_settings_reset(void) {
     update_relay_abort();
     for (int i = 0; i < 20; i++)
         pass();
-    // P4-19: the other half silent: UNAVAILABLE, nothing changed anywhere
+    // P4-19: the other half absent: UNAVAILABLE, nothing changed anywhere
     fresh(0x2000);
     req_hand = UPDATE_HAND_RIGHT;
     CHECK_EQ(settings_reset(CLIENT_A, 1), UPDATE_UNAVAILABLE); // no presence
     presence_up();
     link_dead = true;
-    CHECK_EQ(settings_reset(CLIENT_A, 1), UPDATE_UNAVAILABLE); // presence went stale, no answer
+    // presence went stale, no answer: the request may have landed, so not
+    // UNAVAILABLE's "nothing changed"
+    CHECK_EQ(settings_reset(CLIENT_A, 1), UPDATE_TIMEOUT);
+    CHECK_EQ(rsp[1], 0);
     link_dead = false;
     CHECK_EQ(master_invalidations + slave_invalidations, 0);
     for (int i = 0; i < 600; i++)
         pass();
     CHECK_EQ(master_reboots + slave_reboots, 0);
+    // ... and the other half took it, but every answer was lost (S10): it
+    // resets, so the reply is TIMEOUT, never UNAVAILABLE; this half is untouched
+    fresh(0x2000);
+    presence_up();
+    drop_rsp_op = USPLIT_OP_SETTINGS_RESET;
+    CHECK_EQ(settings_reset(CLIENT_A, 1), UPDATE_TIMEOUT);
+    CHECK_EQ(rsp[1], 0);
+    drop_rsp_op = -1;
+    CHECK_EQ(slave_invalidations, 1);
+    CHECK_EQ(master_invalidations, 0);
+    for (int i = 0; i < 600 && slave_reboots == 0; i++)
+        pass();
+    CHECK_EQ(slave_reboots, 1);
+    CHECK_EQ(master_reboots, 0);
+    // only the first answer lost: the repeat is answered OK, both reset
+    fresh(0x2000);
+    presence_up();
+    drop_rsp_op   = USPLIT_OP_SETTINGS_RESET;
+    drop_rsp_left = 1;
+    CHECK_EQ(settings_reset(CLIENT_A, 1), UPDATE_OK);
+    CHECK_EQ(rsp[1], 0x03);
+    drop_rsp_op   = -1;
+    drop_rsp_left = -1;
+    CHECK_EQ(slave_invalidations, 1);
+    CHECK_EQ(master_invalidations, 1);
     // P4-22: the other half on protocol 3 does not know the op: UNAVAILABLE, nothing changed
     fresh(0x2000);
     presence_up();

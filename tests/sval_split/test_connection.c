@@ -53,6 +53,26 @@ int main(void) {
     assert(!split_connection_update(&c, false, 200, MAX_ERRORS, MIN_MS));
     assert(!split_connection_update(&c, false, 203, MAX_ERRORS, MIN_MS)); // holds
     assert(split_connection_update(&c, true, 204, MAX_ERRORS, MIN_MS));   // one good scan connects
-    puts("split connection: a 50 ms stall never disconnects and a 250 ms one does (failed scans of 3, 20 or 34 ms, across the timer wrap); one good scan reconnects");
+    // A scan fails just before a split pause, and the first scan after a 1 s
+    // pause fails too: with the run restarted at the resume it is the first
+    // failure of a new run, not one 1 s into the old one.
+    c = (split_connection_t){0};
+    assert(split_connection_update(&c, false, 1000, MAX_ERRORS, MIN_MS));
+    split_connection_restart(&c);
+    assert(split_connection_update(&c, false, 2000, MAX_ERRORS, MIN_MS));
+    assert(split_connection_update(&c, false, 2199, MAX_ERRORS, MIN_MS));
+    assert(!split_connection_update(&c, false, 2200, MAX_ERRORS, MIN_MS)); // 200 ms into the new run
+    // A disconnect that already fired holds through a restart, until a good scan.
+    split_connection_restart(&c);
+    assert(c.disconnected);
+    assert(!split_connection_update(&c, false, 2201, MAX_ERRORS, MIN_MS));
+    assert(split_connection_update(&c, true, 2202, MAX_ERRORS, MIN_MS));
+    // With the count (min 0, stock QMK): the restart clears it too.
+    c = (split_connection_t){0};
+    for (uint16_t t = 0; t < MAX_ERRORS - 1; t++)
+        assert(split_connection_update(&c, false, t, MAX_ERRORS, 0));
+    split_connection_restart(&c);
+    assert(split_connection_update(&c, false, 100, MAX_ERRORS, 0));
+    puts("split connection: a 50 ms stall never disconnects and a 250 ms one does (failed scans of 3, 20 or 34 ms, across the timer wrap); one good scan reconnects; a restart (the split pause's resume) starts the run over");
     return 0;
 }

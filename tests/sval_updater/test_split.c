@@ -100,6 +100,10 @@ void split_watchdog_update(bool done) {
     wd_updates++;
     wd_last = done;
 }
+static int conn_restarts; // transport_connection_restart(): the failed-scan run starts over
+void       transport_connection_restart(void) {
+    conn_restarts++;
+}
 void pointing_device_set_shared_report(report_mouse_t report) {
     shared_sets++;
     shared_report = report;
@@ -139,8 +143,8 @@ static void pause_fresh(void) {
     thisHand = MATRIX_ROWS_PER_HAND;
     thatHand = 0;
     master = link_up = true;
-    post_scans = scan_kbs = wd_updates = shared_sets = presses = releases = 0;
-    wd_last                                                               = true;
+    post_scans = scan_kbs = wd_updates = shared_sets = presses = releases = conn_restarts = 0;
+    wd_last                                                                               = true;
     memset(&shared_report, 0, sizeof(shared_report));
 }
 
@@ -198,16 +202,23 @@ static void test_pause(void) {
     local_rows[3] = 0;
     CHECK(task());
     CHECK_EQ(releases, 2);
-    // Pausing again changes nothing (no second release pass).
-    CHECK(sval_split_pause(true));
+    // A second pause while paused is refused (S25): the pause has one owner,
+    // and a caller that got false never resumes it. Nothing changes (no second
+    // release pass, still paused).
+    CHECK(!sval_split_pause(true));
+    CHECK(sval_split_paused());
     CHECK(!task());
+    CHECK_EQ(conn_restarts, 0); // pausing does not touch the failed-scan count
 
     // Resume: the split watchdog is re-armed (so a half that rebooted is pinged
-    // again), and the next scan exchanges and sees the other half's keys.
+    // again), the failed-scan run starts over (S22: a scan that failed just
+    // before the pause does not make the first failure after it a disconnect),
+    // and the next scan exchanges and sees the other half's keys.
     CHECK(sval_split_pause(false));
     CHECK(!sval_split_paused());
     CHECK_EQ(wd_updates, 1);
     CHECK(!wd_last);
+    CHECK_EQ(conn_restarts, 1);
     CHECK(task());
     CHECK_EQ(post_scans, 3);
     CHECK_EQ(presses, 4); // rows 1 and 2 of the other half
@@ -216,6 +227,7 @@ static void test_pause(void) {
     // Resuming an unpaused link does nothing.
     CHECK(sval_split_pause(false));
     CHECK_EQ(wd_updates, 1);
+    CHECK_EQ(conn_restarts, 1);
 
     // A pause and a resume with no scan between: nothing to release, the
     // watchdog is still re-armed.
@@ -235,6 +247,7 @@ static void test_pause(void) {
     CHECK(!task());
     CHECK(sval_split_pause(false));
     CHECK_EQ(wd_updates, 3);
+    CHECK_EQ(conn_restarts, 3);
     pause_fresh();
 }
 

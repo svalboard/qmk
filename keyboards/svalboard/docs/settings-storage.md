@@ -47,6 +47,7 @@ At boot the firmware hashes its own image in flash and compares the hash with th
 - The board identity (serial and name) and the updater's own state are kept.
 - On a flash chip smaller than 16 MB the record has nowhere to go, so the board keeps its settings; an incompatible layout is still reset by the magic below.
 - If the record can't be written, the next boot resets again, and the board reports that changes won't survive a restart (byte 18 bit 1).
+- Clearing the notice (`0x2A`) programs a mark next to the record and never erases or rewrites it, so losing power then can't reset the settings. The sector holds 16 one-page slots (`build_reset.h`); the record after a blank reset goes into a free slot, so that losing power while it is written still comes back blank.
 - A firmware without the record in between doesn't count: flashing build A, then vLaunch2, then the same build A again keeps what vLaunch2 left.
 
 ## Upgrading from earlier firmware
@@ -61,8 +62,9 @@ Now:
 
 - **A bad read** is retried, rereading the flash rather than its cache.
 - **A damaged copy** is read from the other copy, then repaired.
-- **Power lost during consolidation** leaves a complete copy: consolidation erases and rewrites one copy at a time, and the next boot repairs the other.
-- **Power lost while a change is saved** can lose only that change, which was never confirmed. A log entry cut short at the end of a copy is ignored, and a copy whose log stops at an invalid entry keeps the entries before it; if the other copy reads completely, it is used instead.
+- **Power lost during consolidation** leaves a complete copy: consolidation erases and rewrites one copy at a time, and the next boot repairs the other. The boot's repair rewrites the copy it loaded last, so power lost again during the repair still leaves that copy.
+- **Power lost while a change is saved** can lose only that change, which was never confirmed. Each log entry's first word, which says what the entry is, is programmed after the rest, so an entry cut short reads as the end of the log, never as an entry completed with zeros (which could zero the start of the store). Words left after the end of the log are rewritten at the next boot, never appended over. A log entry cut short at the end of a copy is ignored, and a copy whose log stops at an invalid entry (including a length no writer produces) keeps the entries before it; if the other copy reads completely, it is used instead.
+- **A consolidation or log write that fails** (a flash that doesn't read back) is never followed by appends: every later write retries the whole consolidation from memory instead, so a failed write never lands over the other copy, past the store, or over a slot already programmed. The flash driver also refuses any program outside the store.
 - **Both copies unreadable**: the board starts from defaults and remembers that it did. Keybard tells you on its next connection to reload your layout file, and `SV_OUTPUT_STATUS` prints the same notice.
 - **A change that doesn't reach flash** is reported instead of passing silently. Every program and erase is read back, and the boot-time check that the flash chip is large enough is retried. If the store can't be opened, or a write or erase doesn't read back, the board keeps working from memory, so the change still shows, but it reports that changes won't survive a restart (GET_INFO byte 18, bit 1) until it is restarted. Keybard warns you, and `SV_OUTPUT_STATUS` prints the same notice.
 
@@ -74,6 +76,8 @@ Each copy wears at QMK's normal rate: a small change appends a few bytes to the 
 
 A consolidation happens when the log fills, about once per 98,000 key changes. It erases each copy one 64 KB block at a time, skipping blocks that are already erased and servicing USB between blocks, then rewrites both copies. The keyboard pauses for a few seconds while it does; on a test board the whole pause, including the host noticing it, measured about 4.5 s. A fresh board's first-boot format erases nothing, since its region is already blank.
 
+A pause inside a burst of host writes (a layout import) holds back the reply to the write that started it, past the host's 1 s timeout. Keybard matches every reply to its request, so the late reply is dropped instead of being taken as the answer to the next command.
+
 ## Tests
 
 ```
@@ -81,4 +85,4 @@ make test:wear_leveling_general test:wear_leveling_2byte test:wear_leveling_2byt
      test:wear_leveling_4byte test:wear_leveling_8byte test:wear_leveling_mirror test:wear_leveling_mirror_large
 ```
 
-`wear_leveling_mirror` covers a damaged or erased copy, a copy missing the last entry, both copies damaged, a retried bad read, and power loss at every write and erase of a consolidating write. `wear_leveling_mirror_large` runs the same tests with a store large enough for multi-word log entries, plus an entry cut off at the end of a copy and copies whose logs stop at an invalid entry.
+`wear_leveling_mirror` covers a damaged or erased copy, a copy missing the last entry, both copies damaged, a retried bad read, power loss at every write and erase of a consolidating write, of a single-entry write and of the boot's repair, and a log entry or consolidation that fails to program or erase. `wear_leveling_mirror_large` runs the same tests with a store large enough for multi-word log entries, plus an entry cut off at the end of a copy, copies whose logs stop at an invalid entry, invalid multi-byte lengths, and words left after the end of the log. `tools/pre_pr.sh` runs all of these.

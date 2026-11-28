@@ -1149,9 +1149,11 @@ def reset_settings(dev, args):
         why = {
             5: "the updater is busy (a session, a held approval, or a reset already pending)",
             2: "the other half does not answer (connected, and on updater protocol 4?" + (" A blank board also needs a build from after D44 there" if blank else "") + ")",
-            1: "a blank board needs a firmware build from after D44" if blank else ""
+            1: "a blank board needs a firmware build from after D44" if blank else "",
+            15: "the other half's answers were lost, so it may have reset; this half did not. Run reset-settings again once the board is back",
         }.get(st, "")
-        raise UpdaterError(f"SETTINGS_RESET: {status_name(st)}" + (f": {why}" if why else "") + (f"; already reset: {', '.join(halves)}" if halves else "; nothing changed"))
+        unknown = st == 15  # TIMEOUT: the other half may have taken it
+        raise UpdaterError(f"SETTINGS_RESET: {status_name(st)}" + (f": {why}" if why else "") + (f"; already reset: {', '.join(halves)}" if halves else "" if unknown else "; nothing changed"))
     what = "reset to a blank board (every key KC_NO)" if blank else "reset to defaults"
     print(f"SETTINGS_RESET: OK, {' and '.join(halves)} {what} on the next boot; waiting for the board")
     serial = dev.serial

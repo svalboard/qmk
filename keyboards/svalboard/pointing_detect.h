@@ -4,6 +4,7 @@
 // protocol: trackball (PMW3360/PMW3389, SPI on GP24-27), Azoteq trackpad (IQS5xx, I2C on
 // GP16/17) and TrackPoint (PS/2 on GP23/24). When a build's own module doesn't answer,
 // these probes check the others, so a host can name the right .uf2 (Sval 0x2C).
+// A TrackPoint build doesn't look for a trackball (sval_probe_skip_buses).
 //
 // The probes toggle the pins directly instead of using the chip's SPI/I2C/PIO
 // peripherals, so they work in any build. They take each pin from whatever peripheral
@@ -36,9 +37,19 @@ typedef struct {
     uint8_t id1;      // PMW Inverse_Product_ID, or Azoteq product number low byte
 } sval_probe_result_t;
 
-// Probes the buses not in skip_buses, SPI then PS/2 then I2C, stopping at the first module.
-// Blocking, with the SVAL_DETECT_TP_SETTLE_MS wait after a silent SPI probe: the host test
-// uses it; the firmware's searches go one bus per main loop pass (pointer_reprobe.c).
+// The buses a search leaves out, from the ones the build's own driver uses. A build whose own
+// bus is PS/2 (a TrackPoint build) leaves out SPI too: the SPI probe drives GP25, the
+// TrackPoint's reset, and reads GP24, its clock, taking it from the PS/2 driver. Such a build
+// searches when its stick didn't answer the boot Get Device ID, which can happen with the
+// stick there; the I2C probe leaves the PS/2 pins alone (pointing_detect.c).
+static inline uint8_t sval_probe_skip_buses(uint8_t own_buses) {
+    return (own_buses & SVAL_BUS_PS2) ? own_buses | SVAL_BUS_SPI : own_buses;
+}
+
+// Probes the buses not in sval_probe_skip_buses(skip_buses), SPI then PS/2 then I2C, stopping
+// at the first module. Blocking, with the SVAL_DETECT_TP_SETTLE_MS wait after a silent SPI
+// probe: the host test uses it; the firmware's searches go one bus per main loop pass
+// (pointer_reprobe.c).
 // The I2C pins are left alone when I2C is skipped, so a hardware I2C driver keeps them.
 sval_probe_result_t sval_probe_pointers(uint8_t skip_buses);
 

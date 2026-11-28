@@ -325,6 +325,42 @@ static void test_no_snapshot(void) {
     puts("  no snapshot: a half with nothing to send, or older firmware, gets only the heartbeat");
 }
 
+static void test_garbled_after_lost(void) {
+    // The link fails long enough that the other pad is lost, then the next
+    // fetch completes but its reply is garbled to zeros (no checksum on the
+    // RPC reply). One such reply is a failed fetch, not a pad that went away:
+    // the hand stays the touchpad's, never a mouse.
+    usb_half();
+    set_peer(true, 70, 80);
+    run(9);
+    assert(left_down());
+    connected = false;
+    while (!remote_lost)
+        tick();
+    assert(!left_down() && sval_mt_suppress_hand(0));
+    connected       = true;
+    other_half      = old_peer; // the one garbled reply
+    unsigned before = rpc_calls;
+    while (rpc_calls == before)
+        tick();
+    other_half = peer;
+    assert(!remote_empty && sval_mt_suppress_hand(0) && sval_mt_os_touchpad(0));
+    news();
+    run(SVAL_PTP_REMOTE_BACKUP_MS * 3);
+    assert(!remote_lost && !remote_empty && sval_mt_suppress_hand(0) && left_down());
+    // A half that really has nothing to send still turns empty while lost.
+    connected = false;
+    while (!remote_lost)
+        tick();
+    connected  = true;
+    other_half = old_peer;
+    run(SVAL_PTP_REMOTE_BACKUP_MS * (MT_EMPTY_REPLIES + 2));
+    assert(remote_empty && !sval_mt_suppress_hand(0));
+    other_half = peer;
+    set_peer(false, 0, 0);
+    puts("  garbled reply after a lost link: one zeroed reply keeps the other pad a touchpad");
+}
+
 static void test_no_pad_there(void) {
     // The other hand has a trackball: never fetched, never suppressed.
     usb_half();
@@ -931,6 +967,7 @@ int main(void) {
     test_other_half();
     test_fetch_gating();
     test_no_snapshot();
+    test_garbled_after_lost();
     test_no_pad_there();
     test_update();
     test_activity();

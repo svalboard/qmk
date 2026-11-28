@@ -205,12 +205,18 @@ static bool block_erased(uint32_t block) {
 // may feed it here (a consolidation erases the whole store, several seconds).
 __attribute__((weak)) void wear_leveling_rp2040_erased_unit(void) {}
 
+// Before each unit that needs erasing, with interrupts on (a Svalboard patch):
+// a split board may tell its other half that this half's main loop is about to
+// stop for an erase (a consolidation stops it for several seconds in all).
+__attribute__((weak)) void wear_leveling_rp2040_erasing_unit(void) {}
+
 // Erases one unit at a time, skipping units already erased, with interrupts
 // restored in between: USB keeps being serviced, and a fresh board's first-boot
 // format erases nothing. Fails if a unit doesn't read back erased.
 static bool erase_blocks(uint32_t flash_address, uint32_t length) {
     for (uint32_t block = flash_address; block < flash_address + length; block += ERASE_UNIT) {
         if (block_erased(block)) continue;
+        wear_leveling_rp2040_erasing_unit();
         interrupts = save_and_disable_interrupts();
         pico_erase(block, ERASE_UNIT);
         restore_interrupts(interrupts);
@@ -277,7 +283,9 @@ bool backing_store_write(uint32_t address, backing_store_int_t value) {
 }
 
 bool backing_store_write_bulk(uint32_t address, backing_store_int_t *values, size_t item_count) {
-    if (!flash_present) return false;
+    // Never program outside the store: past its end lies other flash (the updater's staging slot).
+    const uint32_t store_size = (WEAR_LEVELING_BACKING_SIZE) * (WEAR_LEVELING_COPIES);
+    if (!flash_present || address > store_size || item_count > (store_size - address) / sizeof(backing_store_int_t)) return false;
     uint32_t offset = (WEAR_LEVELING_RP2040_FLASH_BASE) + address;
     bs_dprintf("Write ");
     wl_dump(offset, values, sizeof(backing_store_int_t) * item_count);

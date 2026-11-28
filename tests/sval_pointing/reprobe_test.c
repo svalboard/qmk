@@ -319,6 +319,9 @@ static void per_module_build_stops_on_wrong_sensor(void) {
 }
 
 // retry_own STOP (a TrackPoint build: its PS/2 driver can't start twice) ends the search.
+// The boot search probes I2C only: the SPI probe drives GP25 (the TrackPoint's reset) and
+// takes GP24 (its clock) from the PS/2 driver, and the search also runs when a stick that is
+// there missed the boot Get Device ID (S24).
 static void retry_own_stop_ends_it(void) {
     reset();
     own.built_for    = SVAL_SENSOR_TRACKPOINT;
@@ -327,7 +330,10 @@ static void retry_own_stop_ends_it(void) {
     retry_own_result = SVAL_RETRY_STOP;
     run_until(60UL * 60 * 1000);
     CHECK(retry_calls == 1);
-    CHECK(probe_calls == 2); // the boot search: SPI and I2C only
+    CHECK(probe_calls == 1); // the boot search's I2C only
+    CHECK(probe_calls_by_bus[bus_index(SVAL_BUS_I2C)] == 1);
+    CHECK(probe_calls_by_bus[bus_index(SVAL_BUS_SPI)] == 0);
+    CHECK(probe_calls_by_bus[bus_index(SVAL_BUS_PS2)] == 0);
 }
 
 // A module unplugged before a search finds it leaves the last find in place until a search

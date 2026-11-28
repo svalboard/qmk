@@ -289,43 +289,52 @@ static bool probe_spi(sval_probe_result_t *found) {
     return true;
 }
 
-// The PS/2 and SPI pins overlap (GP24, GP25), so they're always released together; the I2C
-// pins only when the I2C probe runs.
-static void release_all(bool i2c) {
-    pin_release(SVAL_DETECT_PS2_CLOCK);
-    pin_release(SVAL_DETECT_PS2_DATA);
+// The PS/2 and SPI pins overlap (GP24, GP25), so they're released together, and only when
+// one of those probes runs: an I2C probe alone leaves them with whatever holds them (in a
+// TrackPoint build, the PS/2 driver's PIO keeps GP23/GP24). The I2C pins likewise only when
+// the I2C probe runs.
+static void release_all(bool i2c, bool ps2_spi) {
+    if (ps2_spi) {
+        pin_release(SVAL_DETECT_PS2_CLOCK);
+        pin_release(SVAL_DETECT_PS2_DATA);
+    }
     if (i2c) {
         pin_release(SVAL_DETECT_I2C_SDA);
         pin_release(SVAL_DETECT_I2C_SCL);
     }
-    pin_release(SVAL_DETECT_SPI_SCK);
-    pin_release(SVAL_DETECT_SPI_MOSI);
-    pin_release(SVAL_DETECT_SPI_CS);
+    if (ps2_spi) {
+        pin_release(SVAL_DETECT_SPI_SCK);
+        pin_release(SVAL_DETECT_SPI_MOSI);
+        pin_release(SVAL_DETECT_SPI_CS);
+    }
 }
 
 sval_probe_result_t sval_probe_pointers(uint8_t skip_buses) {
-    sval_probe_result_t found = {.detected = SVAL_SENSOR_NO_RESPONSE};
-    bool                i2c   = !(skip_buses & SVAL_BUS_I2C);
-    release_all(i2c); // GP25 pulled up: trackball deselected
-    if (!(skip_buses & SVAL_BUS_SPI)) {
+    sval_probe_result_t found   = {.detected = SVAL_SENSOR_NO_RESPONSE};
+    uint8_t             skip    = sval_probe_skip_buses(skip_buses);
+    bool                i2c     = !(skip & SVAL_BUS_I2C);
+    bool                ps2_spi = !(skip & SVAL_BUS_PS2) || !(skip & SVAL_BUS_SPI);
+    release_all(i2c, ps2_spi); // GP25 pulled up: trackball deselected, TrackPoint reset left as its module sets it
+    if (!(skip & SVAL_BUS_SPI)) {
         if (probe_spi(&found)) goto done;
-        release_all(i2c);
-        if (!(skip_buses & SVAL_BUS_PS2)) det_wait_us(SVAL_DETECT_TP_SETTLE_MS * 1000u); // a TrackPoint the chip select reset
+        release_all(i2c, ps2_spi);
+        if (!(skip & SVAL_BUS_PS2)) det_wait_us(SVAL_DETECT_TP_SETTLE_MS * 1000u); // a TrackPoint the chip select reset
     }
-    if (!(skip_buses & SVAL_BUS_PS2) && probe_ps2(&found, 2)) goto done;
+    if (!(skip & SVAL_BUS_PS2) && probe_ps2(&found, 2)) goto done;
     if (i2c) probe_i2c(&found);
 done:
-    release_all(i2c);
+    release_all(i2c, ps2_spi);
     return found;
 }
 
 sval_probe_result_t sval_probe_bus(uint8_t bus, bool patient) {
     sval_probe_result_t found = {.detected = SVAL_SENSOR_NO_RESPONSE};
-    bool                i2c   = bus == SVAL_BUS_I2C;
-    release_all(i2c);
+    bool                i2c     = bus == SVAL_BUS_I2C;
+    bool                ps2_spi = bus == SVAL_BUS_PS2 || bus == SVAL_BUS_SPI;
+    release_all(i2c, ps2_spi);
     if (bus == SVAL_BUS_PS2) probe_ps2(&found, patient ? 2 : 1);
     else if (i2c) probe_i2c(&found);
     else if (bus == SVAL_BUS_SPI) probe_spi(&found);
-    release_all(i2c);
+    release_all(i2c, ps2_spi);
     return found;
 }

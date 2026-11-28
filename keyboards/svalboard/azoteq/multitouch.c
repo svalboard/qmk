@@ -448,8 +448,10 @@ static void poll_remote(void) {
     sval_perf_rpc(sval_perf_now_us() - rpc_started, ok, false);
 #endif
     bool empty = ok && (reply[0] != SVAL_MT_RPC_SNAPSHOT || !(reply[1] & 1));
-    if (empty && remote_seen && !remote_lost && !remote_empty && ++empty_replies < MT_EMPTY_REPLIES) {
-        empty = false; // a half that was sending samples: a failed fetch until it repeats
+    if (empty && remote_seen && !remote_empty && ++empty_replies < MT_EMPTY_REPLIES) {
+        // A half that was sending samples, lost or not: a failed fetch until
+        // it repeats (the RPC reply has no checksum).
+        empty = false;
         ok    = false;
     }
     if (empty) {
