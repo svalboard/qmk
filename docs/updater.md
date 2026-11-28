@@ -529,9 +529,9 @@ with USB):
 | checking and erasing | paused | The other half checks the manifest against its own build itself (D7), then erases its slot a sector per pass; this half polls STATUS every 20 ms. A sector erase keeps the other half's interrupts off for about 50 ms, longer than the 20 ms serial timeout, so it erases a sector that needs it only after a request since its last erase and 5 ms after that request (`SVAL_UPDATE_SPLIT_ERASE_GAP_MS`): this half gets an answer between every two sectors, and an ABORT lands within a sector. After an answer that says it erases, the next poll comes 50 ms later (`SVAL_UPDATE_RELAY_ERASE_POLL_MS`) with the 3 ms serial deadline, so a poll that still finds it erasing costs 3 ms, not 20: about one poll per sector |
 | sending | paused | PAGE fragments read from this half's slot, request after request, with a main-loop pass every 15 ms (`SVAL_UPDATE_RELAY_STREAM_MS`): USB, Keybard and this half's keys keep going, and the longest pass stays under 50 ms (R13) even when an RPC times out. The other half's keys were released when the pause began |
 | end, verifying | paused | END; the other half hashes its slot (SHA-512 against the manifest, structure, CRC); its CRC must equal this half's |
-| verified | running | STATUS every 1 s keeps the other half's session alive until the host's COMMIT |
+| verified | running | STATUS every 1 s keeps the other half's session alive until the host's COMMIT. If it answers IDLE (it reset), the relay pauses the link again and starts over from INFO (at most twice); if the link cannot be paused, the relay fails |
 | commit, hold | paused | COMMIT; the other half commits 100 ms later from housekeeping with the M1 routine; the link stays paused 4.5 s. An answer of IDLE to COMMIT (it already rebooted, or lost the session), or no valid answer for 4 s (COMMIT may have been taken with its answer lost), also leads to the hold: the probe decides |
-| probe | paused | STATUS. ERROR, or IDLE with an error: it did not commit (failure). COMMITTING: it has not begun its copy; probe again every 500 ms, and if it then falls silent (its copy) the whole hold again; at most 20 probes, then TIMEOUT. IDLE without an error: done. No answer (a new release may not talk to this one, V): done, flagged unconfirmed (RELAY flags bit1) |
+| probe | paused | STATUS. ERROR, or IDLE with an error: it did not commit (failure). COMMITTING: it has not begun its copy; probe again every 500 ms, and if it then falls silent (its copy) the whole hold again; at most 20 probes, then TIMEOUT. IDLE without an error: done, when COMMIT was answered ACCEPTED. When it was not (answered IDLE, or never), IDLE without an error may also be a half that reset before COMMIT and still runs its old image, so its INFO is read: still on the fw_version it had at the start (and the image's differs), a failure (UNAVAILABLE); on the image's, done; the two the same, INFO unanswered or neither: done, flagged unconfirmed. No answer (a new release may not talk to this one, V): done, flagged unconfirmed (RELAY flags bit1) |
 | aborting | as it was | After an ABORT from the host, the session timeout, or a failure: ABORT once per pass until the other half answers (it may be erasing), for at most 4 s, and only then the link resumes. A relay whose link is already dead (no valid answer for 4 s) sends one ABORT and resumes at once |
 
 A request without a valid answer is sent again unchanged (the other half
@@ -940,10 +940,13 @@ python3 -I $MU verify OUT.svup --build plain
   not a refusal (D33): the tool asks `[y/N]` before writing, `--yes` skips
   the question, and no answer (no terminal) writes nothing.
 - `--diagnostic` sets DIAGNOSTIC (Scan Lab, keytest or host-bootloader
-  images). `--epoch` and `--storage-format` set the floors' fields.
+  images). `--epoch` and `--storage-format` set the floors' fields; they
+  default to the firmware's (`SECURITY_EPOCH` and `STORAGE_FORMAT` in the
+  tool mirror `config.h`, and the host tests check that they agree).
 - `--release` sets RELEASE and refuses anything that is not a clean release
   update: a manifest with flags other than exactly RELEASE, a keymap other
-  than `sval` or `blank`, another updater protocol or an older storage format;
+  than `sval` or `blank`, another updater protocol, an older storage format or
+  a lower security epoch;
   an image without a build-info record, or whose record is not a release
   build, has test hooks, keytest, the host bootloader or a reserved bit set,
   reports another version than the manifest, or names another keymap (another
@@ -954,7 +957,9 @@ python3 -I $MU verify OUT.svup --build plain
   for rejection tests. Never with `--release`.
 - `verify FILE.svup --build release|plain` checks a `.svup` offline as that
   kind of build would before erasing anything: the manifest rules, the hash
-  and the structure. A release build also refuses DIAGNOSTIC.
+  and the structure. A release build also refuses DIAGNOSTIC, and an image
+  whose build-info record is a dev build (no-chord or keep-settings) whatever
+  the manifest's flags, as the board does at END.
 
 `util/updater_test/run.sh` with `SVAL_RELEASE_SVUPS="a.svup:ok b.svup:refused"`
 runs `.svup` files through the C code of a release build

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Trackball sensor samples, Sval 0x39 (squal.h, pointing_squal.h, docs/protocol.md).
 #include "quantum.h"
+#include "hal.h"
 #include "transactions.h"
 #include "transport.h"
 #include "split_util.h"
@@ -21,9 +22,24 @@ static uint16_t          reads_per_s;
 static sval_squal_acc_t  acc;
 static sval_squal_ring_t ring;
 
+// On the half without USB the split transport's callback (sval_squal_split_rpc) packs a
+// reply from the ring and can preempt the main loop, which fills it: the ring and the
+// read rate change and are read only under the lock, so a reply never sees half a bin.
+#define SQUAL_LOCK() osalSysLock()
+#define SQUAL_UNLOCK() osalSysUnlock()
+
 void sval_squal_set_capable(bool is_pmw3389) {
     capable = true;
     is3389  = is_pmw3389;
+}
+
+void sval_squal_set_down(void) {
+    capable = false;
+    armed   = false; // a restart begins a new ring and rate
+    SQUAL_LOCK();
+    sval_squal_ring_clear(&ring);
+    reads_per_s = 0;
+    SQUAL_UNLOCK();
 }
 
 bool sval_squal_wanted(void) {
@@ -35,7 +51,9 @@ bool sval_squal_wanted(void) {
 void sval_squal_record(const sval_squal_read_t *r) {
     uint32_t now = timer_read32();
     if (!armed) {
+        SQUAL_LOCK();
         sval_squal_ring_clear(&ring);
+        SQUAL_UNLOCK();
         sval_squal_acc_clear(&acc);
         acc.reads    = 0;
         bin_start_ms = now;
@@ -46,9 +64,11 @@ void sval_squal_record(const sval_squal_read_t *r) {
     if (span < SVAL_SQUAL_BIN_MS) return;
     sval_squal_sample_t s;
     if (sval_squal_acc_finish(&acc, &s)) {
-        sval_squal_ring_push(&ring, &s);
         uint32_t rate = (uint32_t)acc.reads * 1000u / span;
-        reads_per_s   = rate > 0xFFFF ? 0xFFFF : (uint16_t)rate;
+        SQUAL_LOCK();
+        sval_squal_ring_push(&ring, &s);
+        reads_per_s = rate > 0xFFFF ? 0xFFFF : (uint16_t)rate;
+        SQUAL_UNLOCK();
     }
     sval_squal_acc_clear(&acc);
     acc.reads    = 0;
@@ -64,10 +84,12 @@ static void local_reply(uint8_t *out, uint8_t op, uint16_t arg) {
         return;
     }
     uint8_t flags = SVAL_SQUAL_F_CAPABLE | (is3389 ? SVAL_SQUAL_F_3389 : 0) | (is_keyboard_left() ? 0 : SVAL_SQUAL_F_RIGHT);
+    SQUAL_LOCK();
     if (op == SVAL_SQUAL_OP_STATS)
         sval_squal_pack_stats(out, &ring, arg, reads_per_s, flags);
     else
         sval_squal_pack_samples(out, &ring, arg, flags);
+    SQUAL_UNLOCK();
 }
 
 bool sval_squal_split_rpc(uint8_t in_len, const uint8_t *in, uint8_t out_len, uint8_t *out) {

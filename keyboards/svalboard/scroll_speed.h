@@ -86,6 +86,29 @@ typedef struct {
 // axis, the hand's Scroll speed (percent), Mac or not, wheel counts out.
 void sval_ball_scroll(sval_ball_scroll_t *s, int32_t x, int32_t y, uint16_t dpi_x, uint16_t dpi_y, uint16_t pct, bool mac, int16_t *h, int16_t *v);
 
+// One hand's x and y as scroll (keymaps/keymap_support.c, hand_scroll_convert):
+// x across and y_up (the wheel's vertical) through sval_ball_scroll, added to
+// the h and v the hand's report already has (a pad's two-finger scroll), so
+// those are kept. mm_h and mm_v get the counts over the motion DPI, x 100000
+// (the unit the axis lock thresholds are in), computed in 64 bits.
+void sval_hand_scroll(sval_ball_scroll_t *s, int32_t x, int32_t y_up, int16_t h_in, int16_t v_in, uint16_t dpi_x, uint16_t dpi_y, uint16_t pct, bool mac, int16_t *h, int16_t *v, int32_t *mm_h, int32_t *mm_v);
+
+// What a half knows of a hand's pointing module, for the migration below.
+enum sval_scroll_module_state {
+    SVAL_SCROLL_MODULE_UNSEEN,    // no half reports this hand: the other half, before (or without) the link
+    SVAL_SCROLL_MODULE_UNCHECKED, // the hand's half reports it, but its module is not checked yet
+    SVAL_SCROLL_MODULE_NO_ANSWER, // checked, and no module answered
+    SVAL_SCROLL_MODULE_ANSWERED,  // a trackball, a pad or a TrackPoint answered
+};
+// Whether a hand's module is settled enough to migrate (svalboard.c,
+// sval_scroll_speed_task). local: the hand is this half's; searched: this
+// half's boot search is over; settle_passed: the time allowed for the other
+// half's search has passed. A hand no half reports never settles: the half
+// without USB never sees the other hand, and the half with USB sees it only
+// once the other half has reported, so neither takes an unseen hand for a
+// trackball and saves that.
+bool sval_scroll_hand_settled(uint8_t state, bool local, bool searched, bool settle_passed);
+
 // One hand's migration, once its module is known: its Scroll speed from its
 // saved DPI index (times the test build's touchpad speed, if there is one, for a pad)
 // and the index normalized (a pad's lowered to its maximum). Speed first, from

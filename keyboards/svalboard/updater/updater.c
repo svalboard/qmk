@@ -260,6 +260,7 @@ typedef struct {
     update_build_scan_t bi;                 // VERIFYING_IMAGE: the image's build-info records (D45)
     bool                reuse;              // BEGIN asked to keep the slot's verified image
     bool                block_erase;        // BEGIN asked for 64 KiB block erases (the host waits through them)
+    uint32_t            error_ms;           // ERROR: when it latched (updater_active)
 } session_t;
 
 // The image a session last verified in the slot (BEGIN reuse): RAM only, and
@@ -375,6 +376,7 @@ static update_status_t fail(update_status_t status) {
     update_gesture_disarm();
     s.state      = UPDATE_STATE_ERROR;
     s.last_error = status;
+    s.error_ms   = now_ms;
     return status;
 }
 
@@ -935,7 +937,11 @@ static update_status_t op_settings_reset(const uint8_t *req, uint8_t *rsp, bool 
     return UPDATE_OK;
 }
 
+// The board feeds its session watchdog here (updater_port.h); nothing without one.
+__attribute__((weak)) void updater_port_alive(void) {}
+
 void updater_via_command(uint8_t *data, uint8_t length) {
+    updater_port_alive(); // a host request: the half is answering USB
     uint8_t  cmd = data[0], op = data[2];
     uint8_t *value = &data[3];
     if (cmd != id_custom_set_value && cmd != id_custom_get_value) return; // id_custom_save: nothing here
@@ -1420,6 +1426,7 @@ static update_led_mode_t led_mode(void) {
 }
 
 void updater_task(void) {
+    updater_port_alive(); // a main-loop pass
     now_ms                 = updater_port_now_ms();
     uint32_t       pass_t0 = now_ms;
     update_state_t pass_st = s.state;
@@ -1517,8 +1524,19 @@ void updater_task(void) {
     crumb_pass();
 }
 
+// A latched ERROR runs nothing: fail() has already stopped the relay (one past
+// its COMMIT counts through update_relay_busy()) and disarmed the chord. It
+// holds the board only while its red light shows. Then the native touchpad,
+// the other half's pad, pacing and idle dimming come back, although no host
+// sent ABORT; the error stays for STATUS, INFO and ABORT, and a new session
+// still needs ABORT first.
+static bool session_active(void) {
+    if (s.state == UPDATE_STATE_IDLE) return false;
+    return s.state != UPDATE_STATE_ERROR || updater_port_now_ms() - s.error_ms < SVAL_UPDATE_RED_MS;
+}
+
 bool updater_active(void) {
-    return s.state != UPDATE_STATE_IDLE || update_split_slave_active() || update_relay_busy() || update_pair_busy();
+    return session_active() || update_split_slave_active() || update_relay_busy() || update_pair_busy();
 }
 
 update_state_t updater_state(void) {

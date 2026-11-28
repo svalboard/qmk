@@ -32,7 +32,7 @@ Records (`settings_area.h`): an 8-byte header, then entries of id, capacity and 
 
 Adding a setting:
 
-1. A line in `settings_ids.h`: the next unused id (never reuse one) and the payload size.
+1. A line in `settings_ids.h`: the next unused id (never reuse one) and the payload size. Ids 0, 0xFFFE and 0xFFFF are reserved, and so is 0xF000-0xF0FF, kept for downstream builds; `tools/settings_budget.py` fails on any of them.
 2. Load it with `settings_area_get()` over its default, save it with `settings_area_put()`.
 3. For Keybard: a VIA custom value id and a GET_INFO feature bit.
 

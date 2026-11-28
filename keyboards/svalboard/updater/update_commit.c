@@ -452,6 +452,10 @@ static update_status_t check_slot(const sval_update_manifest_t *m, uint32_t crc_
     update_status_t   st  = UPDATE_OK;
     crypto_sha512_init(&sha);
     for (uint32_t off = 0; off < m->image_len; off += SECTOR) {
+        // One sector hashed: the session watchdog's feed (updater_port.h), so
+        // the whole-image hash in one pass never outlasts its period, however
+        // large the image. The loop ends at image_len.
+        updater_port_alive();
         uint32_t n = m->image_len - off < SECTOR ? m->image_len - off : SECTOR;
         for (uint32_t i = 0; i < n / 4; i++) commit_sector_buf[i] = flash_rd32(SLOT_ABS(off) + 4 * i);
         crypto_sha512_update(&sha, BUF8, n);

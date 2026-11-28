@@ -265,7 +265,10 @@ static bool buf_zero(void) {
 
 static void test_commit_happy(uint32_t len) {
     commit_setup(len);
+    alive_master = 0;
     CHECK_EQ(commit_go(), LAND_RESET);
+    // Step 0's slot hash fed the session watchdog once a sector (updater_port_alive).
+    CHECK_EQ(alive_master, (len + UPDATE_FLASH_SECTOR - 1) / UPDATE_FLASH_SECTOR);
     // The new image, the rest of its last block erased, nothing else touched.
     CHECK(image_in_place(len));
     CHECK(page0_valid());

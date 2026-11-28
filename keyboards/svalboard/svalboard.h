@@ -47,7 +47,7 @@ struct __attribute__((__packed__)) saved_values {
     // in 10 ms units (10-200), or 0 for "use mh_timer_index".
     uint8_t  automouse_10ms;
     uint16_t automouse_threshold; // Movement distance required for layer activation (0=disabled)
-    uint8_t  automouse_decay;     // Accumulator decay time in 10ms units (0=no decay)
+    uint8_t  automouse_decay;     // Accumulator decay time in 10ms units (at least 1; 0 reads as the default, 70 ms)
     uint16_t scan_prewait_us;     // Row-on settle time before reading (never 0 after the boot migration)
     uint16_t scan_postwait_us;    // Row-off recovery time after reading (never 0 after the boot migration)
     uint16_t scan_period_us;      // Frame period while active (0 = unpaced, scan back to back)
@@ -280,6 +280,10 @@ uint32_t sval_host_idle_ms(void);      // ms since the last host packet (UINT32_
 void    sval_pointer_rest_apply(void); // push SVAL_IDLE_POINTER_REST into the sensor (weak no-op without one)
 void    sval_rgb_idle_task(void);      // master: dim/restore the RGB by idle stage
 uint8_t sval_rgb_awake_val(void);      // RGB brightness as it was before any idle dimming
+uint8_t sval_rgb_idle_stage(void);     // 0 awake, 1 dimmed, 2 off (rgb_idle.c)
+uint8_t sval_rgb_shown_val(void);      // brightness the idle dimming shows: the dimmed value in light idle, else the awake one
+void    sval_rgb_idle_input(void);     // master: a key event, before any keycode runs: undo the idle dimming
+void    sval_rgb_host_sleep_task(void); // master: RGBLIGHT_SLEEP, dark while the host sleeps
 void    recalibrate_pointer(void);
 void    sval_set_active_layer(uint32_t layer, bool save);
 void    sval_on_reconnect(void);

@@ -25,37 +25,71 @@ static uint16_t sval_combo_terms[SVAL_COMBO_ENTRIES];
 // Track which combos are enabled
 static bool sval_combo_enabled[SVAL_COMBO_ENTRIES];
 
+#    ifdef EXTRA_SHORT_COMBOS
+#        define SVAL_COMBO_IS_ACTIVE(combo) (((combo)->state & 0x80) != 0)
+#    else
+#        define SVAL_COMBO_IS_ACTIVE(combo) ((combo)->active)
+#    endif
+
+// Release a held combo's output as release_combo() in process_combo.c (static
+// there) does: the same combo event its press went out as.
+static void sval_release_combo(uint16_t index, combo_t *combo) {
+    if (combo->keycode) {
+        keyrecord_t record = {
+            .event   = MAKE_COMBOEVENT(false),
+            .keycode = combo->keycode,
+        };
+#    ifndef NO_ACTION_TAPPING
+        action_tapping_process(record);
+#    else
+        process_record(&record);
+#    endif
+    } else {
+        process_combo_event(index, false);
+    }
+}
+
+// Load every combo from storage. A combo whose keys and output are unchanged
+// keeps its live state, so one held down while any combo is written still
+// releases its output when its keys come up. One that changes while it is
+// held releases its old output first.
 void sval_reload_combo(void) {
-    // Initialize with all keys = COMBO_END
-    memset(sval_combo_keys, 0, sizeof(sval_combo_keys));
-    memset(sval_combos, 0, sizeof(sval_combos));
-    memset(sval_combo_terms, 0, sizeof(sval_combo_terms));
-    memset(sval_combo_enabled, 0, sizeof(sval_combo_enabled));
-
-    // Load from EEPROM
     for (size_t i = 0; i < SVAL_COMBO_ENTRIES; ++i) {
-        uint16_t *seq       = sval_combo_keys[i];
-        sval_combos[i].keys = seq;
+        // All keys = COMBO_END unless an enabled entry sets them
+        uint16_t keys[5] = {0};
+        uint16_t keycode = KC_NO;
+        uint16_t term    = 0;
+        bool     enabled = false;
 
+        // Load from EEPROM
         sval_combo_entry_t entry;
         if (sval_get_combo(i, &entry) == 0) {
             // Check if enabled (bit 15 of custom_combo_term)
-            sval_combo_enabled[i] = (entry.custom_combo_term & SVAL_COMBO_ENABLED_BIT) != 0;
+            enabled = (entry.custom_combo_term & SVAL_COMBO_ENABLED_BIT) != 0;
 
-            if (sval_combo_enabled[i]) {
-                memcpy(seq, entry.input, sizeof(entry.input));
+            if (enabled) {
+                memcpy(keys, entry.input, sizeof(entry.input));
                 // Ensure null termination
-                seq[4]                 = COMBO_END;
-                sval_combos[i].keycode = entry.output;
+                keys[4] = COMBO_END;
+                keycode = entry.output;
 
                 // Extract custom timing (bits 0-14), 0 means use global default
-                sval_combo_terms[i] = entry.custom_combo_term & SVAL_COMBO_TIMING_MASK;
-            } else {
-                // Disabled combo: empty key sequence
-                seq[0]                 = COMBO_END;
-                sval_combos[i].keycode = KC_NO;
+                term = entry.custom_combo_term & SVAL_COMBO_TIMING_MASK;
             }
+            // Disabled combo: empty key sequence, KC_NO
         }
+
+        combo_t *combo = &sval_combos[i];
+        bool     same  = combo->keys == sval_combo_keys[i] && combo->keycode == keycode && memcmp(sval_combo_keys[i], keys, sizeof(keys)) == 0;
+        if (!same) {
+            if (combo->keys && SVAL_COMBO_IS_ACTIVE(combo)) sval_release_combo(i, combo);
+            memcpy(sval_combo_keys[i], keys, sizeof(keys));
+            memset(combo, 0, sizeof(*combo));
+            combo->keys    = sval_combo_keys[i];
+            combo->keycode = keycode;
+        }
+        sval_combo_terms[i]   = term;
+        sval_combo_enabled[i] = enabled;
     }
 }
 
