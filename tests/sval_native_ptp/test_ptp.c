@@ -530,7 +530,8 @@ static void test_faults(void) {
     flagged(1, 0x08); // right chip reset
     run(5000);
     assert(new_reports() == 1 && count_of(last()) == 2);
-    assert(flags_of(last(), slot_at(last(), rx, 100)) == 1 && flags_of(last(), slot_at(last(), 100, 100)) == 3);
+    // Lifted with Confidence clear (test_lost_no_tap); the left one stays.
+    assert(flags_of(last(), slot_at(last(), rx, 100)) == 0 && flags_of(last(), slot_at(last(), 100, 100)) == 3);
     FEED(1, {0, 1, 100, 100});
     FEED(0, {0, 1, 101, 100});
     run(5000);
@@ -548,12 +549,65 @@ static void test_faults(void) {
     assert(new_reports() == 1 && count_of(last()) == 2);
     sval_ptp_pad_lost(1); // remote snapshot stale
     run(5000);
-    assert(new_reports() == 1 && flags_of(last(), slot_at(last(), rx, 100)) == 1);
+    assert(new_reports() == 1 && flags_of(last(), slot_at(last(), rx, 100)) == 0);
     assert(flags_of(last(), slot_at(last(), 102, 100)) == 3);
     FEED(0, {0, 1, 103, 100});
     run(5000);
     assert(new_reports() == 1 && count_of(last()) == 1); // the local pad keeps reporting
     puts("  faults: a reset or stale pad lifts only its own contacts; invalid reads hold");
+}
+
+// A pad whose samples stop (a late split link, failed reads) or whose chip
+// resets is lifted with the finger maybe still down. Neither that lift nor
+// the finger coming back as a new contact may read as a tap to the OS.
+static void test_lost_no_tap(void) {
+    start("lost-no-tap");
+    uint16_t rx = 100 + 2048 + SVAL_PTP_GAP;
+    FEED(1, {0, 1, 100, 100}); // a finger lands just before the stall
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 3);
+    sval_ptp_pad_lost(1);
+    run(5000);
+    assert(new_reports() == 1 && count_of(last()) == 1 && x_of(last(), 0) == rx);
+    assert(flags_of(last(), 0) == 0); // lifted with Confidence clear: not a tap
+    // Samples resume with the finger still down: a new contact, Confidence set.
+    FEED(1, {0, 1, 100, 100});
+    run(5000);
+    assert(new_reports() == 1 && count_of(last()) == 1 && flags_of(last(), 0) == 3);
+    uint8_t back = id_of(last(), 0);
+    up(1); // the user lifts at once: not a tap either
+    run(5000);
+    assert(new_reports() == 1 && id_of(last(), 0) == back && flags_of(last(), 0) == 0);
+    // The next touch on that pad is an ordinary contact: a quick tap is a tap.
+    FEED(1, {0, 2, 300, 300});
+    run(5000);
+    up(1);
+    run(5000);
+    assert(new_reports() == 2 && flags_of(last(), 0) == 1);
+    // Samples resume all-up: nothing comes back, and the next tap is a tap.
+    FEED(1, {0, 3, 100, 100});
+    run(5000);
+    new_reports();
+    sval_ptp_pad_lost(1);
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 0);
+    up(1);
+    run(5000);
+    FEED(1, {0, 4, 100, 100});
+    run(5000);
+    up(1);
+    run(5000);
+    assert(new_reports() == 2 && flags_of(last(), 0) == 1);
+    // A chip reset under a finger: lifted with Confidence clear too.
+    FEED(1, {0, 5, 100, 100});
+    run(5000);
+    new_reports();
+    flagged(1, 0x08);
+    run(5000);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 0);
+    up(1);
+    run(5000);
+    puts("  lost or reset pad: its lift and the finger coming back never read as a tap");
 }
 
 static void test_stream_restart(void) {
@@ -769,10 +823,10 @@ static void test_pads(void) {
     assert(new_reports() == 1 && count_of(last()) == 1 && x_of(last(), 0) == 300 + 2048 + SVAL_PTP_GAP);
     assert(sval_ptp_suppress_mouse() && sval_ptp_active());
     // The pad goes away (its half came back with another module): its
-    // contact lifts.
+    // contact lifts, Confidence clear.
     sval_ptp_set_pads(0);
     run(5000);
-    assert(new_reports() == 1 && flags_of(last(), 0) == 1 && !sval_ptp_suppress_mouse());
+    assert(new_reports() == 1 && flags_of(last(), 0) == 0 && !sval_ptp_suppress_mouse());
     puts("  pads: no pad, nothing sent or suppressed; one pad reports alone; a pad that goes away lifts");
 }
 
@@ -789,9 +843,9 @@ static void test_dead_pad(void) {
         flagged(0, 0x04);
         run(8000);
         frames += new_reports();
-        if (frames && flags_of(last(), 0) == 1) break;
+        if (frames && !(flags_of(last(), 0) & 2)) break;
     }
-    assert(frames >= 1 && flags_of(last(), 0) == 1);
+    assert(frames >= 1 && flags_of(last(), 0) == 0); // lifted, Confidence clear
     assert(ptp_test_us - died <= SVAL_PTP_STALE_MS * 1000u + 16000u);
     uint8_t old_id = id_of(last(), 0);
     run(100000);
@@ -803,14 +857,14 @@ static void test_dead_pad(void) {
     assert(new_reports() == 1 && count_of(last()) == 1 && flags_of(last(), 0) == 3 && id_of(last(), 0) != old_id && x_of(last(), 0) == 120);
     up(0);
     run(8000);
-    assert(new_reports() == 1 && flags_of(last(), 0) == 1);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 0); // a quick lift of it is not a tap
     // A pad lifted for a chip reset still waits for an all-up sample.
     FEED(0, {0, 1, 100, 100});
     run(8000);
     new_reports();
     flagged(0, 0x08);
     run(8000);
-    assert(new_reports() == 1 && flags_of(last(), 0) == 1);
+    assert(new_reports() == 1 && flags_of(last(), 0) == 0);
     FEED(0, {0, 1, 140, 100});
     run(8000);
     assert(new_reports() == 0);
@@ -860,8 +914,10 @@ static void test_host_silent(void) {
     ptp_test_busy = false;
     FEED(0, {0, 1, 200, 100});
     run(8000);
-    // It reads again: first the release of the contact it saw down.
-    assert(new_reports() == 1 && count_of(last()) == 1 && flags_of(last(), 0) == 1 && x_of(last(), 0) == 100);
+    // It reads again: first the release of the contact it saw down. Its
+    // pad went stale meanwhile (no samples taken while silent), so the
+    // release has Confidence clear.
+    assert(new_reports() == 1 && count_of(last()) == 1 && flags_of(last(), 0) == 0 && x_of(last(), 0) == 100);
     FEED(0, {0, 1, 200, 100});
     run(8000);
     assert(new_reports() == 0); // the pad arms again first: no old contact
@@ -1417,6 +1473,7 @@ int main(int argc, char **argv) {
     test_palm_setting();
     test_builtin_gestures();
     test_faults();
+    test_lost_no_tap();
     test_stream_restart();
     test_leave_mode3();
     test_surface_switch();
